@@ -2065,11 +2065,12 @@ export interface BookedInterview {
 // own), oldest first, with the outcome the rep last logged for it on
 // Interviews; with `contactId`, only theirs. A meeting booked twice (a retry)
 // counts once, from its first booking; one from a call left out of coaching
-// stays out.
+// stays out. The newest MAX_INSIGHTS, like allCallInsights.
 export async function allBookedInterviews(db: D1Database, contactId: string | null = null): Promise<BookedInterview[]> {
   const { results } = await db
     .prepare(
-      `WITH booked AS (
+      `SELECT * FROM (
+       WITH booked AS (
          SELECT booked_meeting_id AS meeting_id, call_task_id AS task_id, contact_id, title, created_at,
                 book_start AS start_at, book_invite AS invite, book_phone AS phone
          FROM call_logs WHERE booked_meeting_id IS NOT NULL
@@ -2094,9 +2095,10 @@ export async function allBookedInterviews(db: D1Database, contactId: string | nu
        LEFT JOIN meeting_logs l ON l.rowid = (SELECT m.rowid FROM meeting_logs m WHERE m.meeting_id = f.meeting_id
                                              ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1)
        WHERE f.n = 1 AND COALESCE(i.excluded, 0) = 0 AND (?1 IS NULL OR f.contact_id = ?1)
-       ORDER BY f.created_at, f.meeting_id`
+       ORDER BY f.created_at DESC, f.meeting_id DESC LIMIT ?2)
+       ORDER BY booked_sec, meeting_id`
     )
-    .bind(contactId)
+    .bind(contactId, MAX_INSIGHTS)
     .all<BookedInterview>();
   return results;
 }
