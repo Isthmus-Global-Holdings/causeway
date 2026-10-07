@@ -1,0 +1,7 @@
+node_modules/
+.wrangler/
+hubspot/
+package-lock.json
+extension/dist/
+# Prose and tables are hand-formatted; reflowing them only adds diff noise.
+*.md

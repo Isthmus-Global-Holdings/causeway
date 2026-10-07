@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Upwork pitch</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #1f2328;
+        --muted: #59636e;
+        --bg: #ffffff;
+        --line: #d1d9e0;
+        --accent: #0969da;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #e6edf3;
+          --muted: #9198a1;
+          --bg: #0d1117;
+          --line: #3d444d;
+          --accent: #4493f8;
+        }
+      }
+      body {
+        margin: 0;
+        padding: 24px 16px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 15px/1.5 system-ui, sans-serif;
+      }
+      main {
+        max-width: 720px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0 0 4px;
+      }
+      p.muted,
+      .muted {
+        color: var(--muted);
+      }
+      label.block {
+        display: block;
+        font-weight: 600;
+        margin: 20px 0 6px;
+      }
+      textarea {
+        box-sizing: border-box;
+        width: 100%;
+        min-height: 280px;
+        padding: 10px;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: transparent;
+        color: inherit;
+        font: 14px/1.5 ui-monospace, monospace;
+      }
+      fieldset {
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        margin: 20px 0 0;
+      }
+      button {
+        margin-top: 20px;
+        padding: 8px 16px;
+        border: 0;
+        border-radius: 6px;
+        background: var(--accent);
+        color: #fff;
+        font: inherit;
+        cursor: pointer;
+      }
+      button.link {
+        margin: 0 0 0 8px;
+        padding: 0;
+        background: none;
+        color: var(--accent);
+        text-decoration: underline;
+      }
+      kbd {
+        padding: 1px 6px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        font: 13px ui-monospace, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Upwork pitch</h1>
+      <p class="muted">
+        Copy the job’s Loom link, click into the proposal box, and press <kbd id="shortcut">…</kbd>
+        <button type="button" class="link" id="change-shortcut">Change</button>. The pitch is pasted with the link in
+        place of <code>{{loom}}</code>, and the job is logged as a deal in HubSpot.
+      </p>
+      <form id="settings">
+        <label class="block" for="template">Your pitch</label>
+        <textarea
+          id="template"
+          spellcheck="true"
+          placeholder="Hi, … Here’s a short video on how I’d approach it: {{loom}} …"
+        ></textarea>
+        <fieldset>
+          <legend>Log pitches to</legend>
+          <label
+            ><input type="radio" name="worker" value="https://hubspot-automations.frosty-darkness-3dd3.workers.dev" />
+            Causeway (the live CRM)</label
+          ><br />
+          <label
+            ><input type="radio" name="worker" value="http://localhost:8787" /> Local <code>npm run dev</code> (the test
+            CRM)</label
+          >
+        </fieldset>
+        <button type="submit">Save</button>
+        <p id="status" class="muted" role="status"></p>
+      </form>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

@@ -1,0 +1,20 @@
+node_modules/
+.wrangler/
+.dev.vars
+.dev.vars.*
+.env
+dist/
+*.log
+
+# HubSpot CLI config holds a personal access key. The CLI keeps it in
+# ~/.hscli/config.yml today, but older versions wrote hubspot.config.yml next
+# to wherever they were run — never let either land in the repo.
+hubspot.config.yml
+.hscli/
+
+# Claude Code: settings.json is shared; these are per machine. launch.json is
+# written by `npm run worktree`, with an entry for each worktree.
+.claude/worktrees/
+.claude/settings.local.json
+.claude/launch.json
+.DS_Store

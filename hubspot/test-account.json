@@ -1,0 +1,10 @@
+{
+  "accountName": "isthmus-test",
+  "description": "Test CRM for hubspot-automations: fake contacts and tasks, never live prospects",
+  "marketingLevel": "FREE",
+  "opsLevel": "FREE",
+  "serviceLevel": "FREE",
+  "salesLevel": "PROFESSIONAL",
+  "contentLevel": "FREE",
+  "commerceLevel": "FREE"
+}

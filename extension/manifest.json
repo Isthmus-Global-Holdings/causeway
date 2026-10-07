@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Causeway: Upwork pitch",
+  "description": "Pastes your Upwork pitch with the Loom link you copied, and logs the job as a deal in HubSpot through Causeway.",
+  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAwGxp1aJhheyy7Rp+fcw9Td1ia8vgp2zZ2wbluncqO+us9b1vpgx5gTwyMW6wq7x2W67rSi/lfvJYl+NKlYsk2jYTgJVpMWOAqmcMJm6fwuTpVCWRL9Vq9JN54VyfEoyj8rgHSovQ4HVDaeU89a1h2aKkpjUn/siMMrk9HNN0vrB52NFCQi/R80j5sNSOTUdkbqSuM6s5lTCzrPmYwgz5cwWe2lx+JghsMWJl2h6FnTdMR7QLgdLDSTBhLn85+euqcEgCxYPvZpyCdiGGPrLP2HPus+u12yJVTwW1lyICp+lBpjc+GwiKcwMgaTqmQlX0kmRKJchKECKNf4usNQBfbQIDAQAB",
+  "minimum_chrome_version": "116",
+  "background": { "service_worker": "background.js", "type": "module" },
+  "options_page": "options.html",
+  "action": { "default_popup": "popup.html", "default_title": "Upwork pitch" },
+  "permissions": ["scripting", "activeTab", "storage", "offscreen", "clipboardRead"],
+  "host_permissions": [
+    "https://www.upwork.com/*",
+    "https://hubspot-automations.frosty-darkness-3dd3.workers.dev/*",
+    "http://localhost:8787/*"
+  ],
+  "commands": {
+    "paste-pitch": {
+      "suggested_key": { "default": "Alt+Shift+P" },
+      "description": "Paste the pitch with the copied Loom link, and log it in HubSpot"
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  // The extension runs in Chrome, not on Workers: the DOM and chrome.* types,
+  // and none of the Worker's. It shares src/lib/upwork.ts with the Worker.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["chrome"],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "../src/lib/upwork.ts"]
+}

@@ -1,0 +1,46 @@
+{
+  "name": "hubspot-automations",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/require-test-crm.mjs && wrangler dev --local --env-file .dev.vars --env-file .dev.vars.test",
+    "dev:live": "wrangler dev --local",
+    "typecheck": "tsc --noEmit && tsc -p extension",
+    "lint": "eslint src extension/src",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "tsx --test test/*.test.ts",
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
+    "deploy": "wrangler deploy",
+    "db:migrate:local": "wrangler d1 migrations apply hubspot-automations-db --local",
+    "db:migrate": "wrangler d1 migrations apply hubspot-automations-db --remote",
+    "db:log:local": "wrangler d1 execute hubspot-automations-db --local --command \"SELECT id, actor, workflow, task_id, action, outcome, error, created_at FROM audit_log ORDER BY created_at DESC LIMIT 20\"",
+    "db:log": "wrangler d1 execute hubspot-automations-db --remote --command \"SELECT id, actor, workflow, task_id, action, outcome, error, created_at FROM audit_log ORDER BY created_at DESC LIMIT 20\"",
+    "seed:test": "node scripts/seed-test-crm.mjs",
+    "worktree": "node scripts/worktree.mjs",
+    "ext:build": "node extension/build.mjs",
+    "hs:upload": "cd hubspot && hs project upload",
+    "hs:open": "cd hubspot && hs project open"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.128.0",
+    "@cfworker/json-schema": "^4.1.1",
+    "@cloudflare/workers-oauth-provider": "^1.2.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "hono": "^4.13.9",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260925.1",
+    "@types/chrome": "^0.3.4",
+    "@types/node": "^26.6.2",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.11.0",
+    "prettier": "^3.9.9",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.70.1",
+    "wrangler": "^4.139.0"
+  }
+}

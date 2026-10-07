@@ -1,0 +1,28 @@
+{
+  "uid": "hubspot_automations_app",
+  "type": "app",
+  "config": {
+    "description": "Rep-triggered task workflows (draft outreach email, email sent follow-up) run by Causeway (the hubspot-automations Cloudflare Worker).",
+    "name": "Causeway",
+    "distribution": "private",
+    "auth": {
+      "type": "static",
+      "requiredScopes": [
+        "oauth",
+        "crm.objects.contacts.read",
+        "crm.objects.contacts.write",
+        "crm.objects.companies.read",
+        "crm.objects.deals.read",
+        "crm.objects.deals.write",
+        "sales-email-read"
+      ],
+      "optionalScopes": [],
+      "conditionallyRequiredScopes": []
+    },
+    "permittedUrls": {
+      "fetch": [],
+      "iframe": [],
+      "img": []
+    }
+  }
+}

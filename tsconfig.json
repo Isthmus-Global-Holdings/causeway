@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true
+  },
+  // Only src/ is typechecked against the Workers types. test/ runs under Node
+  // (tsx --test), and pulling @types/node into the same program makes the two
+  // sets of globals (fetch, Response, crypto) collide.
+  "include": ["src/**/*.ts"],
+  "exclude": ["node_modules"]
+}

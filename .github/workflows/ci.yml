@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# A newer push to the same PR makes the older run pointless. Never cancel
+# main: every commit there should have a recorded result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          # 22+ for the built-in node:sqlite the database tests run on.
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # Typecheck, lint (promise safety), formatting, and the test suite: the
+      # same command as `npm run check` locally.
+      - run: npm run check
+      # Known vulnerabilities in what ships to the Worker. Dev tooling is
+      # excluded: it never runs in production.
+      - run: npm audit --omit=dev --audit-level=high

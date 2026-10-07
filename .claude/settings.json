@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(npm run check)",
+      "Bash(npm test)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run lint)",
+      "Bash(npm run format)",
+      "Bash(npm run format:check)",
+      "Bash(npm run dev)",
+      "Bash(npm run seed:test)",
+      "Bash(npm run db:migrate:local)",
+      "Bash(npm run db:log:local)",
+      "Bash(npx tsx --test:*)"
+    ],
+    "ask": [
+      "Bash(npm run deploy)",
+      "Bash(npm run dev:live)",
+      "Bash(npm run db:migrate)",
+      "Bash(npm run db:log)",
+      "Bash(npm run hs:upload)",
+      "Bash(npx wrangler deploy:*)",
+      "Bash(npx wrangler secret:*)",
+      "Bash(npx wrangler d1 execute:*)"
+    ],
+    "deny": ["Read(./.dev.vars)", "Read(./.dev.vars.test)", "Read(./.env)"]
+  },
+  "extraKnownMarketplaces": {
+    "typesafe-ai": {
+      "source": {
+        "source": "github",
+        "repo": "typesafe-ai/skills"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "typesafe@typesafe-ai": true
+  }
+}

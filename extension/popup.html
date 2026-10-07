@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Upwork pitch</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --fg: #1f2328;
+        --muted: #59636e;
+        --bg: #ffffff;
+        --line: #d1d9e0;
+        --accent: #0969da;
+        --ok: #1a7f37;
+        --warn: #b42318;
+        --idle: #8c959f;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #e6edf3;
+          --muted: #9198a1;
+          --bg: #0d1117;
+          --line: #3d444d;
+          --accent: #4493f8;
+          --ok: #3fb950;
+          --warn: #f85149;
+          --idle: #6e7681;
+        }
+      }
+      body {
+        width: 320px;
+        margin: 0;
+        padding: 14px 16px;
+        background: var(--bg);
+        color: var(--fg);
+        font: 13px/1.45 system-ui, sans-serif;
+      }
+      h1 {
+        font-size: 15px;
+        margin: 0 0 10px;
+      }
+      ul {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+      }
+      li.check {
+        display: grid;
+        grid-template-columns: 14px 1fr;
+        gap: 2px 8px;
+        padding: 8px 0;
+        border-top: 1px solid var(--line);
+      }
+      li.check[hidden] {
+        display: none;
+      }
+      li.check:first-child {
+        border-top: 0;
+      }
+      .dot {
+        width: 10px;
+        height: 10px;
+        margin-top: 4px;
+        border-radius: 50%;
+        background: var(--idle);
+      }
+      [data-state='ok'] .dot {
+        background: var(--ok);
+      }
+      [data-state='todo'] .dot {
+        background: var(--warn);
+      }
+      .label {
+        font-weight: 600;
+      }
+      .detail {
+        grid-column: 2;
+        color: var(--muted);
+      }
+      button.link {
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--accent);
+        font: inherit;
+        text-decoration: underline;
+        cursor: pointer;
+      }
+      h2 {
+        font-size: 13px;
+        margin: 14px 0 6px;
+      }
+      ol {
+        margin: 0;
+        padding-left: 20px;
+      }
+      kbd {
+        padding: 0 5px;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        font: 12px ui-monospace, monospace;
+      }
+      footer {
+        display: flex;
+        gap: 14px;
+        margin-top: 14px;
+        padding-top: 10px;
+        border-top: 1px solid var(--line);
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Upwork pitch</h1>
+    <ul>
+      <li class="check" id="pitch" data-state="idle">
+        <span class="dot"></span><span class="label">Your pitch</span><span class="detail">Checking…</span>
+      </li>
+      <li class="check" id="causeway" data-state="idle">
+        <span class="dot"></span><span class="label">Logging to Causeway</span><span class="detail">Checking…</span>
+      </li>
+      <li class="check" id="page" data-state="idle">
+        <span class="dot"></span><span class="label">This tab</span><span class="detail">Checking…</span>
+      </li>
+      <li class="check" id="pending" data-state="todo" hidden>
+        <span class="dot"></span><span class="label">Pasted, not logged</span><span class="detail"></span>
+      </li>
+    </ul>
+    <h2>To pitch a job</h2>
+    <ol>
+      <li>Copy the Loom link you recorded for it.</li>
+      <li>On its proposal page, click into the cover letter.</li>
+      <li>Press <kbd id="shortcut">…</kbd>. The pitch is pasted and the job logged in HubSpot.</li>
+    </ol>
+    <footer>
+      <button type="button" class="link" id="open-options">Options</button>
+      <button type="button" class="link" id="change-shortcut">Change the shortcut</button>
+    </footer>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

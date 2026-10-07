@@ -1,0 +1,82 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "hubspot-automations",
+  // OAuthProvider in front of the app, for the Claude connector (src/worker.ts).
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Deploys keep the Worker's vars that aren't listed below, rather than
+  // removing them: TWILIO_ACCOUNT_SID and TWILIO_API_KEY_SID are set on the
+  // Worker in Cloudflare (and in .dev.vars locally), not in this public repo.
+  "keep_vars": true,
+
+  // Secrets — set via: wrangler secret put <KEY>  (local dev reads them from .dev.vars)
+  // HUBSPOT_ACCESS_TOKEN   static token for the app's install in the HubSpot account
+  //                        (HubSpot project → app → Distribution tab)
+  // GOOGLE_CLIENT_SECRET   OAuth client secret for Gmail sending (Google Cloud console)
+  // TOKEN_ENCRYPTION_KEY   32 random bytes, base64; encrypts the Gmail refresh token in D1
+  // ANTHROPIC_API_KEY      for "Draft with Claude" (console.anthropic.com)
+  // TWILIO_AUTH_TOKEN      for click-to-call: starts calls and checks Twilio's
+  //                        webhook signatures (Twilio Console → Account info)
+  // TWILIO_API_KEY_SECRET  calling from the browser: signs the Voice SDK's tokens
+  //                        (with the TWILIO_API_KEY_SID and TWILIO_TWIML_APP_SID vars; README)
+
+  "vars": {
+    // The rep's time zone until one is picked on /settings. Due dates for
+    // follow-up tasks are "next calendar day" in it, not UTC, and every time
+    // on the pages is shown in it.
+    "TZ": "America/Denver",
+    "HUBSPOT_PORTAL_ID": "247260710",
+    // Cloudflare Access (Zero Trust → Access → Applications). Both come from the
+    // application protecting this Worker. Left empty, every request is refused:
+    // the middleware fails closed rather than serving CRM data unauthenticated.
+    "ACCESS_TEAM_DOMAIN": "cool-block-b614.cloudflareaccess.com",
+    "ACCESS_AUD": "348788b5035e53832bf36cc08ec8eca2504f599c706b161ae0036e0c48eb568f",
+    // Google Cloud OAuth client ID (not secret). Redirect URIs to register:
+    // <origin>/oauth/google/callback for the deployed Worker and localhost:8787.
+    "GOOGLE_CLIENT_ID": "252643501861-46n5ncj3g1b1hc9t0tfvdq1rqbbjaa0h.apps.googleusercontent.com",
+    // Tracking pixels and links in sent emails point here. The recipient's
+    // mail client must reach it, so it's the deployed Worker even in dev.
+    "PUBLIC_BASE_URL": "https://hubspot-automations.frosty-darkness-3dd3.workers.dev",
+    // Calling from the browser: the TwiML App whose Voice URL is
+    // /twilio/voice/client. The Twilio account (TWILIO_ACCOUNT_SID) and the API
+    // key that signs Voice SDK tokens (TWILIO_API_KEY_SID, its secret
+    // TWILIO_API_KEY_SECRET) are set on the Worker, not here (keep_vars above).
+    "TWILIO_TWIML_APP_SID": "AP68e80c994f5cea2114ae5970ccde532b",
+    // The Upwork pitch extension (extension/). Its ID follows from the "key"
+    // in its manifest, and its origin is the only other one allowed to POST,
+    // and only to /pitches (middleware/access.ts).
+    "PITCH_EXTENSION_ID": "ddbojhokkfndnhnngibgnilicbeghkof",
+  },
+
+  // The Claude connector's OAuth clients, grants and tokens
+  // (@cloudflare/workers-oauth-provider), created with
+  // `npx wrangler kv namespace create OAUTH_KV`.
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "f5af90b791514cbaa30437f0a718510c" }],
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "hubspot-automations-db",
+      "database_id": "99d1f538-2098-4721-88cf-6a4bbd929f25",
+    },
+  ],
+
+  // Workers AI: call transcripts (Nova-3) and summaries, on the free daily
+  // allowance. It only runs on Cloudflare: `npm run dev` passes --local, since
+  // wrangler's remote-binding proxy can't get through Cloudflare Access (and
+  // Twilio can't reach localhost to deliver recordings anyway).
+  "ai": { "binding": "AI" },
+
+  // Run near HubSpot and D1 rather than near the rep. A page makes several
+  // HubSpot requests one after another, so each round trip's length adds up;
+  // Smart Placement measures where they're shortest and runs the Worker there.
+  "placement": { "mode": "smart" },
+
+  // Coaching's sweep (src/workflows/coaching-sweep.ts): transcriptions that
+  // died are run again, and calls not yet read (or read by older rules) are
+  // read, ten at a time. One of the free plan's five cron triggers.
+  "triggers": { "crons": ["*/10 * * * *"] },
+
+  "observability": { "enabled": true },
+}
