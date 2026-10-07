@@ -971,16 +971,16 @@ Twilio API key, and Twilio asks the app's TwiML App what to do with each call.
    ```bash
    npx wrangler secret put TWILIO_API_KEY_SECRET
    ```
-4. `npm run db:migrate` and `npm run deploy`, then pick **This browser**
+4. `npm run deploy`, then pick **This browser**
    under **Call with** in /settings. The `/twilio/*` Bypass policy already
    covers the TwiML App's webhooks, which are signed like the rest.
 
 Recording needs nothing more: the Workers AI binding (`ai` in
-`wrangler.jsonc`) deploys with the Worker. Apply `migrations/0006` with
-`npm run db:migrate`, then turn on **Record and transcribe calls** in /settings.
+`wrangler.jsonc`) deploys with the Worker, and `npm run deploy` applies
+`migrations/0006`. Then turn on **Record and transcribe calls** in /settings.
 
-For calls to the number, apply `migrations/0008` with `npm run db:migrate`,
-deploy, then point the number at the Worker (Twilio Console → Phone Numbers →
+For calls to the number, deploy (`npm run deploy` applies `migrations/0008`),
+then point the number at the Worker (Twilio Console → Phone Numbers →
 the number → Voice configuration, or the CLI):
 
 ```bash
@@ -1010,9 +1010,15 @@ wrangler secret put HUBSPOT_ACCESS_TOKEN
 # the same Bypass for /mcp, /oauth/mcp/* and /.well-known/*: Claude's servers
 # call them directly, and the Worker checks the connector's OAuth token
 # instead (/authorize stays behind Access: that's where you approve it).
-npm run db:migrate
-npm run deploy
+npm run deploy   # applies the remote D1 migrations, then deploys
 ```
+
+Workers Builds (the Worker's Settings → Builds, connected to the GitHub repo)
+deploys `main` the same way: its deploy command is `npm run deploy`, and the
+build command stays empty (CI runs the checks before a merge). Other branches
+keep `npx wrangler versions upload`, never the migrations: there's one D1
+database, and a branch's migration would change it before the code merges.
+The build's API token needs D1 Edit for the migrations.
 
 The Worker refuses every request until `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`
 are set.
