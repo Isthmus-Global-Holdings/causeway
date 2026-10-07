@@ -354,6 +354,13 @@ export function bookingSummary(bookings: BookingReport, timeZone: string, origin
     youCanceled: bookings.youCanceled,
     ahead: bookings.upcoming,
     toLog: bookings.toLog,
+    // Every one, not only those among the recent: each is to log on its url.
+    toLogInterviews: bookings.toLogRows.map((b) => ({
+      meetingId: b.meeting_id,
+      with: b.label,
+      at: storedTime(b.start, timeZone),
+      url: `${origin}/meetings/${b.meeting_id}`,
+    })),
     movedAtLeastOnce: bookings.moved,
     byHowFarAheadBooked: bookings.byLeadTime.map(split),
     byCalendarInvite: bookings.byInvite.map(split),

@@ -192,7 +192,8 @@ export function coachingPage({ settings, report, bookings, unread }: CoachingOve
       actor,
       html`<h1>Coaching</h1>
         ${reading}
-        <p class="muted">Nothing to learn from yet. Each call you log is read here: who answered, how far it got, the objection, and whether a next step was agreed.</p>`,
+        <p class="muted">No calls read yet. Each call you log is read here: who answered, how far it got, the objection, and whether a next step was agreed.</p>
+        ${bookings.booked ? bookingsCard(bookings, tz) : ''}`,
       'coaching'
     );
   }

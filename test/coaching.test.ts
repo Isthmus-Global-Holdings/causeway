@@ -1188,6 +1188,20 @@ test('bookings followed to how they turned out, by lead time, invite and the boo
 
   const summary = bookingSummary(report, TZ, ORIGIN);
   assert.deepEqual([summary.booked, summary.theyCanceled, summary.youCanceled, summary.toLog], [5, 1, 0, 1]);
+  assert.deepEqual(
+    summary.toLogInterviews.map((b) => [b.meetingId, b.url]),
+    [['m3', `${ORIGIN}/meetings/m3`]]
+  );
+
+  // Bookings show even before any call has been read for coaching.
+  const unread = String(
+    await coachingPage(
+      { settings: { timeZone: TZ } as never, report: coachingReport([], TZ), bookings: report, unread: 1 },
+      'rep@example.com'
+    )
+  );
+  assert.match(unread, /No calls read yet/);
+  assert.match(unread, /5 booked from your calls/);
   assert.deepEqual(summary.byCalendarInvite[1], {
     group: 'No invite',
     ended: 2,
