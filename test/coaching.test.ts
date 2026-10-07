@@ -22,22 +22,36 @@ import {
   transcriptStats,
   type CallFacts,
 } from '../src/lib/call-insight.ts';
-import { bestHour, callBrief, coachingReport, describeCall, hourLabel, prepNotes } from '../src/lib/coaching.ts';
 import {
+  bestHour,
+  bookingReport,
+  bookingStatus,
+  callBrief,
+  coachingReport,
+  describeCall,
+  hourLabel,
+  lastInterviewNote,
+  prepNotes,
+} from '../src/lib/coaching.ts';
+import {
+  allBookedInterviews,
   allCallInsights,
   callInsightsFor,
   callInsightsNear,
   d1CallInsightStore,
   d1CallLogStore,
   d1DialStore,
+  d1MeetingBookingStore,
+  d1MeetingLogStore,
   type CallInsight,
   type CallLog,
   type NewCallLog,
+  type MeetingLog,
   type NewDial,
 } from '../src/lib/db.ts';
 import type { HubSpot } from '../src/lib/hubspot.ts';
 import type { Turn } from '../src/lib/transcript.ts';
-import { afterCallSummary, beforeCallSummary } from '../src/mcp/format.ts';
+import { afterCallSummary, beforeCallSummary, bookingSummary } from '../src/mcp/format.ts';
 import { coachingCard, coachingPage } from '../src/views/coaching.ts';
 import {
   excludeCall,
@@ -630,7 +644,10 @@ test('a call described in a few words', () => {
 test('the Coaching page and the call page’s card', async () => {
   const report = coachingReport(sample(), TZ);
   const page = String(
-    await coachingPage({ settings: { timeZone: TZ } as never, report, unread: 2 }, 'rep@example.com')
+    await coachingPage(
+      { settings: { timeZone: TZ } as never, report, bookings: bookingReport([], 0), unread: 2 },
+      'rep@example.com'
+    )
   );
   assert.match(page, /<h1>Coaching<\/h1>/);
   assert.match(page, /being read in the background/);
@@ -638,6 +655,7 @@ test('the Coaching page and the call page’s card', async () => {
   assert.match(page, /2 of 5 connects ended under\s+1:30/);
   assert.match(page, /Lyle Moss/);
   assert.match(page, /aria-current="page">Coaching/);
+  assert.match(page, /No interview booked from a call yet/);
 
   const empty = String(await coachingCard({ before: [], brief: null, after: null }));
   assert.equal(empty, '');
@@ -993,4 +1011,260 @@ test('callFacts takes the length from the log, else from Twilio, and their first
     { label: 'Ana Díaz at Díaz Freight', firstName: 'Ana', durationSec: 90, notes: 'hi', setTime: true }
   );
   assert.equal(callFacts(log, null, null).firstName, 'Ana');
+});
+
+// --- Interviews booked on calls, followed to how they turned out ---
+
+async function logMeeting(
+  meetingId: string,
+  outcome: MeetingLog['outcome'],
+  createdAt: string,
+  newStart: string | null = null,
+  canceledBy: MeetingLog['canceled_by'] = null
+) {
+  const logId = `${meetingId}@${createdAt}`;
+  await d1MeetingLogStore(db).create({
+    log_id: logId,
+    meeting_id: meetingId,
+    contact_id: 'c1',
+    company_id: null,
+    owner_id: null,
+    outcome,
+    canceled_by: canceledBy,
+    notes: '',
+    internal_notes_html: '',
+    new_start: newStart,
+    new_end: null,
+    next_type: null,
+    next_subject: null,
+    next_due: null,
+    next_body: null,
+    calendar_event_id: null,
+  });
+  await db.prepare('UPDATE meeting_logs SET created_at = ? WHERE log_id = ?').bind(createdAt, logId).run();
+}
+
+async function bookFromCall(taskId: string, meetingId: string, start: string, createdAt: string, invite = 0) {
+  await logCall(
+    taskId,
+    { book_start: start, book_title: 'Interview', book_minutes: 30, book_invite: invite },
+    createdAt
+  );
+  await d1CallLogStore(db).setBookedMeeting(taskId, meetingId);
+}
+
+// Six interviews booked from calls, as of Wednesday 2026-10-07.
+const BOOKINGS_NOW = Date.parse('2026-10-07T18:00:00Z');
+
+async function sixBookings() {
+  // Held: booked two days ahead with an invite, on a 6:40 connect.
+  await bookFromCall('t1', 'm1', '2026-10-01T16:00:00.000Z', '2026-09-29 16:05:00', 1);
+  await db.prepare("UPDATE call_logs SET book_phone = '+18015550100' WHERE call_task_id = 't1'").run();
+  await d1CallInsightStore(db).save(insight({ call_task_id: 't1', talk_sec: 400 }));
+  await logMeeting('m1', 'COMPLETED', '2026-10-01 17:00:00');
+  // Booked on its own from the call page, then again by a retry of the call's
+  // log: one interview. Moved, then canceled.
+  const booking = d1MeetingBookingStore(db);
+  await booking.create({
+    booking_id: 't2@1',
+    task_id: 't2',
+    contact_id: 'c2',
+    company_id: null,
+    owner_id: null,
+    title: 'Interview with Ana',
+    start_at: '2026-10-10T16:00:00.000Z',
+    end_at: '2026-10-10T16:30:00.000Z',
+    join_url: null,
+    phone: null,
+    invite: 0,
+    invitee_email: null,
+  });
+  await booking.setMeeting('t2@1', 'm2');
+  await db.prepare("UPDATE meeting_bookings SET created_at = '2026-09-29 17:00:00'").run();
+  await bookFromCall('t2', 'm2', '2026-10-10T16:00:00.000Z', '2026-09-29 17:10:00');
+  await logMeeting('m2', 'RESCHEDULED', '2026-10-09 15:00:00', '2026-10-12T16:00:00.000Z');
+  await logMeeting('m2', 'CANCELED', '2026-10-11 15:00:00', null, 'them');
+  // Its time passed with nothing logged.
+  await bookFromCall('t3', 'm3', '2026-10-02T16:00:00.000Z', '2026-09-29 18:00:00');
+  // No-show.
+  await bookFromCall('t6', 'm6', '2026-10-01T16:00:00.000Z', '2026-09-30 10:00:00');
+  await logMeeting('m6', 'NO_SHOW', '2026-10-01 17:00:00');
+  // Still ahead.
+  await bookFromCall('t4', 'm4', '2026-10-20T16:00:00.000Z', '2026-10-05 10:00:00');
+  // A test call, left out of coaching.
+  await bookFromCall('t5', 'm5', '2026-10-03T16:00:00.000Z', '2026-09-30 11:00:00');
+  await d1CallInsightStore(db).save(insight({ call_task_id: 't5' }));
+  await d1CallInsightStore(db).setExcluded('t5', true);
+}
+
+test('each booked interview is read with the outcome last logged for it, once, test calls left out', async () => {
+  await sixBookings();
+  const rows = await allBookedInterviews(db);
+  assert.deepEqual(
+    rows.map((r) => r.meeting_id),
+    ['m1', 'm2', 'm3', 'm6', 'm4']
+  );
+  const [m1, m2, m3] = rows;
+  assert.deepEqual(
+    { ...m1 },
+    {
+      meeting_id: 'm1',
+      call_task_id: 't1',
+      contact_id: 'c1',
+      label: 'Contact t1',
+      booked_sec: Date.parse('2026-09-29T16:05:00Z') / 1000,
+      first_start: '2026-10-01T16:00:00.000Z',
+      start: '2026-10-01T16:00:00.000Z',
+      invite: 1,
+      by_phone: 1,
+      outcome: 'COMPLETED',
+      canceled_by: null,
+      moves: 0,
+      call_sec: 400,
+    }
+  );
+  assert.equal(m2.call_task_id, 't2');
+  assert.equal(m2.label, 'Interview with Ana', 'from its first booking: the call page’s, not the retry’s');
+  assert.equal(m2.first_start, '2026-10-10T16:00:00.000Z');
+  assert.equal(m2.start, '2026-10-12T16:00:00.000Z', 'at the time it was moved to');
+  assert.deepEqual([m2.outcome, m2.canceled_by], ['CANCELED', 'them']);
+  assert.equal(m2.moves, 1);
+  assert.deepEqual([m3.outcome, m3.call_sec], [null, null]);
+  assert.deepEqual(
+    (await allBookedInterviews(db, 'c2')).map((r) => r.meeting_id),
+    ['m2'],
+    'one contact’s'
+  );
+});
+
+test('bookings followed to how they turned out, by lead time, invite and the booking call’s length', async () => {
+  await sixBookings();
+  const report = bookingReport(await allBookedInterviews(db), BOOKINGS_NOW);
+  assert.deepEqual(
+    [report.booked, report.held, report.noShow, report.canceled, report.upcoming, report.toLog, report.moved],
+    [5, 1, 1, 1, 1, 1, 1]
+  );
+  const brief = (splits: typeof report.byLeadTime) =>
+    splits.map((s) => [s.key, s.decided, s.held, s.noShow, s.canceled]);
+  assert.deepEqual(
+    brief(report.byLeadTime),
+    [
+      ['soon', 2, 1, 1, 0],
+      ['later', 1, 0, 0, 1],
+    ],
+    'measured from the time first booked; ones not ended yet aren’t counted'
+  );
+  assert.deepEqual(brief(report.byInvite), [
+    ['invite', 1, 1, 0, 0],
+    ['none', 2, 0, 1, 1],
+  ]);
+  assert.deepEqual(brief(report.byCallLength), [['long', 1, 1, 0, 0]], 'only the calls read and reached');
+  assert.deepEqual(
+    report.toLogRows.map((b) => b.meeting_id),
+    ['m3']
+  );
+  assert.deepEqual(
+    report.recent.map((r) => [r.booking.meeting_id, r.status]),
+    [
+      ['m4', 'upcoming'],
+      ['m6', 'no_show'],
+      ['m3', 'to_log'],
+      ['m2', 'they_canceled'],
+      ['m1', 'held'],
+    ]
+  );
+
+  const page = String(
+    await coachingPage(
+      { settings: { timeZone: TZ } as never, report: coachingReport(sample(), TZ), bookings: report, unread: 0 },
+      'rep@example.com'
+    )
+  );
+  assert.match(page, /5 booked from your calls: 1 held, 1 no-show,\s+1 canceled by them, 1 still ahead, 1 to log\./);
+  assert.match(page, /Of the 3 that ended, 33% were held\./);
+  assert.match(page, /Their cancel is a reply/);
+  assert.match(page, /<li class="flag">\s*<a href="\/meetings\/m3">/);
+  assert.match(page, /moved once/);
+
+  const summary = bookingSummary(report, TZ, ORIGIN);
+  assert.deepEqual([summary.booked, summary.theyCanceled, summary.youCanceled, summary.toLog], [5, 1, 0, 1]);
+  assert.deepEqual(summary.byCalendarInvite[1], {
+    group: 'No invite',
+    ended: 2,
+    held: 0,
+    noShow: 1,
+    theyCanceled: 1,
+    heldRate: '0%',
+  });
+  assert.deepEqual(summary.recent[3], {
+    meetingId: 'm2',
+    with: 'Interview with Ana',
+    bookedAt: summary.recent[3].bookedAt,
+    at: summary.recent[3].at,
+    status: 'They canceled',
+    moved: 1,
+    url: `${ORIGIN}/meetings/m2`,
+  });
+});
+
+test('a booking moved to a time that has passed, with nothing logged since, is to log', () => {
+  const now = Date.parse('2026-10-07T18:00:00Z');
+  const at = (outcome: MeetingLog['outcome'] | null, start: string, canceled_by: MeetingLog['canceled_by'] = null) =>
+    bookingStatus({ outcome, start, canceled_by }, now);
+  assert.equal(at('RESCHEDULED', '2026-10-06T16:00:00.000Z'), 'to_log');
+  assert.equal(at('RESCHEDULED', '2026-10-08T16:00:00.000Z'), 'upcoming');
+  assert.equal(at(null, '2026-10-08T16:00:00.000Z'), 'upcoming');
+  assert.equal(at('CANCELED', '2026-10-08T16:00:00.000Z', 'them'), 'they_canceled');
+  assert.equal(at('CANCELED', '2026-10-08T16:00:00.000Z'), 'they_canceled', 'logged before the form asked');
+  assert.equal(at('CANCELED', '2026-10-08T16:00:00.000Z', 'rep'), 'you_canceled');
+});
+
+test('the rep’s own cancel is counted, but left out of the held rate', async () => {
+  await sixBookings();
+  await db
+    .prepare(`UPDATE meeting_logs SET canceled_by = 'rep' WHERE meeting_id = 'm2' AND outcome = 'CANCELED'`)
+    .run();
+  const report = bookingReport(await allBookedInterviews(db), BOOKINGS_NOW);
+  assert.deepEqual([report.canceled, report.youCanceled], [0, 1]);
+  assert.deepEqual(
+    report.byLeadTime.map((s) => s.key),
+    ['soon'],
+    'its only group had nothing else ended'
+  );
+  const page = String(
+    await coachingPage(
+      { settings: { timeZone: TZ } as never, report: coachingReport(sample(), TZ), bookings: report, unread: 0 },
+      'rep@example.com'
+    )
+  );
+  assert.match(page, /0 canceled by them, 1 by you/);
+  assert.match(page, /Of the 2 that ended, 50% were held\./);
+});
+
+test('before calling someone who canceled their interview, the call page says the line is open', async () => {
+  await sixBookings();
+  const theirs = await allBookedInterviews(db, 'c2');
+  const note = lastInterviewNote(theirs, TZ, BOOKINGS_NOW);
+  assert.equal(note?.kind, 'tip');
+  assert.match(note!.text, /^They canceled the interview for .*Oct 12.*the line is open: offer another time\.$/);
+  await db
+    .prepare(`UPDATE meeting_logs SET canceled_by = 'rep' WHERE meeting_id = 'm2' AND outcome = 'CANCELED'`)
+    .run();
+  assert.match(lastInterviewNote(await allBookedInterviews(db, 'c2'), TZ, BOOKINGS_NOW)!.text, /^You canceled/);
+  assert.equal(
+    lastInterviewNote(await allBookedInterviews(db, 'c1'), TZ, BOOKINGS_NOW),
+    null,
+    'their last booking is still ahead; a no-show has its own notice'
+  );
+
+  const notes = prepNotes({
+    report: coachingReport([], TZ),
+    near: [],
+    contactId: 'c2',
+    contactTz: null,
+    repTimeZone: TZ,
+    now: BOOKINGS_NOW,
+    interviews: theirs,
+  });
+  assert.ok(notes.some((n) => /They canceled the interview/.test(n.text)));
 });

@@ -14,7 +14,20 @@ import {
   type InsightFields,
   type Tag,
 } from '../lib/call-insight';
-import { bestHour, hourLabel, MIN_SAMPLE, pct, rateOf, type Quote, type Rate, type Style } from '../lib/coaching';
+import {
+  bestHour,
+  BOOKING_STATUS_LABELS,
+  heldRate,
+  hourLabel,
+  MIN_SAMPLE,
+  pct,
+  rateOf,
+  type BookingReport,
+  type BookingSplit,
+  type Quote,
+  type Rate,
+  type Style,
+} from '../lib/coaching';
 import { formatLocal } from '../lib/dates';
 import type { CallInsight } from '../lib/db';
 import { CALL_OUTCOMES } from '../workflows/call-logged';
@@ -101,7 +114,71 @@ function styleRow(label: string, style: Style): Html {
   </tr>`;
 }
 
-export function coachingPage({ settings, report, unread }: CoachingOverview, actor: string): Html {
+function splitRow(split: BookingSplit): Html {
+  const thin = split.decided < MIN_SAMPLE;
+  return html`<tr>
+    <td>${split.label}</td>
+    <td data-label="Ended">${split.decided}</td>
+    <td data-label="Held">${split.held}</td>
+    <td data-label="No-show">${split.noShow}</td>
+    <td data-label="They canceled">${split.canceled}</td>
+    <td data-label="Held rate" class="${thin ? 'muted' : ''}">${pct(heldRate(split))}${thin ? ' (few)' : ''}</td>
+  </tr>`;
+}
+
+// The interviews the calls booked, followed to how each turned out.
+function bookingsCard(bookings: BookingReport, timeZone: string): Html {
+  if (!bookings.booked) {
+    return html`<section class="card">
+      <h2>Interviews you booked, and how they turned out</h2>
+      <p class="muted">No interview booked from a call yet. Each one you book is followed here to how it went, once you log it on Interviews.</p>
+    </section>`;
+  }
+  const ended = bookings.held + bookings.noShow + bookings.canceled;
+  const splits = [...bookings.byLeadTime, ...bookings.byInvite, ...bookings.byCallLength];
+  return html`<section class="card">
+    <h2>Interviews you booked, and how they turned out</h2>
+    <p>
+      ${bookings.booked} booked from your calls: ${bookings.held} held, ${bookings.noShow} no-show${bookings.noShow === 1 ? '' : 's'},
+      ${bookings.canceled} canceled by them${bookings.youCanceled ? `, ${bookings.youCanceled} by you` : ''}${bookings.upcoming ? `, ${bookings.upcoming} still ahead` : ''}${bookings.toLog ? `, ${bookings.toLog} to log` : ''}.
+      ${ended ? html`Of the ${ended} that ended, ${pct(bookings.held / ended)} were held.` : ''}
+      ${bookings.moved ? html`<span class="muted">${bookings.moved} moved at least once.</span>` : ''}
+    </p>
+    <p class="muted">Their cancel is a reply: they told you instead of leaving you waiting, so the line is open. Offer another time. A no-show said nothing. The ones you canceled aren’t counted in the held rate.</p>
+    ${
+      bookings.toLogRows.length
+        ? html`<ul class="coach">
+            ${bookings.toLogRows.map(
+              (b) => html`<li class="flag">
+                <a href="/meetings/${b.meeting_id}">${b.label}</a>
+                <span class="muted">· ${formatLocal(Date.parse(b.start), timeZone)} · its time has passed: log how it went</span>
+              </li>`
+            )}
+          </ul>`
+        : ''
+    }
+    ${
+      splits.length
+        ? html`<table class="stacked">
+            <thead><tr><th>Bookings</th><th>Ended</th><th>Held</th><th>No-show</th><th>They canceled</th><th>Held rate</th></tr></thead>
+            <tbody>${splits.map(splitRow)}</tbody>
+          </table>`
+        : ''
+    }
+    <h3>Latest bookings</h3>
+    <ol class="calls">
+      ${bookings.recent.map(
+        ({ booking, status }) => html`<li>
+          <span class="tag">${BOOKING_STATUS_LABELS[status]}</span>
+          <a href="/meetings/${booking.meeting_id}">${booking.label}</a>
+          <span class="muted">· for ${formatLocal(Date.parse(booking.start), timeZone)}${booking.moves ? ` · moved ${booking.moves === 1 ? 'once' : `${booking.moves} times`}` : ''} · <a href="/calls/${booking.call_task_id}">the call</a></span>
+        </li>`
+      )}
+    </ol>
+  </section>`;
+}
+
+export function coachingPage({ settings, report, bookings, unread }: CoachingOverview, actor: string): Html {
   const tz = settings.timeZone;
   const { gatekeeper, fastNoNextStep } = report;
   const best = bestHour(report.byHour);
@@ -133,6 +210,8 @@ export function coachingPage({ settings, report, unread }: CoachingOverview, act
         </p>
       </div>
       ${reading}
+
+      ${bookingsCard(bookings, tz)}
 
       <section class="card">
         <h2>The front desk</h2>

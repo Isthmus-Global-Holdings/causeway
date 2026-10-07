@@ -3,8 +3,10 @@
 // long calls run by outcome; the front desk, as its own leak; the objections,
 // with the openings that got past them; which follow-up gaps led to another
 // connect; the rushed connects that left with nothing agreed; and what the
-// long connects did differently. Then, before a call, the few of those that
-// bear on it (prepNotes). Pure: the rows come from call_insights.
+// long connects did differently; and the interviews those calls booked,
+// followed to how each turned out (bookingReport). Then, before a call, the
+// few of those that bear on it (prepNotes). Pure: the rows come from
+// call_insights and allBookedInterviews.
 
 import { zoneLabel } from './address';
 import { clock } from './call-history';
@@ -14,6 +16,7 @@ import {
   GATEKEEPER_RESULT_LABELS,
   GATEKEEPER_RESULTS,
   isLongConnect,
+  LONG_CONNECT_SEC,
   OBJECTIONS,
   objectionFor,
   STAGE_LABELS,
@@ -22,7 +25,7 @@ import {
   type ObjectionKind,
 } from './call-insight';
 import { formatLocal, timeOfDay } from './dates';
-import type { CallInsight } from './db';
+import type { BookedInterview, CallInsight } from './db';
 
 // Fewer calls than this in a group is too few to call it a pattern.
 export const MIN_SAMPLE = 3;
@@ -283,6 +286,140 @@ export function hourLabel(hour: number): string {
 
 export const pct = (share: number | null): string => (share === null ? '–' : `${Math.round(share * 100)}%`);
 
+// --- Interviews booked on calls, followed to how they turned out ---
+
+// A booking ends held, a no-show, or canceled: by them (they told you ahead,
+// a reply, unlike a no-show) or by you, which says nothing about them and is
+// left out of the held rate. Until then it's ahead, or its time has passed
+// and the rep hasn't logged how it went. One moved to a new time is ahead or
+// to log at that time.
+export type BookingStatus = 'held' | 'no_show' | 'they_canceled' | 'you_canceled' | 'upcoming' | 'to_log';
+
+export const BOOKING_STATUS_LABELS: Record<BookingStatus, string> = {
+  held: 'Held',
+  no_show: 'No-show',
+  they_canceled: 'They canceled',
+  you_canceled: 'You canceled',
+  upcoming: 'Ahead',
+  to_log: 'To log',
+};
+
+export function bookingStatus(
+  booking: Pick<BookedInterview, 'outcome' | 'canceled_by' | 'start'>,
+  now: number
+): BookingStatus {
+  if (booking.outcome === 'COMPLETED') return 'held';
+  if (booking.outcome === 'NO_SHOW') return 'no_show';
+  // Cancels logged before the form asked who were theirs, as far as anyone
+  // knows: the rep rarely calls one off.
+  if (booking.outcome === 'CANCELED') return booking.canceled_by === 'rep' ? 'you_canceled' : 'they_canceled';
+  return Date.parse(booking.start) > now ? 'upcoming' : 'to_log';
+}
+
+// Held, a no-show or canceled by them: what it says about them.
+const ENDED: BookingStatus[] = ['held', 'no_show', 'they_canceled'];
+
+// The bookings in one group that have ended (held, no-show or canceled by
+// them), and how many of those were held.
+export interface BookingSplit {
+  key: string;
+  label: string;
+  decided: number;
+  held: number;
+  noShow: number;
+  canceled: number; // by them
+}
+
+export const LEAD_BUCKETS = [
+  { key: 'soon', label: 'Booked up to 2 days ahead', maxSec: 2 * 86_400 },
+  { key: 'week', label: 'Booked 3–7 days ahead', maxSec: 7 * 86_400 },
+  { key: 'later', label: 'Booked 8 or more days ahead', maxSec: Infinity },
+] as const;
+
+export interface BookingRow {
+  booking: BookedInterview;
+  status: BookingStatus;
+}
+
+export interface BookingReport {
+  booked: number;
+  held: number;
+  noShow: number;
+  canceled: number; // by them: a reply
+  youCanceled: number;
+  upcoming: number;
+  toLog: number;
+  moved: number; // moved at least once, wherever it ended
+  byLeadTime: BookingSplit[]; // how far ahead it was booked
+  byInvite: BookingSplit[];
+  byCallLength: BookingSplit[]; // how long they talked on the call that booked it
+  toLogRows: BookedInterview[]; // past their time with nothing logged, oldest first
+  recent: BookingRow[]; // newest booked first
+}
+
+// The share of the ended bookings that were held.
+export const heldRate = (s: Pick<BookingSplit, 'decided' | 'held'>): number | null =>
+  s.decided ? s.held / s.decided : null;
+
+function splitBy(
+  rows: BookingRow[],
+  groups: readonly { key: string; label: string }[],
+  groupOf: (b: BookedInterview) => string | null
+): BookingSplit[] {
+  return groups
+    .map(({ key, label }) => {
+      const ended = rows.filter((r) => groupOf(r.booking) === key && ENDED.includes(r.status));
+      return {
+        key,
+        label,
+        decided: ended.length,
+        held: ended.filter((r) => r.status === 'held').length,
+        noShow: ended.filter((r) => r.status === 'no_show').length,
+        canceled: ended.filter((r) => r.status === 'they_canceled').length,
+      };
+    })
+    .filter((s) => s.decided > 0);
+}
+
+// `bookings` oldest first, as allBookedInterviews reads them.
+export function bookingReport(bookings: BookedInterview[], now: number): BookingReport {
+  const rows = bookings.map((booking) => ({ booking, status: bookingStatus(booking, now) }));
+  const count = (status: BookingStatus) => rows.filter((r) => r.status === status).length;
+  const long = clock(LONG_CONNECT_SEC);
+  return {
+    booked: rows.length,
+    held: count('held'),
+    noShow: count('no_show'),
+    canceled: count('they_canceled'),
+    youCanceled: count('you_canceled'),
+    upcoming: count('upcoming'),
+    toLog: count('to_log'),
+    moved: rows.filter((r) => r.booking.moves > 0).length,
+    byLeadTime: splitBy(rows, LEAD_BUCKETS, (b) => {
+      const ahead = Date.parse(b.first_start) / 1000 - b.booked_sec;
+      return Number.isNaN(ahead) ? null : LEAD_BUCKETS.find((l) => ahead < l.maxSec)!.key;
+    }),
+    byInvite: splitBy(
+      rows,
+      [
+        { key: 'invite', label: 'With a calendar invite' },
+        { key: 'none', label: 'No invite' },
+      ],
+      (b) => (b.invite ? 'invite' : 'none')
+    ),
+    byCallLength: splitBy(
+      rows,
+      [
+        { key: 'short', label: `Talked under ${long}` },
+        { key: 'long', label: `Talked ${long} or more` },
+      ],
+      (b) => (b.call_sec === null ? null : b.call_sec < LONG_CONNECT_SEC ? 'short' : 'long')
+    ),
+    toLogRows: rows.filter((r) => r.status === 'to_log').map((r) => r.booking),
+    recent: [...rows].reverse().slice(0, RECENT),
+  };
+}
+
 // --- Before a call ---
 
 export interface PrepInput {
@@ -292,6 +429,7 @@ export interface PrepInput {
   contactTz: string | null; // from their address
   repTimeZone: string;
   now: number; // epoch ms
+  interviews?: BookedInterview[]; // the interviews booked with this contact, oldest first
 }
 
 // The facts before a call, for the connector: the last call with them, the
@@ -361,10 +499,31 @@ export function describeCall(call: CallInsight): string {
   return parts.join('; ');
 }
 
+// Their last interview, when it was canceled: by them (a reply, so the line
+// is open) or by the rep. A no-show has its own notice on the call page
+// (missedInterview), from HubSpot.
+export function lastInterviewNote(interviews: BookedInterview[], timeZone: string, now: number): CoachNote | null {
+  const last = interviews.at(-1);
+  if (!last) return null;
+  const when = formatLocal(Date.parse(last.start), timeZone);
+  switch (bookingStatus(last, now)) {
+    case 'they_canceled':
+      return {
+        kind: 'tip',
+        text: `They canceled the interview for ${when}. They told you rather than not turning up, so the line is open: offer another time.`,
+      };
+    case 'you_canceled':
+      return { kind: 'tip', text: `You canceled the interview for ${when}. Offer another time.` };
+    default:
+      return null;
+  }
+}
+
 // The few things that bear on this call: what time it is for them and how
 // that hour has gone, how earlier calls to them and their company went (the
-// front desk by name), the objection to expect and an opening that got past
-// it, a habit to watch, and what the long connects did.
+// front desk by name), their last interview if it was canceled,
+// the objection to expect and an opening that got past it, a habit to watch,
+// and what the long connects did.
 export function prepNotes(input: PrepInput): CoachNote[] {
   const { report, near, contactId } = input;
   const notes: CoachNote[] = [];
@@ -395,6 +554,8 @@ export function prepNotes(input: PrepInput): CoachNote[] {
       text: `Last call, ${formatLocal(last.at_sec * 1000, input.repTimeZone)}: ${describeCall(last)}.${theirs.length > 1 ? ` ${theirs.length} calls so far, reached ${reached}.` : ''}`,
     });
   }
+  const interview = lastInterviewNote(input.interviews ?? [], input.repTimeZone, input.now);
+  if (interview) notes.push(interview);
   const desk = near.filter((c) => c.gate === 'gatekeeper');
   const named = desk.find((c) => c.gatekeeper_name);
   if (desk.length) {

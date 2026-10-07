@@ -28,7 +28,8 @@ HubSpot project keep `hubspot-automations`):
 - coaching, in the background: each logged call read by rules (its
   transcript turn by turn, else the rep's notes) for the phone menu, who
   answered and what the front desk did, how far it got, the objection and
-  the next step, kept read by a cron sweep; the patterns across calls on Coaching; and on
+  the next step, kept read by a cron sweep; the patterns across calls on Coaching,
+  with the interviews they booked followed to how each turned out; and on
   the call page, quietly, what to adjust after the last call and what's
   worked on calls like the next
 - see every past call, inbound and outbound, on Calls (the record), with its
@@ -40,7 +41,9 @@ HubSpot project keep `hubspot-automations`):
   from a call, optionally with a Google Calendar invite and Meet link), prep
   for them, call from them, and log how they went
 - follow up a no-show: a drafted "sorry we missed each other" email, the next
-  day's call, then a drafted last-try email
+  day's call, then a drafted last-try email; and a cancel (theirs is a reply,
+  kept apart from a no-show) with a drafted "thanks for letting me know"
+  email offering another time
 - pitch Upwork jobs from a Chrome extension (`extension/`): a shortcut pastes
   the rep's pitch at the cursor with the Loom link from the clipboard, and
   logs the job as a HubSpot deal (one per job, `deal_source = Upwork`, no
@@ -183,7 +186,7 @@ See README.md for the behaviour.
 | POST | `/calls/:id/transcribe` | Retry a failed transcription |
 | GET | `/calls` | Calls, the record: every call, in and out (dials, calls to the Twilio number, calls logged by hand), newest first, summary, notes, transcript and recording inline, each logged call's coaching tags; `?dir=in\|out`, `?q=` (names, numbers, summaries, notes, transcripts; results show where it matched), `?before=` |
 | GET | `/inbound` | Redirects to `/calls?dir=in` |
-| GET | `/coaching` | Patterns across every logged call: the front desk, rushed connects with no next step, long connects, objections and the openings that got past them, reached rate by hour of their day and time zone, follow-up timing, length by outcome. Reads a few unread calls after it answers |
+| GET | `/coaching` | Patterns across every logged call: the interviews they booked and how each turned out (held, no-show, canceled, to log), the front desk, rushed connects with no next step, long connects, objections and the openings that got past them, reached rate by hour of their day and time zone, follow-up timing, length by outcome. Reads a few unread calls after it answers |
 | POST | `/coaching/calls/:id/exclude` | Leave a logged call out of coaching (a test call), or put it back (`excluded=0`); D1 only. The Calls page's button |
 | POST | `/inbound/:id/dismiss` | Take the caller off "Waiting on a call back" without calling (D1 only) |
 | GET | `/inbound/:id` | One inbound call: who (HubSpot contact, caller ID, where the number's from), outcome, recording, transcript, HubSpot log, other calls from the number, Call back |
@@ -192,7 +195,7 @@ See README.md for the behaviour.
 | POST | `/inbound/:id/dial` (and `/dial/:dialId/end`, `/dial/:dialId/status`, `/recording/:dialId`, `/transcript/:dialId`) | Call them back from the Twilio number, the same as from a call task; a call back to a contact logs itself |
 | GET | `/meetings` | Interviews (HubSpot meetings), a week back to two weeks ahead |
 | GET | `/meetings/:id` | Prep: time, Join, questions, contact history, call, log form |
-| POST | `/meetings/:id/log` | Outcome + notes on the meeting (or its new time), follow-up task, Lead Status |
+| POST | `/meetings/:id/log` | Outcome + notes on the meeting (or its new time; who canceled, D1 only), follow-up task, Lead Status |
 | POST | `/meetings/:id/dial` (and `/dial/:dialId/end`, `/recording/:dialId`, `/transcript/:dialId`, `/transcribe`) | Call the interview's contact, the same as from a call task |
 | POST | `/calls/:id/book` | Book an interview from a call task without logging a call (optionally a calendar invite) |
 | GET | `/contacts`, `/companies` | Search HubSpot's contacts or companies (`?q=`), most recently updated first |

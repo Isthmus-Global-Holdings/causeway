@@ -13,7 +13,18 @@ import {
   type GatekeeperResult,
   type InsightFields,
 } from '../lib/call-insight';
-import { hourLabel, MIN_SAMPLE, pct, rateOf, type CoachingReport, type Rate } from '../lib/coaching';
+import {
+  BOOKING_STATUS_LABELS,
+  heldRate,
+  hourLabel,
+  MIN_SAMPLE,
+  pct,
+  rateOf,
+  type BookingReport,
+  type BookingSplit,
+  type CoachingReport,
+  type Rate,
+} from '../lib/coaching';
 import { formatLocal, parseHubSpotTime } from '../lib/dates';
 import { sqliteTime, type CallInsight, type InboundCall, type RecentCallLog, type RecentSend } from '../lib/db';
 import { parseFitLabel } from '../lib/fit';
@@ -320,6 +331,42 @@ export function afterCallSummary(after: CallNotes, nextDue: string | null, timeZ
     unsure: after.unsure,
     review: call.what_worked || call.adjust ? { whatWorked: call.what_worked, adjust: call.adjust, by: null } : null,
     notes: after.notes.map((n) => n.text),
+  };
+}
+
+// The interviews booked on calls and how each turned out, with each group's
+// size. One they canceled is a reply (they told the rep); a no-show isn't.
+// The rep's own cancels are left out of the groups.
+export function bookingSummary(bookings: BookingReport, timeZone: string, origin: string) {
+  const split = (s: BookingSplit) => ({
+    group: s.label,
+    ended: s.decided,
+    held: s.held,
+    noShow: s.noShow,
+    theyCanceled: s.canceled,
+    heldRate: pct(heldRate(s)),
+  });
+  return {
+    booked: bookings.booked,
+    held: bookings.held,
+    noShow: bookings.noShow,
+    theyCanceled: bookings.canceled,
+    youCanceled: bookings.youCanceled,
+    ahead: bookings.upcoming,
+    toLog: bookings.toLog,
+    movedAtLeastOnce: bookings.moved,
+    byHowFarAheadBooked: bookings.byLeadTime.map(split),
+    byCalendarInvite: bookings.byInvite.map(split),
+    byTalkOnTheBookingCall: bookings.byCallLength.map(split),
+    recent: bookings.recent.map(({ booking, status }) => ({
+      meetingId: booking.meeting_id,
+      with: booking.label,
+      bookedAt: localTime(booking.booked_sec * 1000, timeZone),
+      at: storedTime(booking.start, timeZone),
+      status: BOOKING_STATUS_LABELS[status],
+      moved: booking.moves,
+      url: `${origin}/meetings/${booking.meeting_id}`,
+    })),
   };
 }
 

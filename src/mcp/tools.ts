@@ -51,6 +51,7 @@ import {
   callRowSummary,
   afterCallSummary,
   beforeCallSummary,
+  bookingSummary,
   coachingSummary,
   companySummary,
   contactSummary,
@@ -434,13 +435,17 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Call coaching',
       description:
-        "Patterns across every call the rep logged (test calls left out), each read from its transcript or notes: the phone menu, who answered (them, the front desk, voicemail), how far calls get, reached rate by hour of the contact's day and by time zone, average length by outcome, the front desk (by name, and the lines that got the rep put through), objections and the openings that got past them, which follow-up gaps led to another connect, rushed connects (under 1:30) that left with no next step, and what the long connects did. Groups smaller than minCallsForAPattern are too small to call a pattern.",
+        "Patterns across every call the rep logged (test calls left out), each read from its transcript or notes: the phone menu, who answered (them, the front desk, voicemail), how far calls get, reached rate by hour of the contact's day and by time zone, average length by outcome, the front desk (by name, and the lines that got the rep put through), objections and the openings that got past them, which follow-up gaps led to another connect, rushed connects (under 1:30) that left with no next step, and what the long connects did. bookedInterviews: the interviews those calls booked, followed to how each turned out (held, no-show, canceled by them or by the rep, still ahead, or past with nothing logged: toLog, to log on its url), by how far ahead it was booked, calendar invite or not, and how long they talked on the call that booked it; one they canceled is a reply (they told the rep), a no-show isn't, and the rep's own cancels are left out of the groups. Groups smaller than minCallsForAPattern are too small to call a pattern.",
       annotations: READ,
     },
     () =>
       run(async () => {
-        const { settings, report, unread } = await coachingOverview(c);
-        return { ...coachingSummary(report, settings.timeZone, origin), callsNotReadYet: unread > 0 };
+        const { settings, report, bookings, unread } = await coachingOverview(c);
+        return {
+          ...coachingSummary(report, settings.timeZone, origin),
+          bookedInterviews: bookingSummary(bookings, settings.timeZone, origin),
+          callsNotReadYet: unread > 0,
+        };
       })
   );
 
@@ -695,12 +700,13 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Log interview',
       description:
-        'Log how an interview went: the outcome and notes on the meeting (or its new time, for RESCHEDULED), Lead Status, and a follow-up task if asked. If the app sent the contact a calendar invite, rescheduling or canceling updates it (Google emails them). start_at comes from get_meeting.',
+        "Log how an interview went: the outcome and notes on the meeting (or its new time, for RESCHEDULED), Lead Status, and a follow-up task if asked. CANCELED takes canceled_by: 'them' (they told the rep ahead: a reply, counted apart from a no-show; an EMAIL follow-up comes drafted, offering another time) or 'rep'. If the app sent the contact a calendar invite, rescheduling or canceling updates it (Google emails them). start_at comes from get_meeting.",
       inputSchema: {
         meeting_id: id,
         start_at: z.string().min(1).describe("the meeting's start_at from get_meeting"),
         outcome: z.enum(LOGGABLE_OUTCOMES.map((o) => o.value) as [string, ...string[]]),
         notes: z.string().max(10_000).default(''),
+        canceled_by: z.enum(['them', 'rep']).optional().describe("CANCELED only: who called it off (default 'them')"),
         new_date: date.optional().describe('RESCHEDULED only'),
         new_time: time.optional().describe('RESCHEDULED only'),
         next_type: z.enum(['CALL', 'EMAIL']).optional().describe('the follow-up task, if any'),
@@ -708,12 +714,12 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
       },
       annotations: WRITE,
     },
-    ({ meeting_id, start_at, outcome, notes, new_date, new_time, next_type, next_date }) =>
+    ({ meeting_id, start_at, outcome, canceled_by, notes, new_date, new_time, next_type, next_date }) =>
       run(async () => {
         const result = await logMeeting(
           c,
           meeting_id,
-          { outcome, notes, new_date, new_time, next_type: next_type ?? '', next_date: next_date ?? '' },
+          { outcome, canceled_by, notes, new_date, new_time, next_type: next_type ?? '', next_date: next_date ?? '' },
           start_at
         );
         const { timeZone } = await loadAppSettings(env);
