@@ -6,8 +6,9 @@
 //   2. if the app sent the contact a calendar invite for it, move the invite
 //      (rescheduled) or cancel it (canceled), which emails them
 //   3. if the rep asked for one, create the follow-up task (CALL or EMAIL) on
-//      the chosen day at 09:00. An EMAIL after a no-show comes with its draft
-//      written (missedInterviewEmail in prompts/follow-up-emails.ts).
+//      the chosen day at 09:00. An EMAIL after a no-show, or after they
+//      canceled, comes with its draft written (missedInterviewEmail and
+//      canceledInterviewEmail in prompts/follow-up-emails.ts).
 //   4. move the contact's Lead Status forward (to Connected, when the
 //      interview happened or was moved)
 // The form's values are stored with the row on the first submission, so a
@@ -18,10 +19,10 @@
 // the meeting off the start time in its key.
 
 import { isDate, localDateAt, parseHubSpotTime, parseTime, saidWhen, type TimeOfDay } from '../lib/dates';
-import type { MeetingLog, MeetingLogStore } from '../lib/db';
+import type { CanceledBy, MeetingLog, MeetingLogStore } from '../lib/db';
 import type { HubSpot } from '../lib/hubspot';
 import { escapeHtml, textToHtml, toTaskBodyHtml } from '../lib/richtext';
-import { missedInterviewEmail } from '../prompts/follow-up-emails';
+import { canceledInterviewEmail, missedInterviewEmail } from '../prompts/follow-up-emails';
 import { transcriptHtml, type CallTranscript } from '../lib/transcript';
 import type { Calendar } from './book-interview';
 import { nextLeadStatus } from './call-logged';
@@ -43,8 +44,17 @@ export const LOGGABLE_OUTCOMES = [
 
 export type LoggableOutcome = (typeof LOGGABLE_OUTCOMES)[number]['value'];
 
+// Canceled: who called it off. Theirs is a reply (they told you ahead),
+// unlike a no-show. Stored in D1 only; HubSpot's outcome is CANCELED either
+// way.
+export const CANCELED_BY = [
+  { value: 'them', label: 'They did (they told you)' },
+  { value: 'rep', label: 'You did' },
+] as const satisfies readonly { value: CanceledBy; label: string }[];
+
 export interface MeetingLogInput {
   outcome: LoggableOutcome;
+  canceledBy?: CanceledBy | null; // CANCELED only
   notes: string;
   newStart: { date: string; time: TimeOfDay } | null; // RESCHEDULED only, in the rep's time zone
   next: { type: TaskType; date: string } | null;
@@ -77,6 +87,12 @@ export function parseMeetingLogForm(form: Record<string, string | undefined>, to
   if (notes.length > MAX_NOTES)
     throw new WorkflowError(`Notes are limited to ${MAX_NOTES.toLocaleString('en-US')} characters.`);
 
+  let canceledBy: CanceledBy | null = null;
+  if (outcome === 'CANCELED') {
+    canceledBy = CANCELED_BY.find((c) => c.value === (form.canceled_by || 'them'))?.value ?? null;
+    if (!canceledBy) throw new WorkflowError('Pick who canceled the interview.');
+  }
+
   let newStart: MeetingLogInput['newStart'] = null;
   if (outcome === 'RESCHEDULED') {
     const date = form.new_date ?? '';
@@ -87,12 +103,12 @@ export function parseMeetingLogForm(form: Record<string, string | undefined>, to
   }
 
   const type = form.next_type ?? '';
-  if (type === '') return { outcome, notes, newStart, next: null };
+  if (type === '') return { outcome, canceledBy, notes, newStart, next: null };
   if (type !== 'CALL' && type !== 'EMAIL') throw new WorkflowError('Unknown follow-up type.');
   const date = form.next_date ?? '';
   if (!isDate(date)) throw new WorkflowError('Pick a date for the follow-up task.');
   if (date < today) throw new WorkflowError('The follow-up date is in the past.');
-  return { outcome, notes, newStart, next: { type, date } };
+  return { outcome, canceledBy, notes, newStart, next: { type, date } };
 }
 
 export function meetingLogId(meetingId: string, startAt: number | null): string {
@@ -107,6 +123,11 @@ export function interviewFollowUpSubject(type: TaskType, company: string | null,
 export function missedInterviewSubject(company: string | null, contact: string): string {
   const who = company ? `${company} (${contact})` : contact;
   return `Email: ${who} — missed interview`;
+}
+
+export function canceledInterviewSubject(company: string | null, contact: string): string {
+  const who = company ? `${company} (${contact})` : contact;
+  return `Email: ${who} — canceled interview`;
 }
 
 // What goes in hs_internal_meeting_notes: what was there, then the notes,
@@ -165,15 +186,29 @@ export async function runMeetingLogged(
       throw new WorkflowError('This interview already has an outcome in HubSpot, so nothing was changed.', 409);
     }
     const { next, newStart } = input;
-    // A no-show's email follow-up comes drafted, ready to send.
+    const canceledBy = input.outcome === 'CANCELED' ? (input.canceledBy ?? 'them') : null;
+    // An email follow-up after a no-show, or after they canceled, comes
+    // drafted, ready to send.
+    const firstName = contact.properties.firstname?.trim() || null;
+    const phone = isPhoneInterview(p.hs_meeting_location);
     const draft =
-      next?.type === 'EMAIL' && input.outcome === 'NO_SHOW'
-        ? missedInterviewEmail({
-            firstName: contact.properties.firstname?.trim() || null,
-            when: saidWhen(seenStartAt ?? opts.now, opts.now, opts.timeZone),
-            phone: isPhoneInterview(p.hs_meeting_location),
-          })
-        : null;
+      next?.type !== 'EMAIL'
+        ? null
+        : input.outcome === 'NO_SHOW'
+          ? {
+              email: missedInterviewEmail({
+                firstName,
+                when: saidWhen(seenStartAt ?? opts.now, opts.now, opts.timeZone),
+                phone,
+              }),
+              subject: missedInterviewSubject(companyName(company), contactName(contact)),
+            }
+          : canceledBy === 'them'
+            ? {
+                email: canceledInterviewEmail({ firstName, phone }),
+                subject: canceledInterviewSubject(companyName(company), contactName(contact)),
+              }
+            : null;
     let newStartIso: string | null = null;
     let newEndIso: string | null = null;
     if (newStart) {
@@ -191,6 +226,7 @@ export async function runMeetingLogged(
       company_id: company?.id ?? null,
       owner_id: p.hubspot_owner_id || null,
       outcome: input.outcome,
+      canceled_by: canceledBy,
       notes: input.notes,
       internal_notes_html: internalNotesHtml(p.hs_internal_meeting_notes, input.notes, input.transcript ?? null),
       new_start: newStartIso,
@@ -198,10 +234,8 @@ export async function runMeetingLogged(
       next_type: next?.type ?? null,
       next_subject: !next
         ? null
-        : draft
-          ? missedInterviewSubject(companyName(company), contactName(contact))
-          : interviewFollowUpSubject(next.type, companyName(company), contactName(contact)),
-      next_body: draft ? toTaskBodyHtml(draft.subject, draft.body) : null,
+        : (draft?.subject ?? interviewFollowUpSubject(next.type, companyName(company), contactName(contact))),
+      next_body: draft ? toTaskBodyHtml(draft.email.subject, draft.email.body) : null,
       next_due: next ? new Date(localDateAt(next.date, opts.timeZone, DEFAULT_NEXT_TIME)).toISOString() : null,
       calendar_event_id: await store.calendarEventFor(meetingId),
     });

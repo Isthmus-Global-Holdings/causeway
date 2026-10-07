@@ -1601,6 +1601,10 @@ export function d1InboundCallStore(db: D1Database): InboundCallStore {
 
 // --- Meeting logs (the rep's interview outcome, written to HubSpot) ---
 
+// Who called a canceled interview off: 'them' told the rep ahead (a reply),
+// 'rep' is the rep.
+export type CanceledBy = 'them' | 'rep';
+
 export interface MeetingLog {
   log_id: string;
   meeting_id: string;
@@ -1608,6 +1612,7 @@ export interface MeetingLog {
   company_id: string | null;
   owner_id: string | null;
   outcome: 'COMPLETED' | 'NO_SHOW' | 'CANCELED' | 'RESCHEDULED';
+  canceled_by: CanceledBy | null; // CANCELED only: who called it off (D1 only)
   notes: string;
   internal_notes_html: string;
   new_start: string | null;
@@ -1642,7 +1647,7 @@ export interface MeetingLogStore {
   markLeadStatusDone(logId: string, at: string): Promise<void>;
 }
 
-const MEETING_LOG_COLUMNS = `log_id, meeting_id, contact_id, company_id, owner_id, outcome, notes, internal_notes_html,
+const MEETING_LOG_COLUMNS = `log_id, meeting_id, contact_id, company_id, owner_id, outcome, canceled_by, notes, internal_notes_html,
   new_start, new_end, next_type, next_subject, next_due, next_body, calendar_event_id, outcome_at, calendar_at,
   next_task_id, lead_status_at`;
 
@@ -1688,9 +1693,9 @@ export function d1MeetingLogStore(db: D1Database): MeetingLogStore {
       await db
         .prepare(
           `INSERT OR IGNORE INTO meeting_logs
-             (log_id, meeting_id, contact_id, company_id, owner_id, outcome, notes, internal_notes_html,
+             (log_id, meeting_id, contact_id, company_id, owner_id, outcome, canceled_by, notes, internal_notes_html,
               new_start, new_end, next_type, next_subject, next_due, next_body, calendar_event_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
         .bind(
           row.log_id,
@@ -1699,6 +1704,7 @@ export function d1MeetingLogStore(db: D1Database): MeetingLogStore {
           row.company_id,
           row.owner_id,
           row.outcome,
+          row.canceled_by,
           row.notes,
           row.internal_notes_html,
           row.new_start,
@@ -2035,4 +2041,64 @@ export async function callInsightsFor(db: D1Database, callTaskIds: string[]): Pr
     .bind(JSON.stringify(callTaskIds))
     .all<CallInsight>();
   return new Map(results.map((r) => [r.call_task_id, r]));
+}
+
+// --- Interviews booked from calls, and how each turned out (coaching) ---
+
+export interface BookedInterview {
+  meeting_id: string;
+  call_task_id: string; // the CALL task that booked it
+  contact_id: string;
+  label: string; // who it's with: the call's label, else the interview's title
+  booked_sec: number; // when it was booked
+  first_start: string; // ISO: the time it was booked for
+  start: string; // ISO: its time now, after any move
+  invite: number; // 1: the contact got a calendar invite
+  by_phone: number; // 1: a phone interview; 0: video
+  outcome: MeetingLog['outcome'] | null; // the last one the rep logged; NULL: none yet
+  canceled_by: CanceledBy | null; // with CANCELED: who called it off (NULL: logged before it was asked)
+  moves: number; // times the rep logged it as moved
+  call_sec: number | null; // how long they talked on the call that booked it, once that call is read
+}
+
+// Every interview booked from a call task (while logging the call, or on its
+// own), oldest first, with the outcome the rep last logged for it on
+// Interviews; with `contactId`, only theirs. A meeting booked twice (a retry)
+// counts once, from its first booking; one from a call left out of coaching
+// stays out. The newest MAX_INSIGHTS, like allCallInsights.
+export async function allBookedInterviews(db: D1Database, contactId: string | null = null): Promise<BookedInterview[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT * FROM (
+       WITH booked AS (
+         SELECT booked_meeting_id AS meeting_id, call_task_id AS task_id, contact_id, title, created_at,
+                book_start AS start_at, book_invite AS invite, book_phone AS phone
+         FROM call_logs WHERE booked_meeting_id IS NOT NULL
+         UNION ALL
+         SELECT meeting_id, task_id, contact_id, title, created_at, start_at, invite, phone
+         FROM meeting_bookings WHERE meeting_id IS NOT NULL
+       ),
+       firsts AS (
+         SELECT *, ROW_NUMBER() OVER (PARTITION BY meeting_id ORDER BY created_at) AS n FROM booked
+       )
+       SELECT f.meeting_id, f.task_id AS call_task_id, f.contact_id, COALESCE(i.label, f.title) AS label,
+              CAST(strftime('%s', f.created_at) AS INTEGER) AS booked_sec, f.start_at AS first_start,
+              COALESCE((SELECT m.new_start FROM meeting_logs m
+                        WHERE m.meeting_id = f.meeting_id AND m.outcome = 'RESCHEDULED' AND m.new_start IS NOT NULL
+                        ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1), f.start_at) AS start,
+              f.invite, CASE WHEN f.phone IS NULL THEN 0 ELSE 1 END AS by_phone,
+              l.outcome, l.canceled_by,
+              (SELECT COUNT(*) FROM meeting_logs m WHERE m.meeting_id = f.meeting_id AND m.outcome = 'RESCHEDULED') AS moves,
+              CASE WHEN i.reached = 1 THEN COALESCE(i.talk_sec, i.duration_sec) END AS call_sec
+       FROM firsts f
+       LEFT JOIN call_insights i ON i.call_task_id = f.task_id
+       LEFT JOIN meeting_logs l ON l.rowid = (SELECT m.rowid FROM meeting_logs m WHERE m.meeting_id = f.meeting_id
+                                             ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1)
+       WHERE f.n = 1 AND COALESCE(i.excluded, 0) = 0 AND (?1 IS NULL OR f.contact_id = ?1)
+       ORDER BY f.created_at DESC, f.meeting_id DESC LIMIT ?2)
+       ORDER BY booked_sec, meeting_id`
+    )
+    .bind(contactId, MAX_INSIGHTS)
+    .all<BookedInterview>();
+  return results;
 }

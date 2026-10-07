@@ -4,7 +4,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { saidWhen } from '../src/lib/dates.ts';
-import { closeTheLoopEmail, missedInterviewEmail } from '../src/prompts/follow-up-emails.ts';
+import { canceledInterviewEmail, closeTheLoopEmail, missedInterviewEmail } from '../src/prompts/follow-up-emails.ts';
 import { isTemplatedFollowUp, isWarmFollowUp, rankQueue, type QueueRow } from '../src/workflows/email-queue.ts';
 
 const TZ = 'America/Denver';
@@ -37,6 +37,17 @@ test('the missed-interview email: short, no blame, two easy ways back', () => {
   assert.match(phone.body, /I can just give you a call, so tell me a time/);
 });
 
+test('the canceled-interview email thanks them for saying so and offers another time', () => {
+  const video = canceledInterviewEmail({ firstName: 'Drew', phone: false });
+  assert.equal(video.subject, 'thanks for letting me know');
+  assert.match(video.body, /^Hi Drew,\n\nThanks for letting me know\. No worries at all\./);
+  assert.match(video.body, /Happy to just give you a call instead/);
+  assert.match(video.body, /3 quick questions by email/);
+  const phone = canceledInterviewEmail({ firstName: null, phone: true });
+  assert.match(phone.body, /^Hi there,/);
+  assert.match(phone.body, /Tell me a time and I'll give you a call then\./);
+});
+
 test('the last-try email closes the loop without asking again', () => {
   const email = closeTheLoopEmail({ firstName: 'Drew' });
   assert.equal(email.subject, 'closing the loop');
@@ -48,6 +59,8 @@ test('the templates stay in the rep’s voice: no em dashes or semicolons', () =
   for (const email of [
     missedInterviewEmail({ firstName: 'A', when: 'today', phone: true }),
     missedInterviewEmail({ firstName: 'A', when: 'today', phone: false }),
+    canceledInterviewEmail({ firstName: 'A', phone: true }),
+    canceledInterviewEmail({ firstName: 'A', phone: false }),
     closeTheLoopEmail({ firstName: 'A' }),
   ]) {
     assert.doesNotMatch(email.subject + email.body, /[—;]/);
@@ -61,6 +74,8 @@ test('the app’s follow-up subjects are recognised', () => {
   assert.equal(isWarmFollowUp('Email: Pine Hollow (Drew Pollard) — follow up on call'), true);
   assert.equal(isWarmFollowUp('Email: Pine Hollow (VFWPA outreach)'), false);
   assert.equal(isTemplatedFollowUp('Email: Pine Hollow (Drew Pollard) — missed interview'), true);
+  assert.equal(isWarmFollowUp('Email: Pine Hollow (Drew Pollard) — canceled interview'), true);
+  assert.equal(isTemplatedFollowUp('Email: Pine Hollow (Drew Pollard) — canceled interview'), true);
   assert.equal(
     isTemplatedFollowUp('Email: Pine Hollow (Drew Pollard) — follow up on call'),
     false,

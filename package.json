@@ -12,7 +12,7 @@
     "format:check": "prettier --check .",
     "test": "tsx --test test/*.test.ts",
     "check": "npm run typecheck && npm run lint && npm run format:check && npm test",
-    "deploy": "wrangler deploy",
+    "deploy": "npm run db:migrate && wrangler deploy",
     "db:migrate:local": "wrangler d1 migrations apply hubspot-automations-db --local",
     "db:migrate": "wrangler d1 migrations apply hubspot-automations-db --remote",
     "db:log:local": "wrangler d1 execute hubspot-automations-db --local --command \"SELECT id, actor, workflow, task_id, action, outcome, error, created_at FROM audit_log ORDER BY created_at DESC LIMIT 20\"",

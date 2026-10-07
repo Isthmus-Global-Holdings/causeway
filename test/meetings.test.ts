@@ -280,6 +280,7 @@ test('parseMeetingLogForm checks the outcome, the new time and the follow-up', (
   const today = '2026-09-25';
   assert.deepEqual(parseMeetingLogForm({ outcome: 'COMPLETED', notes: 'a\r\nb', next_type: '' }, today), {
     outcome: 'COMPLETED',
+    canceledBy: null,
     notes: 'a\nb',
     newStart: null,
     next: null,
@@ -289,6 +290,10 @@ test('parseMeetingLogForm checks the outcome, the new time and the follow-up', (
     { date: '2026-09-29', time: { hour: 14, minute: 5 } }
   );
   assert.throws(() => parseMeetingLogForm({ outcome: 'SCHEDULED' }, today), /Pick how/);
+  assert.equal(parseMeetingLogForm({ outcome: 'CANCELED', canceled_by: 'rep' }, today).canceledBy, 'rep');
+  assert.equal(parseMeetingLogForm({ outcome: 'CANCELED' }, today).canceledBy, 'them', 'theirs unless said');
+  assert.equal(parseMeetingLogForm({ outcome: 'COMPLETED', canceled_by: 'rep' }, today).canceledBy, null);
+  assert.throws(() => parseMeetingLogForm({ outcome: 'CANCELED', canceled_by: 'boss' }, today), /who canceled/);
   assert.throws(() => parseMeetingLogForm({ outcome: 'RESCHEDULED', new_date: '2026-09-29' }, today), /new date/);
   assert.throws(
     () => parseMeetingLogForm({ outcome: 'RESCHEDULED', new_date: '2026-09-24', new_time: '10:00' }, today),
@@ -866,6 +871,48 @@ test('a no-show with an email follow-up creates the task with its draft written,
   assert.match(draft.body, /happy to just give you a call instead/i, 'a video interview offers a call instead');
   assert.match(draft.body, /3 quick questions by email/);
   assert.equal(hs.objects.get('contacts/10')!.properties.hs_lead_status, 'NEW');
+});
+
+test('canceled by them: the email follow-up comes drafted, and who canceled is kept in D1', async () => {
+  const store = d1MeetingLogStore(db);
+  await runMeetingLogged(
+    hs,
+    store,
+    'm1',
+    START,
+    {
+      outcome: 'CANCELED',
+      canceledBy: 'them',
+      notes: 'Texted that a truck broke down',
+      newStart: null,
+      next: { type: 'EMAIL', date: '2026-09-25' },
+    },
+    OPTS
+  );
+  assert.equal(hs.objects.get('meetings/m1')!.properties.hs_meeting_outcome, 'CANCELED');
+  const task = hs.created[0].properties;
+  assert.equal(task.hs_task_subject, 'Email: Granger Hauling (Sam Granger) — canceled interview');
+  const draft = parseTaskBody(task.hs_task_body!)!;
+  assert.equal(draft.subject, 'thanks for letting me know');
+  assert.match(draft.body, /^Hi Sam,\n\nThanks for letting me know\./);
+  const row = await db
+    .prepare(`SELECT canceled_by FROM meeting_logs WHERE meeting_id = 'm1'`)
+    .first<{ canceled_by: string }>();
+  assert.equal(row?.canceled_by, 'them');
+});
+
+test('canceled by the rep: a plain follow-up, no draft', async () => {
+  await runMeetingLogged(
+    hs,
+    d1MeetingLogStore(db),
+    'm1',
+    START,
+    { outcome: 'CANCELED', canceledBy: 'rep', notes: '', newStart: null, next: { type: 'EMAIL', date: '2026-09-25' } },
+    OPTS
+  );
+  const task = hs.created[0].properties;
+  assert.equal(task.hs_task_subject, 'Email: Granger Hauling (Sam Granger) — follow up on interview');
+  assert.ok(!task.hs_task_body, 'no template for the rep’s own cancel');
 });
 
 test('a no-show from a phone interview offers another time for the call', async () => {

@@ -427,7 +427,9 @@ weeks ahead.
    first, or the browser), recorded and transcribed when recording is on.
    For a phone interview there's no Join, and **Call them** comes first.
 4. **Log it.** After it: It happened, No show, Moved to another time, or
-   Canceled, your notes, and an optional follow-up task. Like `call_logs`,
+   Canceled (and who canceled: they did, or you did; kept in D1 only, since
+   HubSpot's outcome is Canceled either way), your notes, and an optional
+   follow-up task. Like `call_logs`,
    each write is recorded in `meeting_logs` as it lands, so a retry resumes:
    1. the meeting gets the outcome, and your notes (and the call's summary
       and transcript, if you called from its page) are added to its internal
@@ -459,6 +461,17 @@ not Claude, and the draft page leaves Claude out for them.
    doesn't reach them, the log form's follow-up is already on **Email: last
    try**, created with the "closing the loop" draft: you'll leave it here, and
    they can reply whenever. After that, let it rest.
+
+### When they cancel
+
+A cancel is a reply: they told you ahead instead of leaving you waiting, so
+the line is open. Log it as **Canceled**, with **They did** under who
+canceled (the default). The follow-up switches to an **Email** due today,
+drafted from the same templates: "thanks for letting me know", another time
+(a phone interview: "tell me a time and I'll give you a call"), or 3 quick
+questions by email. Before your next call to them, the call page's coaching
+says they canceled and the line is open. Coaching counts their cancels apart
+from no-shows, and leaves the ones you canceled out of the held rate.
 
 Times are in your time zone, picked on /settings (the `TZ` var until then).
 
@@ -560,11 +573,19 @@ page, under the script:
 - **Before this call**: what time it is for them and how that hour has gone
   (and your best hour), how the last call with them went, the front desk at
   their company by name with the line that has got you through before, the
-  objection to expect with an opening that got past it, rushed connects
-  piling up lately, and what your longest connect did.
+  objection to expect with an opening that got past it, their last
+  interview if it was canceled (by them: the line is open, offer another
+  time), rushed connects piling up lately, and what your longest connect did.
 
 **Coaching** in the navbar has the patterns across every call:
 
+- The interviews your calls booked, followed to how each turned out: held,
+  no-show, canceled by them (they told you ahead: a reply, unlike a no-show)
+  or by you, still ahead, or past its time with nothing logged (listed, to
+  log on Interviews), and how many were moved. By how far ahead it was
+  booked, with a calendar invite or not, and how long you talked on the call
+  that booked it, each with the share held (your own cancels left out). From the outcomes logged on
+  Interviews (`meeting_logs`); one set straight in HubSpot isn't seen.
 - The front desk as its own category: how often it put you through, what it
   did otherwise, by name, and what you said when it put you through.
 - Rushed connects: under 1:30 of talk with no next step, listed.
@@ -586,7 +607,8 @@ On **Calls**, each logged call shows its tags too, with **Leave out of
 coaching** for a test call (and **Put back in coaching**).
 
 It reads only D1 (`call_insights`, one row per logged call, replaced when a
-better source arrives or the rules change), so it never waits on HubSpot and
+better source arrives or the rules change; the bookings from `call_logs`,
+`meeting_bookings` and `meeting_logs` as they are), so it never waits on HubSpot and
 writes nothing to it. A **cron sweep** every 10 minutes keeps it read: it
 runs again any transcription that died (stuck "transcribing" for over 5
 minutes, or never started), then reads up to ten calls not read yet, read
@@ -971,16 +993,15 @@ Twilio API key, and Twilio asks the app's TwiML App what to do with each call.
    ```bash
    npx wrangler secret put TWILIO_API_KEY_SECRET
    ```
-4. `npm run db:migrate` and `npm run deploy`, then pick **This browser**
+4. `npm run deploy`, then pick **This browser**
    under **Call with** in /settings. The `/twilio/*` Bypass policy already
    covers the TwiML App's webhooks, which are signed like the rest.
 
 Recording needs nothing more: the Workers AI binding (`ai` in
-`wrangler.jsonc`) deploys with the Worker. Apply `migrations/0006` with
-`npm run db:migrate`, then turn on **Record and transcribe calls** in /settings.
+`wrangler.jsonc`) deploys with the Worker, and `npm run deploy` applies
+`migrations/0006`. Then turn on **Record and transcribe calls** in /settings.
 
-For calls to the number, apply `migrations/0008` with `npm run db:migrate`,
-deploy, then point the number at the Worker (Twilio Console → Phone Numbers →
+For calls to the number, deploy (which applies `migrations/0008`), then point the number at the Worker (Twilio Console → Phone Numbers →
 the number → Voice configuration, or the CLI):
 
 ```bash
@@ -1010,8 +1031,7 @@ wrangler secret put HUBSPOT_ACCESS_TOKEN
 # the same Bypass for /mcp, /oauth/mcp/* and /.well-known/*: Claude's servers
 # call them directly, and the Worker checks the connector's OAuth token
 # instead (/authorize stays behind Access: that's where you approve it).
-npm run db:migrate
-npm run deploy
+npm run deploy   # applies any new migrations to remote D1 first
 ```
 
 The Worker refuses every request until `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`

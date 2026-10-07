@@ -1,5 +1,6 @@
 // Coaching, for the pages and the Claude connector alike: the patterns across
-// every call (the Coaching page, the call_coaching tool), and the few notes
+// every call and how the interviews they booked turned out (the Coaching
+// page, the call_coaching tool), and the few notes
 // on a call page, before it (what's worked on calls like it) and after it
 // (what to adjust). Only reads: the calls are read for coaching in the
 // background (workflows/call-insight.ts), and opening the report reads a
@@ -22,8 +23,17 @@ import {
   type Tag,
   type TagSources,
 } from '../lib/call-insight';
-import { callBrief, coachingReport, prepNotes, type CallBrief, type CoachingReport } from '../lib/coaching';
 import {
+  bookingReport,
+  callBrief,
+  coachingReport,
+  prepNotes,
+  type BookingReport,
+  type CallBrief,
+  type CoachingReport,
+} from '../lib/coaching';
+import {
+  allBookedInterviews,
   allCallInsights,
   callInsightsNear,
   d1CallInsightStore,
@@ -46,20 +56,27 @@ const READ_ON_OPEN = 8;
 export interface CoachingOverview {
   settings: AppSettings;
   report: CoachingReport;
+  bookings: BookingReport;
   unread: number; // logged calls not read yet (up to READ_ON_OPEN + 1)
 }
 
 export async function coachingOverview(c: Context<AppEnv>): Promise<CoachingOverview> {
   const deps = insightDeps(c.env);
-  const [settings, rows, unread] = await Promise.all([
+  const [settings, rows, booked, unread] = await Promise.all([
     loadAppSettings(c.env),
     allCallInsights(c.env.DB),
+    allBookedInterviews(c.env.DB),
     deps.insights.needing(READ_ON_OPEN + 1, RULES_VERSION),
   ]);
   if (unread.length) {
     afterResponse(c, 'reading calls for coaching', () => readUnreadCalls(deps, READ_ON_OPEN, Date.now()));
   }
-  return { settings, report: coachingReport(rows, settings.timeZone), unread: unread.length };
+  return {
+    settings,
+    report: coachingReport(rows, settings.timeZone),
+    bookings: bookingReport(booked, Date.now()),
+    unread: unread.length,
+  };
 }
 
 // One logged call's reading: its tags, who decided them, and what to adjust.
@@ -90,9 +107,10 @@ export async function callCoaching(
 ): Promise<CallCoaching> {
   try {
     const { contact, company } = parties;
-    const [rows, near, after] = await Promise.all([
+    const [rows, near, interviews, after] = await Promise.all([
       allCallInsights(c.env.DB),
       callInsightsNear(c.env.DB, contact.id, company?.id ?? null),
+      allBookedInterviews(c.env.DB, contact.id),
       afterTaskId ? callNotes(c.env.DB, afterTaskId) : null,
     ]);
     const contactTz =
@@ -105,6 +123,7 @@ export async function callCoaching(
       contactTz,
       repTimeZone: settings.timeZone,
       now,
+      interviews,
     };
     return { before: prepNotes(input), brief: callBrief(input), after };
   } catch (err) {
