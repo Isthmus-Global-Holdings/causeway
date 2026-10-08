@@ -1,18 +1,19 @@
 // What the call pages and the Claude connector both do with CALL tasks: the
-// ranked list, logging a call, moving one, booking an interview, taking a
-// caller off "Waiting on a call back". Each checks,
+// ranked list, logging a call, moving one, dropping one, booking an
+// interview, taking a caller off "Waiting on a call back". Each checks,
 // runs the workflow and writes the audit row; the caller only parses its
 // input and answers (a redirect, or a tool result).
 
 import type { Context } from 'hono';
 import { googleCalendar, insightDeps, loadAppSettings, type AppSettings } from '../lib/app-settings';
 import { afterResponse } from '../lib/background';
-import { localDate, parseTime } from '../lib/dates';
+import { localDate, parseSaidTime } from '../lib/dates';
 import {
   addSetTimeCallToPlan,
   d1CallLogStore,
   d1DialStore,
   d1MeetingBookingStore,
+  d1TaskLocks,
   dismissCallBack,
   engagementByContact,
   insertAudit,
@@ -49,7 +50,7 @@ import {
 import { dialState, isLive } from '../workflows/dial';
 import { loadMeetings, type MeetingRow } from '../workflows/meeting-queue';
 import { WorkflowError } from '../workflows/parties';
-import { snoozeCall } from '../workflows/task-actions';
+import { dropCall, snoozeCall } from '../workflows/task-actions';
 import { syncTranscript } from '../workflows/transcribe';
 import { countFromLog } from './coaching';
 
@@ -266,17 +267,19 @@ export async function bookInterview(c: Context<AppEnv>, taskId: string, form: Re
 
 // Moves the call to another day ("YYYY-MM-DD") without logging one, at
 // `time` ("HH:MM", or "" to keep its time of day): a time makes it a set-time
-// call (lib/set-time.ts).
+// call (lib/set-time.ts). `zone` is the one the time was said in, when it's
+// theirs (the day is theirs then too); blank is the rep's.
 export async function snoozeCallTask(
   c: Context<AppEnv>,
   taskId: string,
   date: string,
-  time = ''
+  time = '',
+  zone = ''
 ): Promise<{ dueAt: number }> {
   const actor = c.get('actor');
   const { timeZone } = await loadAppSettings(c.env);
-  const at = time ? parseTime(time) : null;
-  const moveTo = time ? `${date} ${time}` : date;
+  const at = time ? parseSaidTime(time, zone) : null;
+  const moveTo = time ? `${date} ${time}${zone ? ` ${zone}` : ''}` : date;
   try {
     if (time && !at) throw new WorkflowError('Enter a time like 4pm or 4:30pm, or leave it blank.');
     const { dueAt } = await snoozeCall(createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN), taskId, date, at, {
@@ -309,6 +312,28 @@ export async function snoozeCallTask(
       outcome: 'failed',
       error: errorText(err),
     });
+    throw err;
+  }
+}
+
+// The rep won't make this call. Marks the CALL task DEFERRED in HubSpot,
+// which takes it off the queue, and creates no follow-up. Refused while a
+// call for it is live.
+export async function dropCallTask(c: Context<AppEnv>, taskId: string): Promise<void> {
+  const actor = c.get('actor');
+  const audit = (outcome: 'success' | 'failed', error?: string) =>
+    insertAudit(c.env.DB, { actor, workflow: 'task-action', taskId, action: 'drop call task', outcome, error });
+  try {
+    await dropCall(
+      createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN),
+      { callLogs: d1CallLogStore(c.env.DB), dials: d1DialStore(c.env.DB), locks: d1TaskLocks(c.env.DB) },
+      taskId,
+      Math.floor(Date.now() / 1000)
+    );
+    await audit('success');
+    await removeFromPlan(c.env.DB, 'call_plan', taskId);
+  } catch (err) {
+    await audit('failed', errorText(err));
     throw err;
   }
 }

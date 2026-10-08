@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { formatAddress, formatPlace, mapEmbedUrl, mapsUrl } from '../src/lib/address.ts';
+import { formatAddress, formatPlace, mapEmbedUrl, mapsUrl, partyTimeZone } from '../src/lib/address.ts';
 
 test('a full US address reads like a mailing label, without the country', () => {
   assert.deepEqual(
@@ -56,4 +56,12 @@ test('the map zooms in on a street and out on a city', () => {
     'https://maps.google.com/maps?q=12%20Main%20St%2C%20Provo%2C%20UT%2084601&z=14&output=embed'
   );
   assert.equal(mapEmbedUrl(['Provo, UT'], false), 'https://maps.google.com/maps?q=Provo%2C%20UT&z=10&output=embed');
+});
+
+test("their time zone is the contact's, else their company's", () => {
+  const at = (state: string | null, country: string | null = null) => ({ properties: { state, country } });
+  assert.equal(partyTimeZone(at('NY'), at('CA')), 'America/New_York');
+  assert.equal(partyTimeZone(at(null), at('California')), 'America/Los_Angeles');
+  assert.equal(partyTimeZone(null, at(null, 'Panama')), 'America/Panama');
+  assert.equal(partyTimeZone(at(null), null), null);
 });

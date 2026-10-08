@@ -1,14 +1,16 @@
 // Small task changes the rep would otherwise make in HubSpot's task UI:
 //   - move a CALL task to another day or a set time without logging a call
 //   - drop an EMAIL task that won't be sent (DEFERRED, as done by hand before)
+//   - drop a CALL task the rep won't make (DEFERRED too)
 // Each is one PATCH to an absolute value, so a double submit or a retry
 // writes the same thing again and needs no D1 row.
 
-import { isDate, localDate, localDateAt, parseHubSpotTime, sameTimeOn, type TimeOfDay } from '../lib/dates';
-import type { ConfirmationStore, SentEmailStore } from '../lib/db';
+import { isDate, localDate, parseHubSpotTime, saidAt, sameTimeOn, type SaidTime, type TimeOfDay } from '../lib/dates';
+import type { CallLogStore, ConfirmationStore, DialStore, SentEmailStore, TaskLocks } from '../lib/db';
 import type { HubSpot, HubSpotObject } from '../lib/hubspot';
 import { hasReminder, reminderFor } from '../lib/set-time';
-import { WorkflowError, type TaskType } from './parties';
+import { DIAL_MAX_SEC, dialState, isLive } from './dial';
+import { withTaskLock, WorkflowError, type TaskType } from './parties';
 
 const DEFAULT_CALL_TIME: TimeOfDay = { hour: 9, minute: 0 };
 const PROPS = ['hs_task_type', 'hs_task_status', 'hs_timestamp', 'hs_task_reminders'];
@@ -29,13 +31,13 @@ export async function snoozeCall(
   hs: HubSpot,
   taskId: string,
   date: string,
-  time: TimeOfDay | null,
+  time: SaidTime | null,
   opts: { now: number; timeZone: string }
 ): Promise<{ dueAt: number }> {
   if (!isDate(date)) throw new WorkflowError('Pick a day to move the call to.');
   const today = localDate(opts.now, opts.timeZone);
   if (time ? date < today : date <= today) throw new WorkflowError('Pick a day after today, or a time.');
-  const dueAt = time ? localDateAt(date, opts.timeZone, time) : null;
+  const dueAt = time ? saidAt(date, time, opts.timeZone) : null;
   if (dueAt !== null && dueAt <= opts.now) throw new WorkflowError('That time has already passed.');
   const task = await loadOpen(hs, taskId, 'CALL');
   if (task.properties.hs_task_status !== 'NOT_STARTED') {
@@ -93,4 +95,47 @@ export async function dropEmail(
     }
     throw new WorkflowError(SEND_STARTED, 409);
   }
+}
+
+const CALL_LOGGED =
+  'This call was logged from this app, so its task completes with the log. Open its call page instead.';
+const CALL_LIVE = 'A call for this task is still in progress. Drop it once the call has ended.';
+
+// Why a call task can't be dropped now, if it can't: a call logged here
+// finishes through that flow, which completes it, and a live call is the
+// rep's to finish. Every dial young enough to be live is checked, not only
+// the latest: a stale page can start a second while a long first one is on.
+async function callStarted(stores: DropCallStores, taskId: string, nowSec: number): Promise<string | null> {
+  const [log, dials] = await Promise.all([
+    stores.callLogs.get(taskId),
+    stores.dials.startedSince(taskId, nowSec - DIAL_MAX_SEC),
+  ]);
+  if (log) return CALL_LOGGED;
+  if (dials.some((d) => isLive(dialState(d, nowSec)))) return CALL_LIVE;
+  return null;
+}
+
+interface DropCallStores {
+  callLogs: Pick<CallLogStore, 'get'>;
+  dials: Pick<DialStore, 'startedSince'>;
+  locks: TaskLocks;
+}
+
+// The rep won't make this call. Under the task's lock, which logging and
+// dialling hold from their check of the task to their D1 row: so neither
+// starts between this check and the write, and once it's written they see
+// the task dropped and refuse.
+export async function dropCall(hs: HubSpot, stores: DropCallStores, taskId: string, nowSec: number): Promise<void> {
+  await withTaskLock(stores.locks, taskId, nowSec, async (beforeWrite) => {
+    const started = await callStarted(stores, taskId, nowSec);
+    if (started) throw new WorkflowError(started, 409);
+    const task = await loadOpen(hs, taskId, 'CALL');
+    const status = task.properties.hs_task_status;
+    if (status === 'DEFERRED') return;
+    if (status !== 'NOT_STARTED') {
+      throw new WorkflowError('This call task is no longer open, so it wasn’t dropped.', 409);
+    }
+    beforeWrite();
+    await hs.updateObject('tasks', taskId, { hs_task_status: 'DEFERRED' });
+  });
 }

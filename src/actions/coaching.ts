@@ -8,7 +8,7 @@
 // few that haven't been, after it answers.
 
 import type { Context } from 'hono';
-import { stateTimeZone } from '../lib/address';
+import { partyTimeZone } from '../lib/address';
 import { insightDeps, loadAppSettings, type AppSettings } from '../lib/app-settings';
 import { afterResponse } from '../lib/background';
 import {
@@ -216,9 +216,7 @@ export async function callCoaching(
       allBookedInterviews(c.env.DB, contact.id),
       afterTaskId ? callNotes(c.env.DB, afterTaskId) : null,
     ]);
-    const contactTz =
-      stateTimeZone(contact.properties.state, contact.properties.country) ??
-      (company ? stateTimeZone(company.properties.state, company.properties.country) : null);
+    const contactTz = partyTimeZone(contact, company);
     const input = {
       report: coachingReport(rows, settings.timeZone),
       near,

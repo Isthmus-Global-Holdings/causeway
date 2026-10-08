@@ -97,6 +97,32 @@ export function stateTimeZone(state: string | null | undefined, country?: string
   return (code && STATE_ZONES[code]) ?? null;
 }
 
+// A contact's zone, else their company's: where a call to them lands.
+export function partyTimeZone(
+  contact: { properties: AddressProps } | null,
+  company: { properties: AddressProps } | null
+): string | null {
+  const zone = (r: { properties: AddressProps } | null) =>
+    r ? stateTimeZone(r.properties.state, r.properties.country) : null;
+  return zone(contact) ?? zone(company);
+}
+
+// The zones a time can be typed in, east to west: where the prospects are.
+export const PROSPECT_ZONES = [
+  'America/Puerto_Rico',
+  EASTERN,
+  'America/Panama',
+  'America/Bogota',
+  CENTRAL,
+  'America/Mexico_City',
+  'America/Costa_Rica',
+  MOUNTAIN,
+  'America/Phoenix',
+  PACIFIC,
+  'America/Anchorage',
+  'Pacific/Honolulu',
+];
+
 const ZONE_LABELS: Record<string, string> = {
   [EASTERN]: 'Eastern',
   [CENTRAL]: 'Central',

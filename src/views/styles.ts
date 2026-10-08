@@ -268,6 +268,13 @@ form.search { display: flex; gap: var(--space-2); align-items: center; }
 form.move { display: flex; align-items: center; gap: var(--space-1); }
 form.move input[type=date] { width: auto; padding: 0.3rem var(--space-2); }
 form.move input[data-time] { width: 6rem; padding: 0.3rem var(--space-2); }
+.said-time { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-2); }
+.said-time input[data-time] { flex: 1 1 6rem; }
+.said-time select { width: auto; }
+.said-time output { flex-basis: 100%; font-size: 0.85em; }
+.said-time output:empty { display: none; }
+form.move .said-time { display: inline-flex; gap: var(--space-1); }
+form.move .said-time select { padding: 0.3rem var(--space-2); }
 button, .button { font: inherit; cursor: pointer; padding: 0.35rem var(--space-3); border-radius: var(--radius-md); white-space: nowrap;
                   border: 1px solid var(--line); background: var(--card); color: var(--fg); text-decoration: none; display: inline-block; }
 button.primary, .button.primary { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }

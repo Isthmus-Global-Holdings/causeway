@@ -158,11 +158,36 @@ timeline like one made in HubSpot.
   ranked ones. Calls to make reloads itself then, and logging a call goes to it
   next. One from an earlier day that nobody made is just overdue. A reminder
   set by hand in HubSpot counts too.
+- **In their time zone**: when they say "call me at 2 or 3 in the afternoon"
+  and mean their afternoon, type the time as they said it and pick their zone
+  beside it, "Eastern (them)" (from their state or country, else their
+  company's). Without it, the time is yours. As you type, a line under it
+  shows the time on the other clock ("= Fri 12:00 PM your time", or "= Fri
+  2:00 PM Eastern" in their address's zone). The app turns it into your time
+  once, when it's saved, so the task, its reminder, the queue and every other
+  page show your time, the same as any other call. The zone you picked isn't
+  kept: a set-time call for someone whose address is in another zone shows
+  the time there on Calls to make, named ("1:00 PM Eastern"), not as the time
+  they gave. The same picker is on Move, the log
+  form's follow-up, booking an interview and rescheduling one, and the
+  connector's tools take it as `time_zone`.
 - **Move** (on each call that's due) pushes it to another day without logging
   a call. Tomorrow is filled in. The task keeps its time of day (09:00 if it
   has none). Give it a time and it's a set-time call, which can be later
   today; a set-time call moved without one keeps its time. The form sends the
   date itself, not "+1 day", so a double submit lands on the same day.
+- **Drop** (on each call in the list, and under the call page's log form,
+  after a confirm) is for a call you won't make. The `CALL` task is set to
+  `DEFERRED`, which takes it off the queue: no call is logged and no
+  follow-up is created. It's refused while any call for the task is live, and
+  once the call was logged from the app (that task completes with its log).
+  A dropped task is never dialled or logged. Drop, logging a call and
+  dialling each hold the task's lock (`task_locks` in D1) from their check of
+  the task to their write, so none of them starts in the middle of another:
+  the one that comes second sees what the first did (the task dropped, or a
+  call live or logged) and refuses, or says the task is being changed and to
+  try again in a moment. The call page of a dropped task says so, without the
+  log form.
 - **The call page** puts what you need on the call in one place, in this
   order: script, numbers, coaching, recording, HubSpot history, about them,
   and the log form beside them (below them on a phone). A bar of links to
@@ -782,7 +807,7 @@ as the pages.
   work, by theme, with every quote), `get_meeting` (prep and the interview
   questions), `recent_inbound_calls` and `unfinished`.
 - **Writes:** `save_draft`, `mark_email_sent`, `drop_email_task`, `log_call`,
-  `snooze_call`, `review_call` (a call's review for coaching, in the app
+  `snooze_call`, `drop_call_task`, `review_call` (a call's review for coaching, in the app
   only), `book_interview` (never with a calendar invite: send one from
   the interview's page), `log_meeting`, `open_task_for_contact` and
   `save_contact_numbers` (phone and mobile, with extensions). Each is

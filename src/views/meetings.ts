@@ -1,5 +1,6 @@
 import { html, raw } from 'hono/html';
 import type { CallNotes } from '../actions/coaching';
+import { partyTimeZone } from '../lib/address';
 import { formatLocal, localDate, saidAhead } from '../lib/dates';
 import type { Dial, MeetingLog, RecentSend } from '../lib/db';
 import type { MeetingOutcome } from '../lib/hubspot';
@@ -41,7 +42,16 @@ import { companyName, contactName } from '../workflows/parties';
 import type { TodayCounts } from '../workflows/today';
 import { coachingCard } from './coaching';
 import { whereTheyAre } from './facts';
-import { conversationBox, flash as flashBox, layout, recordUrl, timeInput, todayStrip, type Html } from './layout';
+import {
+  conversationBox,
+  flash as flashBox,
+  layout,
+  recordUrl,
+  SAID_TIME_SCRIPT,
+  timeInput,
+  todayStrip,
+  type Html,
+} from './layout';
 
 export const OUTCOME_LABELS: Record<MeetingOutcome, string> = {
   SCHEDULED: 'Scheduled',
@@ -270,7 +280,15 @@ function logForm(state: MeetingPageState, startAt: number | null): Html {
       </div>
       <div class="field">
         <label for="new_time">New time</label>
-        ${timeInput({ name: 'new_time', id: 'new_time' })}
+        ${timeInput({
+          name: 'new_time',
+          id: 'new_time',
+          zones: {
+            yours: state.timeZone,
+            theirs: partyTimeZone(state.parties.contact, state.parties.company),
+            dateName: 'new_date',
+          },
+        })}
       </div>
     </div>
     <div class="field">
@@ -425,7 +443,7 @@ export function meetingPage(state: MeetingPageState, actor: string): Html {
               </div>`
         }
       </div>
-      ${open && !live ? html`<script>${raw(RESCHEDULE_SCRIPT)}</script>` : ''}
+      ${open && !live ? html`<script>${raw(RESCHEDULE_SCRIPT)}</script><script>${raw(SAID_TIME_SCRIPT)}</script>` : ''}
       ${!live && state.recordingState?.kind === 'pending' ? html`<script>${raw(POLL_SCRIPT)}</script>` : ''}
       ${browserCalls ? browserCallScripts() : ''}
       ${live ? html`<script>${raw(LIVE_STATUS_SCRIPT)}</script>` : ''}
