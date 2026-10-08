@@ -284,6 +284,8 @@ export function doneResult(row: CallLog): CallLoggedResult {
   };
 }
 
+const DROPPED = 'This call task was dropped (Deferred in HubSpot), so the call wasn’t logged.';
+
 export async function prepareCallLog(
   hs: HubSpot,
   store: CallLogStore,
@@ -302,6 +304,7 @@ export async function prepareCallLog(
     if (task.properties.hs_task_status === 'COMPLETED') {
       throw new WorkflowError('This call task is already completed in HubSpot, so nothing was logged.', 409);
     }
+    if (task.properties.hs_task_status === 'DEFERRED') throw new WorkflowError(DROPPED, 409);
     const contactLabel = contactName(contact);
     const company_ = companyName(company);
     const due = parseHubSpotTime(task.properties.hs_timestamp);
@@ -382,6 +385,13 @@ export async function finishCallLog(
   const { row, knownTaskIds } = prepared;
   const callTaskId = row.call_task_id;
   try {
+    // Read again after our D1 row exists, before the first HubSpot write: a
+    // Drop that raced prepareCallLog's check sees the row and backs off, or it
+    // landed first and is seen here.
+    if (!row.log_attempted_at && !row.completed_at) {
+      const current = await hs.getObject('tasks', callTaskId, ['hs_task_status']);
+      if (current.properties.hs_task_status === 'DEFERRED') throw new WorkflowError(DROPPED, 409);
+    }
     const links = { contactId: row.contact_id, companyId: row.company_id };
 
     let loggedCallId = row.logged_call_id;

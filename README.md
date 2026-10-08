@@ -165,8 +165,9 @@ timeline like one made in HubSpot.
   once the call was logged from the app (that task completes with its log).
   When a log or a dial and a Drop overlap, the call wins, as with Send and
   Drop: Drop puts the task back (Completed if the log finished, else open).
-  A dropped task is never dialled: a dial reads the task again once it's
-  recorded, before anything rings. The call page of a dropped task says so,
+  A dropped task is never dialled or logged: a dial reads the task again
+  once it's recorded, before anything rings, and a log once its row is in
+  D1, before its first HubSpot write. The call page of a dropped task says so,
   without the log form.
 - **The call page** puts what you need on the call in one place:
   - **Where they are**, under the name: the city in large type, the street,

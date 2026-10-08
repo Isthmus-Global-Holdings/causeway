@@ -501,6 +501,26 @@ test('a follow-up call at a set time is due then, with a reminder 5 minutes befo
   assert.equal(hs.created[0].properties.hs_task_reminders, String(due - 5 * 60_000));
 });
 
+test('a dropped call task is never logged, even when the Drop lands while the log is recorded', async () => {
+  const store = d1CallLogStore(db);
+  const input = { outcome: 'connected' as const, notes: '', next: null, dial: null, transcript: null };
+  await hs.updateObject('tasks', '1', { hs_task_status: 'DEFERRED' });
+  await assert.rejects(runCallLogged(hs, store, '1', input, LOG_OPTS), /dropped/);
+  assert.equal(await store.get('1'), null, 'nothing recorded');
+
+  // The Drop writes DEFERRED after the log's check, before its row is read back.
+  await hs.updateObject('tasks', '1', { hs_task_status: 'NOT_STARTED' });
+  const create = store.create.bind(store);
+  store.create = async (row) => {
+    await create(row);
+    await hs.updateObject('tasks', '1', { hs_task_status: 'DEFERRED' });
+  };
+  await assert.rejects(runCallLogged(hs, store, '1', input, LOG_OPTS), /dropped/);
+  assert.equal(hs.calls.length, 0, 'nothing logged on the contact');
+  assert.equal(hs.created.length, 0, 'no follow-up');
+  assert.equal((await hs.getObject('tasks', '1')).properties.hs_task_status, 'DEFERRED');
+});
+
 test('a second submission writes nothing more', async () => {
   const store = d1CallLogStore(db);
   const input = { outcome: 'no_answer' as const, notes: '', next: null, dial: null, transcript: null };
