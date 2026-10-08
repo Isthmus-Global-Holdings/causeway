@@ -3,7 +3,7 @@ import type { CallCoaching } from '../actions/coaching';
 import { fillScript, MAX_SCRIPT, SCRIPT_PLACEHOLDERS } from '../lib/call-script';
 import { suggestConversation } from '../lib/conversations';
 import { parseFitReason } from '../lib/fit';
-import { partyTimeZone } from '../lib/address';
+import { partyTimeZone, zoneLabel } from '../lib/address';
 import { addDays, clockTime, formatLocal, localDate } from '../lib/dates';
 import { sqliteTime, type CallLog, type Dial, type DialMode, type InboundCall, type RecentSend } from '../lib/db';
 import { extensionOf, formatPhone, toE164 } from '../lib/phone';
@@ -153,7 +153,7 @@ function dueCell(row: CallRow, timeZone: string, now: number): Html {
   const theirs = row.timeZone && row.timeZone !== timeZone ? row.timeZone : null;
   return html`${formatLocal(row.dueAt, timeZone)}
     <span class="tag in" title="They asked to be called at this time">${today ? `Set time · ${setTimeStatus(row.dueAt, now)}` : 'Set time'}</span>
-    ${theirs ? html`<span class="muted">${clockTime(row.dueAt, theirs)} for them</span>` : ''}`;
+    ${theirs ? html`<span class="muted" title="Their time zone, from their address">${clockTime(row.dueAt, theirs)} ${zoneLabel(theirs)}</span>` : ''}`;
 }
 
 // What the contact did with the app's emails. A click ranks a call up, then

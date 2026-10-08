@@ -140,6 +140,7 @@ test("a time field with zones offers theirs first after the rep's, once each", a
     await timeInput({ name: 'time', zones: { yours: 'America/Denver', theirs: 'America/New_York', dateName: 'date' } })
   );
   assert.match(field, /name="time_tz"/);
+  assert.match(field, /data-their-zone="America\/New_York" data-their-label="Eastern"/);
   assert.match(
     field,
     /<option value="">Mountain \(you\)<\/option>\s*<option value="America\/New_York">Eastern \(them\)/

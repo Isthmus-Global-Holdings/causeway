@@ -154,7 +154,7 @@ export function timeInput(opts: {
   const theirs = z.theirs && z.theirs !== z.yours ? z.theirs : null;
   const others = PROSPECT_ZONES.filter((zone) => zone !== z.yours && zone !== theirs);
   return html`<span class="said-time" data-said-time="${z.dateName}" data-rep-zone="${z.yours}" ${
-    theirs ? html`data-their-zone="${theirs}"` : ''
+    theirs ? html`data-their-zone="${theirs}" data-their-label="${zoneLabel(theirs)}"` : ''
   }>${input}<select name="${opts.name}_tz" aria-label="Whose time" title="Whose time it is: yours, or theirs if they said it in their time zone">
       <option value="">${zoneLabel(z.yours)} (you)</option>
       ${theirs ? html`<option value="${theirs}">${zoneLabel(theirs)} (them)</option>` : ''}
@@ -162,8 +162,9 @@ export function timeInput(opts: {
     </select><output class="muted"></output></span>`;
 }
 
-// Under each time with zones: in their time, what that is in the rep's; in
-// the rep's, what it is for them (when their zone is known). The same
+// Under each time with zones: in another zone, what that is in the rep's; in
+// the rep's, what it is in their address's zone (when it says), named, since
+// the time they gave may have been on another clock. The same
 // arithmetic as lib/dates.ts localDateAt and parseTime, on the browser's Intl.
 export const SAID_TIME_SCRIPT = `(() => {
   const offset = (ms, tz) => {
@@ -184,7 +185,7 @@ export const SAID_TIME_SCRIPT = `(() => {
     const zone = box.querySelector('select');
     const out = box.querySelector('output');
     const date = box.closest('form')?.elements[box.dataset.saidTime];
-    const { repZone, theirZone } = box.dataset;
+    const { repZone, theirZone, theirLabel } = box.dataset;
     const sync = () => {
       const from = zone.value || repZone;
       const to = zone.value ? repZone : theirZone;
@@ -195,7 +196,7 @@ export const SAID_TIME_SCRIPT = `(() => {
       const wall = Date.UTC(y, mo - 1, d, t[0], t[1]);
       const at = wall - offset(wall - offset(wall, from), from);
       const said = new Intl.DateTimeFormat('en-US', { timeZone: to, weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(at);
-      out.textContent = zone.value ? '= ' + said + ' your time' : '= ' + said + ' for them';
+      out.textContent = '= ' + said + (zone.value ? ' your time' : ' ' + theirLabel);
     };
     for (const el of [input, zone, date]) el?.addEventListener('input', sync);
     zone.addEventListener('change', sync);
