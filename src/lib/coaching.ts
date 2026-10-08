@@ -291,7 +291,9 @@ export interface FunnelStep {
 
 export interface Funnel {
   steps: FunnelStep[];
-  upcoming: number; // booked interviews still ahead, not yet held or not
+  // Booked interviews not counted held or missed yet: still ahead, or past
+  // with nothing logged (the bookings card lists those, to log).
+  upcoming: number;
   // The step that loses the most calls, among the call's own steps (through
   // booked), when it loses at least 40% of the one before: where to work.
   leak: { from: FunnelStep; to: FunnelStep; advice: string } | null;
@@ -337,11 +339,13 @@ export function callFunnel(report: CoachingReport, booked: BookedInterview[], no
 }
 
 // The hour with the best rate, among those with enough calls to beat
-// another (HOUR_SAMPLE): on fewer, no hour is named anywhere.
+// another (HOUR_SAMPLE), once at least two have: with fewer, there's nothing
+// to compare, and no hour is named anywhere.
 export function bestHour(rows: HourRow[]): HourRow | null {
+  const enough = rows.filter((row) => row.calls >= HOUR_SAMPLE);
+  if (enough.length < 2) return null;
   let best: HourRow | null = null;
-  for (const row of rows) {
-    if (row.calls < HOUR_SAMPLE) continue;
+  for (const row of enough) {
     if (!best || (rateOf(row) ?? 0) > (rateOf(best) ?? 0)) best = row;
   }
   return best && best.reached > 0 ? best : null;

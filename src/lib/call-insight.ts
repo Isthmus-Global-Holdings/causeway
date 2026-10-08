@@ -259,6 +259,11 @@ export function withReviews<T extends InsightFields & { unsure: string; sources:
     if (c.nextStep !== undefined) {
       out.next_step = c.nextStep.agreed ? 1 : 0;
       out.next_step_text = c.nextStep.agreed ? (c.nextStep.what ?? out.next_step_text) : null;
+      // How far it got follows, as the rules have it, unless the review says.
+      if (c.stage === undefined) {
+        if (!c.nextStep.agreed && out.stage === 'next_step') out.stage = 'conversation';
+        if (c.nextStep.agreed && out.reached) out.stage = 'next_step';
+      }
     }
     for (const tag of correctedTags(c)) {
       unsure.delete(tag);

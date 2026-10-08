@@ -160,7 +160,7 @@ function talkCard(talk: CallInsight[], timeZone: string): Html {
       <p class="muted">No recorded call has reached them yet. Each one that does shows here: how much of it they talked.</p>
     </section>`;
   }
-  const theyLed = talk.filter((c) => (c.prospect_talk_share ?? 0) >= 0.5).length;
+  const theyLed = talk.filter((c) => (c.prospect_talk_share ?? 0) > 0.5).length;
   return html`<section class="card">
     <h2>Who did the talking</h2>
     <p>
@@ -176,7 +176,7 @@ function talkCard(talk: CallInsight[], timeZone: string): Html {
           value: Math.round(share * 100),
           of: 100,
           shown: pct(share),
-          tone: share >= 0.5 ? undefined : 'warn',
+          tone: share > 0.5 ? undefined : 'warn',
           half: true,
         };
       })

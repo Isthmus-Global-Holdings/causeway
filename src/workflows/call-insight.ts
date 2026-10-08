@@ -83,10 +83,19 @@ export async function readCall(
     excluded: before?.excluded ?? 0,
     extracted_at: new Date(now).toISOString(),
   };
-  const reviewed = withReviews(row, reviews);
+  // A review reads it again, but a stored reading from a better source or
+  // newer rules is never replaced (the store refuses): the review goes over
+  // that one instead, so what's saved is what's returned.
+  const base = reread && before && outranks(before, row) ? before : row;
+  const reviewed = withReviews(base, reviews);
   await deps.insights.save(reviewed);
   return reviewed;
 }
+
+const SOURCE_RANK: Record<CallInsight['source'], number> = { outcome: 0, notes: 1, transcript: 2 };
+const outranks = (a: CallInsight, b: CallInsight) =>
+  a.rules_version > b.rules_version ||
+  (a.rules_version === b.rules_version && SOURCE_RANK[a.source] > SOURCE_RANK[b.source]);
 
 // Saves a review of the call (the reviewer's earlier one replaced whole) and
 // reads the call again with it. Null when there's no logged call to review.

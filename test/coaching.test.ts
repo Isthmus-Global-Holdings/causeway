@@ -25,6 +25,7 @@ import {
   transcriptStats,
   withReviews,
   type CallFacts,
+  type Corrections,
 } from '../src/lib/call-insight.ts';
 import {
   bestHour,
@@ -533,6 +534,8 @@ test('reached by hour of their day and by their time zone, wrong numbers left ou
     )
   );
   assert.equal(bestHour(coachingReport(busy, TZ).byHour)?.hour, 14, 'with enough calls in each, the better hour');
+  const oneHour = busy.filter((c) => c.call_task_id.startsWith('h14'));
+  assert.equal(bestHour(coachingReport(oneHour, TZ).byHour), null, 'one hour with enough calls: nothing to beat');
   assert.equal(hourLabel(14), '2 PM');
   assert.deepEqual(
     report.byZone.map((z) => [z.label, z.calls]),
@@ -1585,4 +1588,47 @@ test('a review is saved, survives the rules reading the call again, and a new on
     ),
     null
   );
+});
+
+test('a review’s next step moves how far it got, unless it says how far', () => {
+  const agreedAt = insight({ call_task_id: 'n1', stage: 'next_step', next_step: 1, next_step_text: 'Call back at 3' });
+  const review = (corrections: Corrections) => [
+    { reviewer: 'claude' as const, corrections, what_worked: null, adjust: null, reviewed_at: '2026-10-07T17:00:00Z' },
+  ];
+  assert.equal(withReviews(agreedAt, review({ nextStep: { agreed: false } })).stage, 'conversation');
+  assert.equal(withReviews(agreedAt, review({ nextStep: { agreed: false }, stage: 'opening' })).stage, 'opening');
+  const opening = insight({ call_task_id: 'n2', stage: 'opening' });
+  assert.equal(withReviews(opening, review({ nextStep: { agreed: true, what: 'Gave his cell' } })).stage, 'next_step');
+  const desk = insight({ call_task_id: 'n3', gate: 'gatekeeper', reached: 0, stage: 'gatekeeper' });
+  assert.equal(withReviews(desk, review({ nextStep: { agreed: true } })).stage, 'gatekeeper', 'never reached: stays');
+});
+
+test('a review over a call whose stored reading is from a better source is saved over that one', async () => {
+  await logCall('t1'); // notes only, no dial
+  const transcript = insight({
+    call_task_id: 't1',
+    contact_id: 'c1',
+    source: 'transcript',
+    stage: 'opening',
+    opening: 'hey grant this is anel',
+  });
+  await d1CallInsightStore(db).save(transcript);
+  const reviewed = await reviewCall(
+    deps(),
+    't1',
+    {
+      reviewer: 'claude',
+      corrections: { stage: 'conversation' },
+      what_worked: null,
+      adjust: null,
+      reviewed_at: '2026-10-07T17:00:00Z',
+    },
+    Date.now()
+  );
+  const stored = await d1CallInsightStore(db).get('t1');
+  assert.deepEqual(
+    [stored?.source, stored?.stage, stored?.opening],
+    ['transcript', 'conversation', 'hey grant this is anel']
+  );
+  assert.deepEqual({ ...stored }, reviewed, 'what was saved is what came back');
 });
