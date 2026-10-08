@@ -2025,6 +2025,57 @@ test('an interview dialled again is a new call: its reading replaces the first�
   assert.equal((await d1CallReviewStore(db).list('m1', 'first')).length, 1, 'the first call’s still stands for it');
 });
 
+test('an interview moved and dialled again: the earlier occurrence’s log isn’t this call’s, and the page shows this call', async () => {
+  const dials = d1DialStore(db);
+  const store = d1CallInsightStore(db);
+  // Dialled at the first time, logged as moved with a note; dialled again a week later.
+  await dials.begin(dial({ id: 'first', task_id: 'm1', subject: 'meeting', started_sec: T0 }), 120);
+  await dials.setProspectResult('first', { sid: 'CA1', status: 'completed', durationSec: 60 });
+  await logMeeting('m1', 'RESCHEDULED', '2026-09-29 16:10:00', '2026-10-06T16:00:00Z');
+  await db
+    .prepare(
+      `UPDATE meeting_logs SET notes = 'Front desk said he is out, moved it to next week.' WHERE meeting_id = 'm1'`
+    )
+    .run();
+  assert.equal(await readUnreadCalls(deps(), 10, Date.now()), 1);
+  const moved = await store.get('m1');
+  assert.equal(moved?.meeting_log_id, 'm1@2026-09-29 16:10:00', 'the first call, with its log');
+
+  await dials.begin(dial({ id: 'second', task_id: 'm1', subject: 'meeting', started_sec: T0 + 7 * DAY }), 120);
+  await dials.setProspectResult('second', { sid: 'CA2', status: 'completed', durationSec: 900 });
+  // Before the background read: the call page reads the new call now, not the row of the first.
+  const notes = (await callNotes(db, 'm1'))!;
+  assert.deepEqual([notes.read.reached, notes.read.duration_sec], [1, 900], 'the new call’s facts');
+  assert.equal(notes.read.gatekeeper_name, null, 'the moved-it note isn’t read as this call’s');
+  // The sweep reads it with no log: the earlier occurrence's doesn't count.
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [{ id: 'm1', subject: 'meeting' }]);
+  await readUnreadCalls(deps(), 10, Date.now());
+  const second = await store.get('m1');
+  assert.deepEqual(
+    [second?.dial_id, second?.meeting_log_id, second?.outcome, second?.source],
+    ['second', null, 'connected', 'outcome']
+  );
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [], 'current');
+  // Logged after this call: its log.
+  await logMeeting('m1', 'COMPLETED', '2026-10-06 16:20:00');
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [{ id: 'm1', subject: 'meeting' }]);
+  await readUnreadCalls(deps(), 10, Date.now());
+  assert.equal((await store.get('m1'))?.meeting_log_id, 'm1@2026-10-06 16:20:00');
+});
+
+test('two interview dials in the same second: the sweep picks the one latestForTask does', async () => {
+  const dials = d1DialStore(db);
+  await dials.begin(dial({ id: 'z-first', task_id: 'm1', subject: 'meeting', started_sec: T0 }), 120);
+  await dials.setProspectResult('z-first', { sid: 'CA1', status: 'canceled', durationSec: null });
+  await dials.setRepStatus('z-first', 'completed', T0 + 5);
+  assert.ok(await dials.begin(dial({ id: 'a-second', task_id: 'm1', subject: 'meeting', started_sec: T0 }), 120));
+  await dials.setProspectResult('a-second', { sid: 'CA2', status: 'completed', durationSec: 120 });
+  assert.equal((await dials.latestForTask('m1'))?.id, 'a-second', 'the later row, not the greater id');
+  assert.equal(await readUnreadCalls(deps(), 10, Date.now()), 1);
+  assert.equal((await d1CallInsightStore(db).get('m1'))?.dial_id, 'a-second');
+  assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), [], 'and the sweep agrees it’s read');
+});
+
 test('an interview’s call still going isn’t read; one not recorded reads the rep’s notes on it', async () => {
   const dials = d1DialStore(db);
   const nowSec = Math.floor(Date.now() / 1000);

@@ -107,7 +107,9 @@ export async function readInterview(
 ): Promise<CallInsight | null> {
   const dial = await deps.dials.latestForTask(meetingId);
   if (!dial || dial.subject !== 'meeting' || isLive(dialState(dial, Math.floor(now / 1000)))) return null;
-  const log = await deps.meetingLogs.latest(meetingId);
+  // How the rep logged this call, if they have: a log from before the dial
+  // is an earlier occurrence's (the interview was moved), not this call's.
+  const log = await deps.meetingLogs.latest(meetingId, dial.started_sec);
   const transcript = dialTranscript(dial);
   const facts = interviewFacts(dial, log, transcript);
   const key: ReadKey = {
