@@ -1961,6 +1961,64 @@ test('an interview read once is read again after a redial, a later log, or when 
   assert.equal(await readUnreadCalls(deps(), 10, Date.now()), 1, 'the sweep reads it');
 });
 
+test('an interview dialled again is a new call: its reading replaces the first’s, and the first’s review isn’t its', async () => {
+  const dials = d1DialStore(db);
+  const store = d1CallInsightStore(db);
+  // First attempt, recorded and reviewed.
+  await dials.begin(
+    dial({ id: 'first', task_id: 'm1', subject: 'meeting', contact_label: putThrough.label, started_sec: T0 }),
+    120
+  );
+  await dials.setProspectResult('first', { sid: 'CA1', status: 'completed', durationSec: 543 });
+  await dials.setRecording('first', { sid: 'RE1', durationSec: 543, channels: 2 });
+  await dials.beginTranscript('first', T0, 300);
+  await dials.saveTranscript('first', JSON.stringify(putThrough.turns), null);
+  const first = await reviewCall(
+    deps(),
+    'm1',
+    {
+      reviewer: 'claude',
+      corrections: { stage: 'next_step' },
+      what_worked: 'Asked about dispatch.',
+      adjust: null,
+      reviewed_at: '2026-10-01T00:00:00Z',
+    },
+    Date.now()
+  );
+  assert.deepEqual([first?.dial_id, first?.source, first?.stage], ['first', 'transcript', 'next_step']);
+  assert.equal((await d1CallReviewStore(db).list('m1'))[0].dial_id, 'first', 'the review is of that call');
+  assert.deepEqual(await callsToReview(db, 10), [], 'reviewed');
+
+  // Dialled again a week later, not recorded: a new call, read on its own.
+  await dials.begin(
+    dial({
+      id: 'second',
+      task_id: 'm1',
+      subject: 'meeting',
+      contact_label: putThrough.label,
+      started_sec: T0 + 7 * DAY,
+    }),
+    120
+  );
+  await dials.setProspectResult('second', { sid: 'CA2', status: 'completed', durationSec: 300 });
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [{ id: 'm1', subject: 'meeting' }]);
+  const second = await readInterview(deps(), 'm1', Date.now());
+  assert.deepEqual([second?.dial_id, second?.source], ['second', 'outcome'], 'replaced, though read from less');
+  assert.deepEqual(
+    [second?.stage, second?.what_worked],
+    ['opening', null],
+    'the first call’s review isn’t laid over it'
+  );
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [], 'and it stays read');
+  assert.deepEqual(
+    (await callsToReview(db, 10)).map((c) => c.call_task_id),
+    ['m1'],
+    'the new call wants its own review'
+  );
+  assert.deepEqual(await d1CallReviewStore(db).list('m1', 'second'), [], 'none of it yet');
+  assert.equal((await d1CallReviewStore(db).list('m1', 'first')).length, 1, 'the first call’s still stands for it');
+});
+
 test('an interview’s call still going isn’t read; one not recorded reads the rep’s notes on it', async () => {
   const dials = d1DialStore(db);
   const nowSec = Math.floor(Date.now() / 1000);
