@@ -629,22 +629,36 @@ export function phoneTree(turns: Turn[], firstName: string | null): PhoneTree | 
   };
 }
 
-// The rep talked with someone: past any phone menu, the rep said something
-// and a person said a line that isn't the menu, a transfer notice or a
-// voicemail greeting. A call that only reached those didn't, and a summary
-// of it would be made up. A recording Nova gave back as one channel (all
-// 'call') can't tell the rep from them: there, a few words past the menu
-// that no machine said are enough.
+// A phone system's own lines, beyond the menu's words above: keys to dial,
+// the directory, an extension that doesn't answer.
+const KEYPAD =
+  /\b((please )?dial (\d|one|two|three|four|five|six|seven|eight|nine|zero|star|pound)\b|dial by name|directory|for the operator|(extension|mailbox|party|\d+) is (unavailable|not available|busy))/i;
+const SWITCHBOARD = [MENU, TRANSFER, KEYPAD];
+
+// The words a person said in a turn. One turn can run a menu's or a
+// transfer notice's line into a person's, when they came on within seconds
+// of it, so those are dropped sentence by sentence. A voicemail greeting
+// takes the whole turn: sentence by sentence it reads like a person ("Hi,
+// you've reached Ruth."), and nobody comes on after one.
+function personWords(text: string): number {
+  if (VOICEMAIL.test(text)) return 0;
+  return text
+    .split(/(?<=[.!?])\s+/)
+    .filter((sentence) => !SWITCHBOARD.some((re) => re.test(sentence)))
+    .reduce((n, sentence) => n + words(sentence), 0);
+}
+
+// The rep talked with someone: the rep said something, and a person said a
+// line that isn't a phone menu, a transfer notice or a voicemail greeting. A
+// call that only reached those didn't, and a summary of it would be made up.
+// A recording Nova gave back as one channel (all 'call') can't tell the rep
+// from them: there, a few words no machine said are enough.
 export function talkedWithSomeone(turns: Turn[]): boolean {
-  const plain = plainTurns(turns);
-  const after = plain.slice(phoneTree(plain, null)?.end ?? 0);
-  const person = (t: Turn) =>
-    words(t.text) >= 2 && !MENU.test(t.text) && !TRANSFER.test(t.text) && !VOICEMAIL.test(t.text);
-  if (after.every((t) => t.speaker === 'call')) {
-    return after.filter(person).reduce((n, t) => n + words(t.text), 0) >= ONE_CHANNEL_WORDS;
+  if (turns.every((t) => t.speaker === 'call')) {
+    return turns.reduce((n, t) => n + personWords(t.text), 0) >= ONE_CHANNEL_WORDS;
   }
-  const repWords = after.filter((t) => t.speaker === 'rep').reduce((n, t) => n + words(t.text), 0);
-  return repWords >= 2 && after.some((t) => far(t) && person(t));
+  const repWords = turns.filter((t) => t.speaker === 'rep').reduce((n, t) => n + words(t.text), 0);
+  return repWords >= 2 && turns.some((t) => far(t) && personWords(t.text) >= 2);
 }
 // More than a keyed-in "one zero" or a stray word between the machine's lines.
 const ONE_CHANNEL_WORDS = 5;

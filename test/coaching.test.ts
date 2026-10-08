@@ -213,6 +213,35 @@ test('talked with someone, on one channel (all “call”): words past the menu 
     true,
     'people talking'
   );
+  // Someone who came on within seconds of the menu shares its turn.
+  assert.equal(
+    talkedWithSomeone([
+      call(0, 'Your call is being transferred. Good morning, Acme, this is Dana. Hi Dana, is Ana in today?'),
+    ]),
+    true,
+    'a person in the same turn as the transfer notice'
+  );
+  assert.equal(
+    talkedWithSomeone([
+      call(
+        0,
+        'Know your party’s extension, please dial it now. For customer service, please dial 1. For the employee, dial by name directory, please dial star, or dial 0 for the operator.'
+      ),
+    ]),
+    false,
+    'a menu in its own words: dial, not press'
+  );
+});
+
+test('talked with someone: a person in the same turn as the menu, on their channel', () => {
+  const turn = (speaker: 'rep' | 'prospect', start: number, text: string) => ({ speaker, start, text });
+  assert.equal(
+    talkedWithSomeone([
+      turn('prospect', 0, 'For sales, press 2. For Grant, press 4. Hello, this is Grant.'),
+      turn('rep', 22, 'Hey Grant, this is Anel.'),
+    ]),
+    true
+  );
 });
 
 test('the front desk put them on hold and they never came on (Hugo)', () => {
