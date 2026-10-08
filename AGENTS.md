@@ -103,13 +103,25 @@ See README.md for the behaviour.
     the Worker drains on the cron trigger; nothing else ever starts it;
   - Workers AI only for unattended work a chat can't do, on the free daily
     allowance: speech-to-text and the transcript's summary;
-  - Jev (TypeSafe, `TYPESAFE_API_KEY`) for coaching's unattended tags on each
-    call: once per call, cached, a fraction of a cent.
+  - Jev (TypeSafe, `TYPESAFE_API_KEY`), planned, not built: coaching's
+    unattended tags on each call, for the tags the rules are unsure of, once
+    per call, cached, a fraction of a cent. The key is set on the Worker and
+    `call_insights` has its columns (`jev_*`), but nothing calls it yet.
 
   A new feature that needs a model gets connector tools first (one to read
   the inputs, one to save the result). Add a button or a background model
   call only when the rep asks for one. Coaching's per-call read
   (`workflows/call-insight.ts`) is rules, no model.
+
+  **When to recommend building Jev.** Until it's built, the rules' unsure
+  Mom Test tags are settled only by reviews (`review_call`). When working on
+  coaching, or when the rep asks about it, check the remote D1: once about 50
+  calls have been read (`call_insights`, not `excluded`), or the calls with an
+  `unsure` tag and no `call_reviews` row outnumber the reviewed ones by more
+  than the rep would review in a sitting (about 20), tell the rep it's time to
+  build Jev. Then the reviews already done are what to check its answers
+  against. (2026-10-07: 13 calls read, 5 unsure on the Mom Test tags, none
+  reviewed.)
 - **Pure logic stays pure.** `lib/fit.ts`, `lib/richtext.ts`, `lib/dates.ts`,
   `lib/prompt.ts`, `lib/phone.ts`, `lib/twiml.ts`, `lib/transcript.ts`,
   `lib/call-script.ts`, `lib/call-insight.ts`, `lib/call-timeline.ts`, `lib/coaching.ts`, `lib/voice-token.ts`, `lib/whatsapp.ts`, `lib/work-plan.ts`, `lib/address.ts`, `lib/call-history.ts`, `lib/sent-rank.ts`, `lib/set-time.ts`, `lib/upwork.ts` (also bundled into the extension), `mcp/format.ts`, `prompts/follow-up-emails.ts`, `prompts/whatsapp-messages.ts` and `prompts/call-review.ts` do no I/O and are unit tested. Workflows take interfaces (`HubSpot`, `Twilio`, and the D1 stores
@@ -140,7 +152,7 @@ See README.md for the behaviour.
   follow-up emails, `src/prompts/whatsapp-messages.ts` the rep's WhatsApp
   messages (templates, not Claude) and `src/prompts/call-review.ts` how Claude
   reviews a call through the connector, none a skill copy: edit them directly. Claude, Twilio's per-minute calling and recording, and
-  TypeSafe (Jev, negligible) are the only paid dependencies; everything else
+  TypeSafe (Jev, negligible, once built) are the only paid dependencies; everything else
   stays on free tiers (call transcripts use the free daily Workers AI
   allowance, and the cron trigger is one of the free plan's five).
 
@@ -150,7 +162,7 @@ See README.md for the behaviour.
 - D1: `hubspot-automations-db` (`99d1f538-2098-4721-88cf-6a4bbd929f25`)
 - HubSpot account: `isthmus-global-holdings` (247260710), project `hubspot-automations` in `hubspot/`
 - Test CRM: developer test account `isthmus-test` (247548603, config `hubspot/test-account.json`), with a test install of the app. `npm run dev` uses it (`.dev.vars.test` over `.dev.vars`), so local work never touches live prospects; `npm run seed:test` fills it. Only the deployed Worker uses the live CRM (README → Test CRM).
-- Secrets: `HUBSPOT_ACCESS_TOKEN`, `GOOGLE_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY`, `ANTHROPIC_API_KEY`, `TWILIO_AUTH_TOKEN`, `TWILIO_API_KEY_SECRET` (browser calling), `TYPESAFE_API_KEY` (Jev, coaching's tags)
+- Secrets: `HUBSPOT_ACCESS_TOKEN`, `GOOGLE_CLIENT_SECRET`, `TOKEN_ENCRYPTION_KEY`, `ANTHROPIC_API_KEY`, `TWILIO_AUTH_TOKEN`, `TWILIO_API_KEY_SECRET` (browser calling), `TYPESAFE_API_KEY` (Jev, coaching's tags; set, not used yet)
 - Cron: `*/10 * * * *` (`wrangler.jsonc` → `triggers`), the `scheduled` handler in `src/worker.ts`: coaching's sweep (`workflows/coaching-sweep.ts`) runs again any transcription that died and reads up to ten calls not read yet, or read by older rules (`RULES_VERSION`)
 - Vars: `TZ` (the rep's time zone until one is picked on /settings), `PITCH_EXTENSION_ID` (the Upwork extension, the only other origin that may POST, to `/pitches`), `GOOGLE_CLIENT_ID`, `PUBLIC_BASE_URL` (tracking links and Twilio webhooks always point at the deployed Worker), `TWILIO_TWIML_APP_SID` (browser calling: the TwiML App whose Voice URL is `/twilio/voice/client`). `TWILIO_ACCOUNT_SID` and `TWILIO_API_KEY_SID` (the API key that signs Voice SDK tokens) are vars set on the Worker in Cloudflare and in `.dev.vars`, kept out of the public repo; `keep_vars` stops a deploy from removing them
 - Twilio: the account in `TWILIO_ACCOUNT_SID`, number +1 385-255-7051. The number to call from and the rep's phone are picked on /settings from what Twilio lists for the account (voice numbers, verified caller IDs), never typed. The number is on the account's approved Trust Hub Business Profile (Dolphin Web Dynamics LLC) and SHAKEN/STIR product, so calls from it get "A" attestation. Its A2P 10DLC campaign (approved 2026-09-29) covers only people who opt in to texts through the website's form; the app still never sends SMS, and cold outreach must not go out as texts from this number. The number's voice URL is `/twilio/voice/inbound` and its status callback `/twilio/voice/inbound/status` (see README): that's what forwards calls to it.
