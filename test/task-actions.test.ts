@@ -82,6 +82,16 @@ test("snoozeCall at a time said in their zone saves it in the rep's", async () =
   );
 });
 
+test("snoozeCall in their zone takes their date, even when it's the rep's yesterday", async () => {
+  // 00:30 Oct 10 in Panama is 22:30 Oct 9 in Los Angeles: 11pm there tonight is still ahead.
+  const late = { now: Date.parse('2026-10-10T05:30:00Z'), timeZone: TZ };
+  const la = { hour: 23, minute: 0, timeZone: 'America/Los_Angeles' };
+  const { dueAt } = await snoozeCall(hs, 'c2', '2026-10-09', la, late);
+  assert.equal(new Date(dueAt).toISOString(), '2026-10-10T06:00:00.000Z');
+  await assert.rejects(snoozeCall(hs, 'c2', '2026-10-09', { ...la, hour: 22 }, late), /already passed/);
+  await assert.rejects(snoozeCall(hs, 'c2', '2026-10-08', la, late), /after today/);
+});
+
 test('snoozeCall without a time keeps a set-time call at its time, and moves its reminder', async () => {
   await snoozeCall(hs, 'c1', '2026-09-25', { hour: 16, minute: 0 }, OPTS);
   await snoozeCall(hs, 'c1', '2026-09-28', null, OPTS);

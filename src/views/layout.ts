@@ -187,7 +187,14 @@ export const SAID_TIME_SCRIPT = `(() => {
     const out = box.querySelector('output');
     const date = box.closest('form')?.elements[box.dataset.saidTime];
     const { repZone, theirZone, theirLabel } = box.dataset;
+    // A date in their zone can be the rep's yesterday: let the picker go back
+    // to their today (the server checks the instant isn't past).
+    if (date) date.dataset.min = date.min;
     const sync = () => {
+      if (date?.dataset.min) {
+        const theirs = zone.value && new Intl.DateTimeFormat('en-CA', { timeZone: zone.value, year: 'numeric', month: '2-digit', day: '2-digit' }).format(Date.now());
+        date.min = theirs && theirs < date.dataset.min ? theirs : date.dataset.min;
+      }
       const from = zone.value || repZone;
       const to = zone.value ? repZone : theirZone;
       const t = parse(input.value);

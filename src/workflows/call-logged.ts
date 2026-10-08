@@ -17,6 +17,7 @@
 // retry writes exactly what the rep first submitted.
 
 import {
+  earliestDate,
   isDate,
   parseHubSpotTime,
   parseSaidTime,
@@ -182,12 +183,12 @@ export function parseCallLogForm(
   if (type !== 'CALL' && type !== 'EMAIL' && type !== LAST_TRY) throw new WorkflowError('Unknown follow-up type.');
   const date = form.next_date ?? '';
   if (!isDate(date)) throw new WorkflowError('Pick a date for the follow-up task.');
-  if (date < today) throw new WorkflowError('The follow-up date is in the past.');
-  if (type === LAST_TRY) return { ...base, next: { type: 'EMAIL', date, lastTry: true } };
   const timeText = type === 'CALL' ? (form.next_time ?? '') : '';
   const time = timeText ? parseSaidTime(timeText, form.next_time_tz) : null;
   if (timeText && !time)
     throw new WorkflowError('Enter a time like 4pm or 4:30pm for the follow-up call, or leave it blank.');
+  if (date < earliestDate(today, time)) throw new WorkflowError('The follow-up date is in the past.');
+  if (type === LAST_TRY) return { ...base, next: { type: 'EMAIL', date, lastTry: true } };
   return { ...base, next: time ? { type, date, time } : { type, date } };
 }
 

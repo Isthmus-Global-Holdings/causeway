@@ -378,6 +378,14 @@ test('parseCallLogForm takes a set time for a follow-up call only', () => {
     time: { hour: 14, minute: 0, timeZone: 'America/New_York' },
   });
   assert.throws(() => parseCallLogForm({ ...form, next_time: '2pm', next_time_tz: 'Nowhere' }, today), /like 4pm/);
+  // Their date can be the rep's yesterday (the instant is checked when it's logged); the rep's own can't.
+  const theirs = { ...form, next_date: '2026-09-24', next_time: '11pm' };
+  assert.equal(parseCallLogForm({ ...theirs, next_time_tz: 'America/Los_Angeles' }, today).next?.date, '2026-09-24');
+  assert.throws(() => parseCallLogForm(theirs, today), /past/);
+  assert.throws(
+    () => parseCallLogForm({ ...theirs, next_date: '2026-09-23', next_time_tz: 'America/Los_Angeles' }, today),
+    /past/
+  );
 });
 
 // --- runCallLogged ---

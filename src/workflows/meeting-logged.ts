@@ -19,6 +19,7 @@
 // the meeting off the start time in its key.
 
 import {
+  earliestDate,
   isDate,
   localDateAt,
   parseHubSpotTime,
@@ -110,7 +111,7 @@ export function parseMeetingLogForm(form: Record<string, string | undefined>, to
     const date = form.new_date ?? '';
     const time = parseSaidTime(form.new_time ?? '', form.new_time_tz);
     if (!isDate(date) || !time) throw new WorkflowError('Pick the new date and time for the interview.');
-    if (date < today) throw new WorkflowError('The new date is in the past.');
+    if (date < earliestDate(today, time)) throw new WorkflowError('The new date is in the past.');
     newStart = { date, time };
   }
 

@@ -354,6 +354,12 @@ test("an interview booked in their time zone is saved in the rep's", async () =>
     '2026-09-25'
   );
   assert.equal(bookingTimes(input, TZ).startAt, '2026-09-28T14:30:00.000Z');
+  // At 00:10 in Denver it's 23:10 in Los Angeles: 11:30pm there is on the rep's yesterday, and still ahead.
+  const late = parseBookingForm(
+    { book_date: '2026-09-25', book_time: '11:30pm', book_time_tz: 'America/Los_Angeles' },
+    '2026-09-26'
+  );
+  assert.equal(bookingTimes(late, TZ, Date.parse('2026-09-26T06:10:00Z')).startAt, '2026-09-26T06:30:00.000Z');
   // Rescheduled the same way.
   const moved = parseMeetingLogForm(
     { outcome: 'RESCHEDULED', new_date: '2026-09-29', new_time: '1pm', new_time_tz: 'America/Los_Angeles' },

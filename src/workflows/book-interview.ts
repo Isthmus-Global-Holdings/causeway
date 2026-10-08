@@ -17,7 +17,7 @@
 // is put on the meeting). The invite's id comes from the booking, so a retry
 // can't send a second one.
 
-import { isDate, parseHubSpotTime, parseSaidTime, saidAt, type SaidTime } from '../lib/dates';
+import { earliestDate, isDate, parseHubSpotTime, parseSaidTime, saidAt, type SaidTime } from '../lib/dates';
 import type { MeetingBookingStore } from '../lib/db';
 import type { HubSpot, HubSpotObject, RecordLinks } from '../lib/hubspot';
 import { formatPhone } from '../lib/phone';
@@ -78,7 +78,7 @@ export function parseBookingForm(form: Record<string, string | undefined>, today
   const date = form.book_date ?? '';
   const time = parseSaidTime(form.book_time ?? '', form.book_time_tz);
   if (!isDate(date) || !time) throw new WorkflowError('Pick the date and time of the interview.');
-  if (date < today) throw new WorkflowError('The interview date is in the past.');
+  if (date < earliestDate(today, time)) throw new WorkflowError('The interview date is in the past.');
   const minutes = LENGTHS_MIN.find((m) => String(m) === form.book_minutes) ?? 30;
   const invite = form.book_invite === '1';
   if (form.book_format === 'phone') return { date, time, minutes, byPhone: true, joinUrl: null, invite };

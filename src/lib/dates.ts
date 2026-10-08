@@ -164,6 +164,14 @@ export function localDateAt(date: string, timeZone: string, at: TimeOfDay): numb
   return wallClock - offsetMs(guess, timeZone);
 }
 
+// The earliest date a form may give with `time`, from the rep's `today`. A
+// time said in their zone is on their date, which can still be the rep's
+// yesterday (just after the rep's midnight, for someone to the west); the
+// instant it names is checked against now after, so nothing past gets in.
+export function earliestDate(today: string, time: SaidTime | null | undefined): string {
+  return time?.timeZone ? addDays(today, -1) : today;
+}
+
 // The instant a said time names on `date` ("YYYY-MM-DD", their date when
 // it's in their zone), in the zone it was said in, else `timeZone` (the rep's).
 export function saidAt(date: string, time: SaidTime, timeZone: string): number {

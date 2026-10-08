@@ -33,7 +33,8 @@ export async function snoozeCall(
   opts: { now: number; timeZone: string }
 ): Promise<{ dueAt: number }> {
   if (!isDate(date)) throw new WorkflowError('Pick a day to move the call to.');
-  const today = localDate(opts.now, opts.timeZone);
+  // A time said in their zone is on their date.
+  const today = localDate(opts.now, time?.timeZone ?? opts.timeZone);
   if (time ? date < today : date <= today) throw new WorkflowError('Pick a day after today, or a time.');
   const dueAt = time ? saidAt(date, time, opts.timeZone) : null;
   if (dueAt !== null && dueAt <= opts.now) throw new WorkflowError('That time has already passed.');
