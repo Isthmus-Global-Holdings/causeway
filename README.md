@@ -1112,7 +1112,8 @@ Recording needs nothing more: the Workers AI binding (`ai` in
 `wrangler.jsonc`) deploys with the Worker, and `npm run deploy` applies
 `migrations/0006`. Then turn on **Record and transcribe calls** in /settings.
 
-For calls to the number, deploy (which applies `migrations/0008`), then point the number at the Worker (Twilio Console → Phone Numbers →
+For calls to the number, deploy (`npm run deploy` applies `migrations/0008`),
+then point the number at the Worker (Twilio Console → Phone Numbers →
 the number → Voice configuration, or the CLI):
 
 ```bash
@@ -1144,6 +1145,13 @@ wrangler secret put HUBSPOT_ACCESS_TOKEN
 # instead (/authorize stays behind Access: that's where you approve it).
 npm run deploy   # applies any new migrations to remote D1 first
 ```
+
+Workers Builds (the Worker's Settings → Builds, connected to the GitHub repo)
+deploys `main` the same way: its deploy command is `npm run deploy`, and the
+build command stays empty (CI runs the checks before a merge). Other branches
+keep `npx wrangler versions upload`, never the migrations: there's one D1
+database, and a branch's migration would change it before the code merges.
+The build's API token needs D1 Edit for the migrations.
 
 The Worker refuses every request until `ACCESS_TEAM_DOMAIN` and `ACCESS_AUD`
 are set.
