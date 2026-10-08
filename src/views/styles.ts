@@ -126,6 +126,16 @@ ul.coach { list-style: none; margin: 0; padding: 0; display: flex; flex-directio
 ul.coach li { padding-left: var(--space-3); border-left: 2px solid var(--line); }
 ul.coach li.flag { border-left-color: var(--warn-fg); }
 ul.coach li.bright { border-left-color: var(--accent); }
+/* Coaching's charts: a bar as wide as its share (--w, set by the view), its count beside it */
+dl.bars { display: grid; grid-template-columns: minmax(7rem, 15rem) minmax(0, 1fr) 3.5rem; gap: var(--space-2) var(--space-3); align-items: center; margin: 0; }
+dl.bars dt { overflow-wrap: anywhere; }
+dl.bars dd { margin: 0; }
+dl.bars .track { position: relative; height: 0.8rem; background: var(--line); border-radius: var(--radius-sm); }
+dl.bars .fill { display: block; width: var(--w); height: 100%; background: var(--accent); border-radius: var(--radius-sm); }
+dl.bars .fill.quiet { background: var(--muted); }
+dl.bars .fill.warn { background: var(--warn-fg); }
+dl.bars .half { position: absolute; left: 50%; top: -3px; bottom: -3px; border-left: 2px solid var(--fg); }
+dl.bars .n { text-align: right; font-variant-numeric: tabular-nums; }
 ol.consequences { margin: 0; padding-left: var(--space-5); display: flex; flex-direction: column; gap: var(--space-1); }
 
 /* Tables */
@@ -198,6 +208,7 @@ dl.headers dd { margin: 0; overflow-wrap: anywhere; }
   button, .button { padding: 0.6rem 0.9rem; }
   input[type=text], input[type=search], input[type=date], input[type=time], input[type=url], textarea, select { font-size: 16px; }
   .matches { grid-template-columns: minmax(0, 1fr); }
+  dl.bars { grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3rem; }
   .waiting { grid-template-columns: minmax(0, 1fr); }
   table.stacked thead { display: none; }
   table.stacked, table.stacked tbody, table.stacked tr, table.stacked td { display: block; }

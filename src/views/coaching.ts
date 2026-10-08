@@ -17,20 +17,22 @@ import {
 import {
   bestHour,
   BOOKING_STATUS_LABELS,
+  callFunnel,
   heldRate,
+  HOUR_SAMPLE,
   hourLabel,
   MIN_SAMPLE,
   pct,
   rateOf,
   type BookingReport,
   type BookingSplit,
+  type Funnel,
   type Quote,
   type Rate,
   type Style,
 } from '../lib/coaching';
 import { formatLocal } from '../lib/dates';
 import type { CallInsight } from '../lib/db';
-import { CALL_OUTCOMES } from '../workflows/call-logged';
 import { layout, type Html } from './layout';
 
 function noteList(notes: CoachNote[]): Html {
@@ -83,8 +85,6 @@ export function coachingCard(coaching: CallCoaching): Html | '' {
   </div>`;
 }
 
-const outcomeLabel = (outcome: string) => CALL_OUTCOMES.find((o) => o.value === outcome)?.label ?? outcome;
-
 function rateCells(rate: Rate): Html {
   const thin = rate.calls < MIN_SAMPLE;
   return html`<td data-label="Calls">${rate.calls}</td>
@@ -102,6 +102,88 @@ function quoteList(quotes: Quote[]): Html | '' {
 function callLink(call: CallInsight, timeZone: string): Html {
   return html`<a href="/calls/${call.call_task_id}">${call.label}</a>
     <span class="muted">· ${formatLocal(call.at_sec * 1000, timeZone)}${call.duration_sec !== null ? ` · ${clock(call.duration_sec)}` : ''}</span>`;
+}
+
+interface Bar {
+  label: Html | string;
+  value: number;
+  of: number; // the bar's full width
+  shown?: string; // beside the bar, if not the value
+  tone?: 'quiet' | 'warn';
+  half?: boolean; // a mark at half way
+}
+
+// A bar chart: each row's bar as wide as its share, its count beside it. The
+// count is the text: the bar is only a picture of it.
+function bars(name: string, rows: Bar[]): Html {
+  return html`<dl class="bars" aria-label="${name}">
+    ${rows.map((r) => {
+      const width = r.of ? Math.round((Math.min(r.value, r.of) / r.of) * 100) : 0;
+      return html`<dt>${r.label}</dt>
+        <dd class="track" aria-hidden="true">
+          <span class="fill ${r.tone ?? ''}" style="--w: ${width}%"></span>${r.half ? html`<span class="half"></span>` : ''}
+        </dd>
+        <dd class="n">${r.shown ?? String(r.value)}</dd>`;
+    })}
+  </dl>`;
+}
+
+// Every call, step by step to an interview held, and the step that loses the most.
+function funnelCard({ steps, leak, upcoming }: Funnel): Html {
+  return html`<section class="card">
+    <h2>How far your calls get</h2>
+    ${bars(
+      'How far your calls get',
+      steps.map((s) => ({
+        label: s.label,
+        value: s.count,
+        of: steps[0].count,
+        tone: leak?.to.key === s.key ? 'warn' : undefined,
+      }))
+    )}
+    ${
+      leak
+        ? html`<p><strong>Most calls stop between “${leak.from.label}” and “${leak.to.label}”</strong> (${leak.from.count} → ${leak.to.count}). ${leak.advice}</p>`
+        : ''
+    }
+    <p class="muted">
+      Counts, not rates, so they hold at any number of calls.${upcoming ? ` ${upcoming} booked interview${upcoming === 1 ? ' hasn’t' : 's haven’t'} been held or missed yet.` : ''}
+    </p>
+  </section>`;
+}
+
+// On each call that reached them and has a transcript: their share of the
+// words, against half.
+function talkCard(talk: CallInsight[], timeZone: string): Html {
+  if (!talk.length) {
+    return html`<section class="card">
+      <h2>Who did the talking</h2>
+      <p class="muted">No recorded call has reached them yet. Each one that does shows here: how much of it they talked.</p>
+    </section>`;
+  }
+  const theyLed = talk.filter((c) => (c.prospect_talk_share ?? 0) >= 0.5).length;
+  return html`<section class="card">
+    <h2>Who did the talking</h2>
+    <p>
+      They talked more than you on ${theyLed} of the ${talk.length} recorded call${talk.length === 1 ? '' : 's'} that reached them.
+      On an interview they should do most of it: their world, what they did the last time, not your idea.
+    </p>
+    ${bars(
+      'Their share of the words',
+      talk.map((c) => {
+        const share = c.prospect_talk_share ?? 0;
+        return {
+          label: html`<a href="/calls/${c.call_task_id}" title="${formatLocal(c.at_sec * 1000, timeZone)}">${c.label}</a>`,
+          value: Math.round(share * 100),
+          of: 100,
+          shown: pct(share),
+          tone: share >= 0.5 ? undefined : 'warn',
+          half: true,
+        };
+      })
+    )}
+    <p class="muted">Their share of the words, from the transcript; the line is half.</p>
+  </section>`;
 }
 
 function styleRow(label: string, style: Style): Html {
@@ -181,7 +263,8 @@ function bookingsCard(bookings: BookingReport, timeZone: string): Html {
 export function coachingPage({ settings, report, bookings, unread }: CoachingOverview, actor: string): Html {
   const tz = settings.timeZone;
   const { gatekeeper, fastNoNextStep } = report;
-  const best = bestHour(report.byHour);
+  // Named only once an hour has enough calls to beat another (the hours card says so).
+  const best = bestHour(report.byHour.filter((h) => h.calls >= HOUR_SAMPLE));
   const reading = unread
     ? html`<p class="muted">Some logged calls haven’t been read for coaching yet. They’re being read in the background: refresh in a minute to include them.</p>`
     : '';
@@ -212,6 +295,8 @@ export function coachingPage({ settings, report, bookings, unread }: CoachingOve
       </div>
       ${reading}
 
+      ${funnelCard(callFunnel(report, bookings))}
+
       ${bookingsCard(bookings, tz)}
 
       <section class="card">
@@ -221,8 +306,20 @@ export function coachingPage({ settings, report, bookings, unread }: CoachingOve
             ? html`<p>
                   A front desk answered ${gatekeeper.calls} call${gatekeeper.calls === 1 ? '' : 's'} and put you through on
                   ${gatekeeper.putThrough} (${pct(gatekeeper.putThrough / gatekeeper.calls)}).
-                  ${gatekeeper.results.length ? html`<span class="muted">${gatekeeper.results.map((r, i) => `${i ? ', ' : ''}${r.label}: ${r.count}`)}.</span>` : ''}
                 </p>
+                ${
+                  gatekeeper.results.length
+                    ? bars(
+                        'What the front desk did',
+                        gatekeeper.results.map((r) => ({
+                          label: r.label,
+                          value: r.count,
+                          of: gatekeeper.calls,
+                          tone: r.result === 'put_through' ? undefined : 'quiet',
+                        }))
+                      )
+                    : ''
+                }
                 ${
                   gatekeeper.names.length
                     ? html`<p class="muted">By name: ${gatekeeper.names.map((n, i) => `${i ? '; ' : ''}${n.name} (${n.label}): ${n.calls} call${n.calls === 1 ? '' : 's'}, put through ${n.putThrough}`)}.</p>`
@@ -281,6 +378,8 @@ export function coachingPage({ settings, report, bookings, unread }: CoachingOve
         }
       </section>
 
+      ${talkCard(report.talk, tz)}
+
       <section class="card">
         <h2>Objections, and the openings that got past them</h2>
         ${
@@ -310,14 +409,18 @@ export function coachingPage({ settings, report, bookings, unread }: CoachingOve
             <thead><tr><th>Hour</th><th>Calls</th><th>Reached</th><th>Rate</th></tr></thead>
             <tbody>${report.byHour.map((h) => html`<tr><td>${hourLabel(h.hour)}</td>${rateCells(h)}</tr>`)}</tbody>
           </table>
+          ${
+            Math.max(0, ...report.byHour.map((h) => h.calls)) < HOUR_SAMPLE
+              ? html`<p class="muted">Too few calls to pick an hour by yet: it takes about ${HOUR_SAMPLE} calls in each hour before one beats another. Until then, spread your calls across the day.</p>`
+              : ''
+          }
         </section>
         <section class="card">
-          <h2>Reached, by their time zone</h2>
+          <h2>Where each call ended</h2>
           <table class="stacked">
-            <thead><tr><th>Zone</th><th>Calls</th><th>Reached</th><th>Rate</th></tr></thead>
-            <tbody>${report.byZone.map((z) => html`<tr><td>${z.label}</td>${rateCells(z)}</tr>`)}</tbody>
+            <thead><tr><th>Got as far as</th><th>Calls</th></tr></thead>
+            <tbody>${report.stages.map((s) => html`<tr><td>${s.label}</td><td data-label="Calls">${s.count}</td></tr>`)}</tbody>
           </table>
-          <p class="muted">From the contact’s state (or their company’s). Unknown ones are counted in your time zone.</p>
         </section>
       </div>
 
@@ -340,28 +443,6 @@ export function coachingPage({ settings, report, bookings, unread }: CoachingOve
             : html`<p class="muted">No one has been called twice yet.</p>`
         }
       </section>
-
-      <div class="grid-2">
-        <section class="card">
-          <h2>Average length, by outcome</h2>
-          <table class="stacked">
-            <thead><tr><th>Outcome</th><th>Calls</th><th>Average</th></tr></thead>
-            <tbody>
-              ${report.lengthByOutcome.map(
-                (l) =>
-                  html`<tr><td>${outcomeLabel(l.outcome)}</td><td data-label="Calls">${l.calls}</td><td data-label="Average">${clock(l.avgSec)}</td></tr>`
-              )}
-            </tbody>
-          </table>
-        </section>
-        <section class="card">
-          <h2>How far calls get</h2>
-          <table class="stacked">
-            <thead><tr><th>Got as far as</th><th>Calls</th></tr></thead>
-            <tbody>${report.stages.map((s) => html`<tr><td>${s.label}</td><td data-label="Calls">${s.count}</td></tr>`)}</tbody>
-          </table>
-        </section>
-      </div>
 
       <section class="card">
         <h2>Your last calls</h2>

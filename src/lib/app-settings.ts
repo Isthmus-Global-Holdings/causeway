@@ -17,6 +17,7 @@ import { parsePlan, type WorkPlan } from './work-plan';
 import { whatsappOpens, type WhatsAppOpens } from './whatsapp';
 import {
   d1CallInsightStore,
+  d1CallReviewStore,
   d1CallLogStore,
   d1DialStore,
   d1InboundCallStore,
@@ -175,6 +176,7 @@ export function insightDeps(env: Env): InsightDeps {
     callLogs: d1CallLogStore(env.DB),
     dials: d1DialStore(env.DB),
     insights: d1CallInsightStore(env.DB),
+    reviews: d1CallReviewStore(env.DB),
     place: async (contactId, companyId) =>
       (await zoneOf('contacts', contactId)) ?? (companyId ? await zoneOf('companies', companyId) : null),
   };

@@ -2,7 +2,8 @@
 // every call and how the interviews they booked turned out (the Coaching
 // page, the call_coaching tool), and the few notes
 // on a call page, before it (what's worked on calls like it) and after it
-// (what to adjust). Only reads: the calls are read for coaching in the
+// (what to adjust); and a call's review, by Claude or the rep through the
+// connector. Writes only D1: the calls are read for coaching in the
 // background (workflows/call-insight.ts), and opening the report reads a
 // few that haven't been, after it answers.
 
@@ -18,8 +19,11 @@ import {
   ruleInsight,
   rulesSources,
   RULES_VERSION,
+  type CallReview,
   type CoachNote,
+  type Corrections,
   type ReadCall,
+  type Reviewer,
   type Tag,
   type TagSources,
 } from '../lib/call-insight';
@@ -36,16 +40,19 @@ import {
   allBookedInterviews,
   allCallInsights,
   callInsightsNear,
+  callsToReview,
   d1CallInsightStore,
   d1CallLogStore,
+  d1CallReviewStore,
   d1DialStore,
   insertAudit,
   type CallInsight,
+  type CallLog,
 } from '../lib/db';
 import type { HubSpotObject } from '../lib/hubspot';
-import { dialTranscript } from '../lib/transcript';
+import { dialTranscript, type Turn } from '../lib/transcript';
 import type { AppEnv } from '../types';
-import { excludeCall, readUnreadCalls } from '../workflows/call-insight';
+import { excludeCall, readUnreadCalls, reviewCall } from '../workflows/call-insight';
 import { WorkflowError } from '../workflows/parties';
 
 // How many unread calls opening the report reads, after it answers (the cron
@@ -160,6 +167,72 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
     notes: adjustNotes(read),
   };
 }
+
+// Calls worth a review (someone picked up, nobody reviewed it yet), newest
+// first: the connector's calls_to_review.
+export async function callsForReview(c: Context<AppEnv>, limit: number) {
+  const [settings, calls] = await Promise.all([loadAppSettings(c.env), callsToReview(c.env.DB, limit)]);
+  return { settings, calls };
+}
+
+export interface CallForReview {
+  settings: AppSettings;
+  log: CallLog;
+  turns: Turn[]; // the transcript, empty when there's none
+  summary: string[]; // the transcript's auto-summary (often wrong about who said what)
+  notes: CallNotes; // the reading, reviews laid over it
+  reviews: CallReview[];
+}
+
+// One logged call, with everything a review reads: the connector's get_call_review.
+export async function callForReview(c: Context<AppEnv>, callTaskId: string): Promise<CallForReview> {
+  const [settings, log, reviews] = await Promise.all([
+    loadAppSettings(c.env),
+    d1CallLogStore(c.env.DB).get(callTaskId),
+    d1CallReviewStore(c.env.DB).list(callTaskId),
+  ]);
+  if (!log || log.channel === 'whatsapp_message') throw notACall();
+  const dial = log.dial_id ? await d1DialStore(c.env.DB).get(log.dial_id) : null;
+  const transcript = dial ? dialTranscript(dial) : null;
+  const notes = await callNotes(c.env.DB, callTaskId);
+  if (!notes) throw notACall();
+  return { settings, log, turns: transcript?.turns ?? [], summary: transcript?.summary ?? [], notes, reviews };
+}
+
+export interface ReviewInput {
+  reviewer: Reviewer;
+  corrections: Corrections;
+  what_worked: string | null;
+  adjust: string | null;
+  leave_out?: boolean; // a test call: leave it out of coaching (false: put it back)
+}
+
+// Saves a review of a logged call and reads it again with it: D1 only, the
+// reviewer's earlier review replaced whole. The connector's review_call.
+export async function saveCallReview(c: Context<AppEnv>, callTaskId: string, input: ReviewInput): Promise<CallNotes> {
+  const deps = insightDeps(c.env);
+  const review = {
+    reviewer: input.reviewer,
+    corrections: input.corrections,
+    what_worked: input.what_worked?.trim() || null,
+    adjust: input.adjust?.trim() || null,
+    reviewed_at: new Date().toISOString(),
+  };
+  if (!(await reviewCall(deps, callTaskId, review, Date.now()))) throw notACall();
+  await insertAudit(c.env.DB, {
+    actor: c.get('actor'),
+    workflow: 'call',
+    taskId: callTaskId,
+    action: `review for coaching (${input.reviewer})`,
+    outcome: 'success',
+  });
+  if (input.leave_out !== undefined) await setCallExcluded(c, callTaskId, input.leave_out);
+  const notes = await callNotes(c.env.DB, callTaskId);
+  if (!notes) throw notACall();
+  return notes;
+}
+
+const notACall = () => new WorkflowError('That task has no logged call, so there’s nothing to review.', 404);
 
 // Leaves a call out of coaching (a test call), or puts it back: D1 only.
 // The Calls page's button and the connector's review_call.

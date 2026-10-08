@@ -30,6 +30,10 @@ import type { BookedInterview, CallInsight } from './db';
 // Fewer calls than this in a group is too few to call it a pattern.
 export const MIN_SAMPLE = 3;
 
+// Comparing reached rates between hours takes far more: about this many calls
+// in each hour before a difference between them means anything.
+export const HOUR_SAMPLE = 30;
+
 export interface Rate {
   calls: number;
   reached: number; // spoke with the person they called for
@@ -113,6 +117,7 @@ export interface CoachingReport {
   fastNoNextStep: { connects: number; calls: CallInsight[] }; // newest first
   longConnects: CallInsight[]; // longest first
   style: { long: Style; short: Style };
+  talk: CallInsight[]; // connects with a transcript (their share of the words), newest first
   recent: CallInsight[]; // the last calls read, newest first
 }
 
@@ -264,8 +269,63 @@ export function coachingReport(rows: CallInsight[], repTimeZone: string): Coachi
     fastNoNextStep: { connects: connects.length, calls: newest.filter(fastNoNextStep) },
     longConnects: [...long].sort((a, b) => (b.talk_sec ?? b.duration_sec ?? 0) - (a.talk_sec ?? a.duration_sec ?? 0)),
     style: { long: styleOf(long), short: styleOf(connects.filter((c) => (c.talk_sec ?? c.duration_sec ?? 0) < 120)) },
+    talk: newest.filter((c) => c.reached && c.prospect_talk_share !== null).slice(0, RECENT),
     recent: newest.slice(0, RECENT),
   };
+}
+
+// --- The funnel: how far the calls get, step by step ---
+
+// Counts, not rates: honest at any number of calls. Each step is a subset of
+// the one before (a booked interview is a next step), except held, which
+// waits on the interviews still ahead.
+export interface FunnelStep {
+  key: 'calls' | 'answered' | 'reached' | 'next_step' | 'booked' | 'held';
+  label: string;
+  count: number;
+}
+
+export interface Funnel {
+  steps: FunnelStep[];
+  upcoming: number; // booked interviews still ahead, not yet held or not
+  // The step that loses the most calls, among the call's own steps (through
+  // booked), when it loses at least 40% of the one before: where to work.
+  leak: { from: FunnelStep; to: FunnelStep; advice: string } | null;
+}
+
+const LEAK_SHARE = 0.4;
+
+const LEAK_ADVICE: Record<string, string> = {
+  answered: 'Most calls aren’t picked up. Try another hour of their day, or their cell.',
+  reached:
+    'The front desk stops most calls. Ask for them by first name as if they expect you, and if they’re out, ask when to catch them or for their direct line.',
+  next_step: 'You reach them, then leave with nothing agreed. Before you hang up, leave with a time.',
+  booked: 'Next steps aren’t becoming interviews. Ask for the interview on the call, with a day and time.',
+};
+
+export function callFunnel(report: CoachingReport, bookings: BookingReport): Funnel {
+  const steps: FunnelStep[] = [
+    { key: 'calls', label: 'Calls', count: report.calls },
+    { key: 'answered', label: 'Someone picked up', count: report.answered },
+    { key: 'reached', label: 'Reached them', count: report.reached },
+    {
+      key: 'next_step',
+      label: 'Next step agreed',
+      count: report.stages.find((s) => s.stage === 'next_step')?.count ?? 0,
+    },
+    { key: 'booked', label: 'Interview booked', count: bookings.booked },
+    { key: 'held', label: 'Interview held', count: bookings.held },
+  ];
+  let leak: Funnel['leak'] = null;
+  let worst = 0;
+  for (let i = 1; i < steps.length - 1; i++) {
+    const [from, to] = [steps[i - 1], steps[i]];
+    const lost = from.count - Math.min(to.count, from.count);
+    if (from.count < MIN_SAMPLE || lost / from.count < LEAK_SHARE || lost <= worst) continue;
+    worst = lost;
+    leak = { from, to, advice: LEAK_ADVICE[to.key] };
+  }
+  return { steps, upcoming: bookings.upcoming + bookings.toLog, leak };
 }
 
 // The hour with the best rate, among those with enough calls.

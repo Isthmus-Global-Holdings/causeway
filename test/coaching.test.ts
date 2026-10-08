@@ -17,9 +17,12 @@ import {
   parseSources,
   parseUnsure,
   phoneTree,
+  plainText,
   ruleInsight,
   RULES_VERSION,
+  theirPart,
   transcriptStats,
+  withReviews,
   type CallFacts,
 } from '../src/lib/call-insight.ts';
 import {
@@ -27,6 +30,7 @@ import {
   bookingReport,
   bookingStatus,
   callBrief,
+  callFunnel,
   coachingReport,
   describeCall,
   hourLabel,
@@ -36,9 +40,11 @@ import {
 import {
   allBookedInterviews,
   allCallInsights,
+  callsToReview,
   callInsightsFor,
   callInsightsNear,
   d1CallInsightStore,
+  d1CallReviewStore,
   d1CallLogStore,
   d1DialStore,
   d1MeetingBookingStore,
@@ -58,6 +64,7 @@ import {
   readCall,
   readDialCall,
   readUnreadCalls,
+  reviewCall,
   type InsightDeps,
 } from '../src/workflows/call-insight.ts';
 import { runCoachingSweep } from '../src/workflows/coaching-sweep.ts';
@@ -256,6 +263,44 @@ test('the transcript shows how much they talked, the rep’s questions, and “y
   assert.equal(stats.repQuestions, 2);
   assert.ok(stats.prospectTalkShare! > 0.5);
   assert.equal(stats.youFocus, 3 / 4, 'you, your, you against we');
+});
+
+// Each line as Nova-3 writes it with `punctuate`: a capital, commas, and a
+// question mark or full stop, the way newer transcripts are kept.
+const written = (call: CallFixture): CallFixture => ({
+  ...call,
+  turns: call.turns.map((t) => {
+    const text = t.text
+      .replace(/\b(hey|hi|yeah|so|okay)\b/g, '$1,')
+      .replace(/\b(grant|lyle|rex|sam|anel)\b/g, (n) => n[0].toUpperCase() + n.slice(1))
+      .replace(/\b(\d{1,2}):00\b/, '$1:00 p.m.');
+    const end = /\b(how are you|is \w+ (available|in|there))$/.test(t.text) ? '?' : '.';
+    return { ...t, text: `${text[0].toUpperCase()}${text.slice(1)}${end}` };
+  }),
+});
+
+test('a punctuated transcript reads the same as a bare one', () => {
+  const calls = [
+    onHold,
+    notAvailable,
+    holdToVoicemail,
+    wrongNameToVoicemail,
+    phoneMenuCallBack,
+    emailOnly,
+    inAndOut,
+    lunchThenBooked,
+    putThrough,
+  ];
+  for (const call of calls) {
+    const { next_step_text: bareNext, ...bare } = heard(call);
+    const { next_step_text: writtenNext, ...read } = heard(written(call));
+    assert.deepEqual(read, bare, call.label);
+    assert.equal(writtenNext === null, bareNext === null, `${call.label}: the next step`);
+  }
+  assert.equal(plainText('Hey, Grant. How are you? About 4:30 p.m.'), 'hey grant how are you about 4:30 pm');
+  assert.equal(plainText('“We’re not able to transfer” — sorry!'), "we're not able to transfer sorry");
+  const stats = transcriptStats(theirPart(written(phoneMenuCallBack).turns, 'Grant'));
+  assert.ok(stats.repQuestions > 0, 'the questions are counted once they have their marks');
 });
 
 // --- Reading the rep's notes, when there's no transcript ---
@@ -641,6 +686,59 @@ test('a call described in a few words', () => {
   assert.equal(describeCall(noAnswer('y', T0)), 'no answer');
 });
 
+test('the funnel counts each step to an interview held, and names the step that loses the most', () => {
+  // 13 calls: 11 picked up, 5 reached (8 front desks, 2 through), 3 next steps.
+  const rows = [
+    noAnswer('a', T0),
+    noAnswer('b', T0 + 60),
+    ...['c', 'd', 'e', 'f', 'g', 'h'].map((id) =>
+      insight({
+        call_task_id: id,
+        gate: 'gatekeeper',
+        gatekeeper_result: 'not_available',
+        reached: 0,
+        stage: 'gatekeeper',
+      })
+    ),
+    insight({ call_task_id: 'i', gate: 'gatekeeper', gatekeeper_result: 'put_through' }),
+    insight({
+      call_task_id: 'j',
+      gate: 'gatekeeper',
+      gatekeeper_result: 'put_through',
+      stage: 'next_step',
+      next_step: 1,
+    }),
+    insight({ call_task_id: 'k', stage: 'next_step', next_step: 1, prospect_talk_share: 0.6 }),
+    insight({ call_task_id: 'l', stage: 'next_step', next_step: 1, prospect_talk_share: 0.3 }),
+    insight({ call_task_id: 'm' }),
+  ];
+  const report = coachingReport(rows, TZ);
+  const bookings = { ...bookingReport([], 0), booked: 1, upcoming: 1 };
+  const funnel = callFunnel(report, bookings);
+  assert.deepEqual(
+    funnel.steps.map((s) => [s.key, s.count]),
+    [
+      ['calls', 13],
+      ['answered', 11],
+      ['reached', 5],
+      ['next_step', 3],
+      ['booked', 1],
+      ['held', 0],
+    ]
+  );
+  assert.deepEqual([funnel.leak?.from.key, funnel.leak?.to.key], ['answered', 'reached'], 'the front desk loses 6');
+  assert.match(funnel.leak!.advice, /front desk/);
+  assert.equal(funnel.upcoming, 1);
+  assert.deepEqual(
+    report.talk.map((c) => c.call_task_id),
+    ['l', 'k'],
+    'reached, with a transcript, newest first'
+  );
+
+  const few = callFunnel(coachingReport(rows.slice(0, 2), TZ), bookingReport([], 0));
+  assert.equal(few.leak, null, 'two calls, nobody picked up: too few to name a leak');
+});
+
 test('the Coaching page and the call page’s card', async () => {
   const report = coachingReport(sample(), TZ);
   const page = String(
@@ -656,6 +754,11 @@ test('the Coaching page and the call page’s card', async () => {
   assert.match(page, /Lyle Moss/);
   assert.match(page, /aria-current="page">Coaching/);
   assert.match(page, /No interview booked from a call yet/);
+  assert.match(page, /<h2>How far your calls get<\/h2>/);
+  assert.match(page, /<dl class="bars" aria-label="What the front desk did">/);
+  assert.match(page, /style="--w: \d+%"/);
+  assert.match(page, /Too few calls to pick an hour by yet/);
+  assert.doesNotMatch(page, /by their time zone|Average length/);
 
   const empty = String(await coachingCard({ before: [], brief: null, after: null }));
   assert.equal(empty, '');
@@ -749,6 +852,7 @@ function deps(calls = { place: 0 }): InsightDeps {
     callLogs: d1CallLogStore(db),
     dials: d1DialStore(db),
     insights: d1CallInsightStore(db),
+    reviews: d1CallReviewStore(db),
     place: async () => {
       calls.place++;
       return 'America/Denver';
@@ -1281,4 +1385,111 @@ test('before calling someone who canceled their interview, the call page says th
     interviews: theirs,
   });
   assert.ok(notes.some((n) => /They canceled the interview/.test(n.text)));
+});
+
+// --- Reviews: Claude's or the rep's, laid over the rules' reading ---
+
+test('a review answers tags over the rules, the rep’s over Claude’s, and they’re no longer unsure', () => {
+  const row = insight({
+    call_task_id: 'r1',
+    gate: 'gatekeeper',
+    gatekeeper_result: null,
+    reached: 0,
+    stage: 'gatekeeper',
+    unsure: JSON.stringify(['whoAnswered', 'frontDeskResult', 'reachedThem']),
+    sources: JSON.stringify({ whoAnswered: { by: 'rules', p: null } }),
+  });
+  const reviewed = withReviews(row, [
+    {
+      reviewer: 'rep',
+      corrections: { stage: 'next_step' },
+      what_worked: null,
+      adjust: 'Ask for his cell before the hold.',
+      reviewed_at: '2026-10-07T18:00:00Z',
+    },
+    {
+      reviewer: 'claude',
+      corrections: {
+        frontDeskResult: 'put_through',
+        reachedThem: true,
+        stage: 'conversation',
+        objection: { kind: 'busy', said: 'call me back in an hour' },
+        nextStep: { agreed: true, what: 'Call back at 3' },
+      },
+      what_worked: 'Asked for him by first name.',
+      adjust: 'Leave with a time.',
+      reviewed_at: '2026-10-07T17:00:00Z',
+    },
+  ]);
+  assert.equal(reviewed.gatekeeper_result, 'put_through');
+  assert.equal(reviewed.reached, 1);
+  assert.equal(reviewed.stage, 'next_step', 'the rep’s wins');
+  assert.deepEqual(
+    [reviewed.objection_kind, reviewed.objection, reviewed.got_past_objection],
+    ['busy', 'call me back in an hour', 1]
+  );
+  assert.deepEqual([reviewed.next_step, reviewed.next_step_text], [1, 'Call back at 3']);
+  assert.equal(reviewed.what_worked, 'Asked for him by first name.', 'the rep said nothing about it');
+  assert.equal(reviewed.adjust, 'Ask for his cell before the hold.');
+  assert.deepEqual(parseUnsure(reviewed.unsure), ['whoAnswered'], 'nobody answered who picked up');
+  const sources = parseSources(reviewed.sources);
+  assert.deepEqual([sources.stage?.by, sources.reachedThem?.by, sources.whoAnswered?.by], ['rep', 'claude', 'rules']);
+  assert.equal(withReviews(row, []), row, 'no review: the rules’ reading as it was');
+});
+
+test('a review is saved, survives the rules reading the call again, and a new one replaces it whole', async () => {
+  await logCall('t1');
+  const first = await reviewCall(
+    deps(),
+    't1',
+    {
+      reviewer: 'claude',
+      corrections: { stage: 'conversation', objection: { kind: 'not_now' } },
+      what_worked: 'Let them talk about dispatch.',
+      adjust: null,
+      reviewed_at: '2026-10-07T17:00:00Z',
+    },
+    Date.now()
+  );
+  assert.equal(first?.stage, 'conversation');
+  assert.equal(first?.objection_kind, 'not_now');
+  assert.equal(first?.what_worked, 'Let them talk about dispatch.');
+
+  // The sweep reads it again (newer rules, say): the review stays.
+  const again = await readCall(deps(), 't1', Date.now(), { reread: true });
+  assert.equal(again?.stage, 'conversation');
+  assert.equal((await d1CallInsightStore(db).get('t1'))?.what_worked, 'Let them talk about dispatch.');
+  assert.deepEqual(await callsToReview(db, 10), [], 'reviewed: off the list');
+
+  // Claude's second review drops the stage: the rules' stage is back.
+  const replaced = await reviewCall(
+    deps(),
+    't1',
+    {
+      reviewer: 'claude',
+      corrections: {},
+      what_worked: null,
+      adjust: 'Leave with a time.',
+      reviewed_at: '2026-10-07T18:00:00Z',
+    },
+    Date.now()
+  );
+  assert.equal(
+    replaced?.stage,
+    (
+      await readCall({ ...deps(), reviews: { list: async () => [], save: async () => {} } }, 't1', Date.now(), {
+        reread: true,
+      })
+    )?.stage
+  );
+  assert.equal(replaced?.objection_kind, 'busy', 'from the notes, as the rules read them');
+  assert.equal(
+    await reviewCall(
+      deps(),
+      'none',
+      { reviewer: 'rep', corrections: {}, what_worked: null, adjust: null, reviewed_at: '' },
+      Date.now()
+    ),
+    null
+  );
 });

@@ -558,7 +558,20 @@ available and "connected" only as someone picked up, both marked unsure. The
 outcome settles no answer, voicemail and a wrong number. The auto-summary is
 never used: it often gets who said what wrong. Each reading lists the tags
 the rules only guessed at (`unsure`) and who decided each (`sources`), for
-Jev and reviews to settle later.
+a review to settle (below). A transcript keeps Nova-3's punctuation, which
+is how your questions are counted; the rules read a plain copy of it, the
+same as transcripts from before it was kept.
+
+**Reviews, from a Claude chat.** Ask Claude to review your calls: it lists
+the ones worth a review with `calls_to_review` (someone picked up, nobody
+reviewed it yet), reads each with `get_call_review` (the transcript with
+times, your notes, the tags so far, and the rules for reviewing it, in
+`src/prompts/call-review.ts`), and saves what it found with `review_call`:
+corrections for the tags that were wrong or unsure, what worked, and what to
+adjust. On your Claude plan, so it costs nothing extra. A review is kept in
+`call_reviews` (one per reviewer, replaced whole) and laid over the rules'
+reading every time the call is read, so the sweep never undoes it; yours
+(`reviewer: 'rep'`, when you tell Claude what happened) wins over Claude's.
 
 Nothing interrupts a call. The notes sit in a **Coaching** card on the call
 page, under the script:
@@ -579,6 +592,10 @@ page, under the script:
 
 **Coaching** in the navbar has the patterns across every call:
 
+- How far your calls get, as bars: calls, someone picked up, reached them, a
+  next step agreed, an interview booked, an interview held. Counts, not
+  rates, so they hold at any number of calls, and the step that loses the
+  most (at least 40% of the one before) is named with what to try.
 - The interviews your calls booked, followed to how each turned out: held,
   no-show, canceled by them (they told you ahead: a reply, unlike a no-show)
   or by you, still ahead, or past its time with nothing logged (listed, to
@@ -587,21 +604,25 @@ page, under the script:
   that booked it, each with the share held (your own cancels left out). From the outcomes logged on
   Interviews (`meeting_logs`); one set straight in HubSpot isn't seen.
 - The front desk as its own category: how often it put you through, what it
-  did otherwise, by name, and what you said when it put you through.
+  did otherwise (as bars), by name, and what you said when it put you through.
 - Rushed connects: under 1:30 of talk with no next step, listed.
 - Long connects (5 minutes or more of talk): what worked, the opening, what
   was agreed, and how you talked on recorded ones against short ones (their
   share of the talking, your questions, "you" over "we"), from their part of
   the call.
+- Who did the talking: on each recorded call that reached them, their share
+  of the words against half (on an interview they should do most of it).
 - Objections, most common first, in their words, with the openings that got
   past them.
-- Reached rate by hour of their day and by their time zone (from the
-  contact's state, or their company's; unknown counts in yours), with groups
-  under three calls marked as too few.
+- Reached rate by hour of their day (in the contact's time zone, from their
+  state or their company's; unknown counts in yours), with groups under three
+  calls marked as too few. Until an hour has about 30 calls it says it's too
+  early to pick one, and the page names no best hour: a difference between
+  hours means nothing on fewer.
 - Follow-up timing: by the gap since the last call, how often the next call
   reached them, after a connect (a second connect) and before one.
-- Average length by outcome, how far calls get, and your last calls with
-  their tags and what to adjust on each.
+- Where each call ended, and your last calls with their tags and what to
+  adjust on each.
 
 On **Calls**, each logged call shows its tags too, with **Leave out of
 coaching** for a test call (and **Put back in coaching**).
@@ -649,10 +670,13 @@ as the pages.
   `get_company`, `get_email_task` (with the research context),
   `drafting_rules` (the same rules as Draft with Claude), `get_call_task`
   (the call script filled in, history, coaching), `call_coaching` (the
-  patterns across every call), `get_meeting` (prep and the interview
-  questions), `recent_inbound_calls` and `unfinished`.
+  patterns across every call), `calls_to_review` and `get_call_review` (a
+  logged call to review, with its transcript and the review rules),
+  `get_meeting` (prep and the interview questions), `recent_inbound_calls`
+  and `unfinished`.
 - **Writes:** `save_draft`, `mark_email_sent`, `drop_email_task`, `log_call`,
-  `snooze_call`, `book_interview` (never with a calendar invite: send one from
+  `snooze_call`, `review_call` (a call's review for coaching, in the app
+  only), `book_interview` (never with a calendar invite: send one from
   the interview's page), `log_meeting`, `open_task_for_contact` and
   `save_contact_numbers` (phone and mobile, with extensions). Each is
   safe to repeat, like the pages' buttons, and each is in the audit log under

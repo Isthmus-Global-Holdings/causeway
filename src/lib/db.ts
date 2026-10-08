@@ -9,7 +9,13 @@ import {
   type HistoryFilters,
   type HistoryPage,
 } from './call-history';
-import type { InsightFields, InsightSource } from './call-insight';
+import {
+  parseCorrections,
+  type CallReview,
+  type InsightFields,
+  type InsightSource,
+  type Reviewer,
+} from './call-insight';
 import { parsePlan, withoutItem, withSetTimeCall, type WorkPlan } from './work-plan';
 
 export interface Confirmation {
@@ -2041,6 +2047,70 @@ export async function callInsightsFor(db: D1Database, callTaskIds: string[]): Pr
     .bind(JSON.stringify(callTaskIds))
     .all<CallInsight>();
   return new Map(results.map((r) => [r.call_task_id, r]));
+}
+
+// --- Reviews of a call (call_reviews): the rep's, or Claude's through the connector ---
+
+export interface CallReviewStore {
+  // The call's reviews, at most one per reviewer.
+  list(callTaskId: string): Promise<CallReview[]>;
+  // Writes the reviewer's review of the call, replacing their earlier one whole.
+  save(callTaskId: string, review: CallReview): Promise<void>;
+}
+
+export function d1CallReviewStore(db: D1Database): CallReviewStore {
+  return {
+    async list(callTaskId) {
+      const { results } = await db
+        .prepare(
+          `SELECT reviewer, corrections, what_worked, adjust, reviewed_at FROM call_reviews
+           WHERE call_task_id = ? ORDER BY reviewer`
+        )
+        .bind(callTaskId)
+        .all<{
+          reviewer: Reviewer;
+          corrections: string;
+          what_worked: string | null;
+          adjust: string | null;
+          reviewed_at: string;
+        }>();
+      return results.map((r) => ({ ...r, corrections: parseCorrections(r.corrections) }));
+    },
+
+    async save(callTaskId, review) {
+      await db
+        .prepare(
+          `INSERT INTO call_reviews (call_task_id, reviewer, corrections, what_worked, adjust, reviewed_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(call_task_id, reviewer) DO UPDATE SET corrections = excluded.corrections,
+             what_worked = excluded.what_worked, adjust = excluded.adjust, reviewed_at = excluded.reviewed_at`
+        )
+        .bind(
+          callTaskId,
+          review.reviewer,
+          JSON.stringify(review.corrections),
+          review.what_worked,
+          review.adjust,
+          review.reviewed_at
+        )
+        .run();
+    },
+  };
+}
+
+// Calls worth a review, newest first: someone picked up (them or the front
+// desk), coaching counts it, and nobody has reviewed it yet.
+export async function callsToReview(db: D1Database, limit: number): Promise<CallInsight[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT ${INSIGHT_COLUMNS.map((c) => `i.${c}`).join(', ')} FROM call_insights i
+       WHERE i.excluded = 0 AND i.gate IN ('owner', 'gatekeeper')
+         AND NOT EXISTS (SELECT 1 FROM call_reviews r WHERE r.call_task_id = i.call_task_id)
+       ORDER BY i.at_sec DESC LIMIT ?`
+    )
+    .bind(limit)
+    .all<CallInsight>();
+  return results;
 }
 
 // --- Interviews booked from calls, and how each turned out (coaching) ---
