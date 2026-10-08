@@ -131,6 +131,7 @@ test('it introduces itself and lists its tools, marked read-only or safe to repe
     'book_interview',
     'mark_email_sent',
     'review_call',
+    'save_call_lines',
   ]) {
     assert.equal(byName.get(name)?.annotations?.idempotentHint, true, name);
   }

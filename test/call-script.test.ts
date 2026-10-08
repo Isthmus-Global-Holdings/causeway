@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fillScript, normalizeScript, scriptParts, type ScriptVars } from '../src/lib/call-script.ts';
+import { fillScript, normalizeScript, scriptParts, scriptVars, type ScriptVars } from '../src/lib/call-script.ts';
 
 const VARS: ScriptVars = {
   firstName: 'Ana',
@@ -8,7 +8,8 @@ const VARS: ScriptVars = {
   name: 'Ana Díaz',
   title: 'COO',
   company: 'Acme',
-  fitReason: 'runs the quote-to-invoice workflow',
+  theirWorld: 'how trucking companies handle quoting and dispatch',
+  pedestal: 'you haul livestock and hay, so no two loads quote the same',
   myName: 'Anel Canto',
 };
 
@@ -19,12 +20,39 @@ test('fills every placeholder', () => {
   );
 });
 
-test('fills the fit reason', () => {
+test('fills their world and the pedestal', () => {
   assert.equal(
-    fillScript('I picked you because {company} {fit_reason}.', VARS),
-    'I picked you because Acme runs the quote-to-invoice workflow.'
+    fillScript("I'm researching {their_world}, and I'm calling you because {pedestal}.", VARS),
+    "I'm researching how trucking companies handle quoting and dispatch, and I'm calling you because you haul livestock and hay, so no two loads quote the same."
   );
-  assert.equal(fillScript('Because {fit_reason}.', { ...VARS, fitReason: null }), 'Because {fit_reason}.');
+  assert.equal(fillScript('Because {pedestal}.', { ...VARS, pedestal: null }), 'Because {pedestal}.');
+  assert.equal(fillScript('Picked for {fit_reason}.', VARS), 'Picked for {fit_reason}.', 'the old fill-in is gone');
+});
+
+test("takes the values from the contact and the company's research lines", () => {
+  const vars = scriptVars(
+    { id: '1', properties: { firstname: 'Ana', lastname: null, jobtitle: 'COO' } },
+    {
+      id: '2',
+      properties: {
+        name: 'Acme',
+        description:
+          'Fit: GOOD - owner quotes.\nWorld: how trucking companies handle quoting.\nPedestal: you quote every load yourself.',
+      },
+    },
+    'Anel Canto'
+  );
+  assert.deepEqual(vars, {
+    firstName: 'Ana',
+    lastName: null,
+    name: 'Ana',
+    title: 'COO',
+    company: 'Acme',
+    theirWorld: 'how trucking companies handle quoting',
+    pedestal: 'you quote every load yourself',
+    myName: 'Anel Canto',
+  });
+  assert.equal(scriptVars({ id: '1', properties: {} }, null, null).pedestal, null);
 });
 
 test('placeholders match without regard to case', () => {

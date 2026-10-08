@@ -2,6 +2,9 @@
 // the call page with the contact's details filled in. Plain text, so what the
 // rep wrote is exactly what they read.
 
+import { parseCallLines } from './fit';
+import type { HubSpotObject } from './hubspot';
+
 export const MAX_SCRIPT = 20_000;
 
 export interface ScriptVars {
@@ -10,7 +13,8 @@ export interface ScriptVars {
   name: string | null;
   title: string | null;
   company: string | null;
-  fitReason: string | null;
+  theirWorld: string | null;
+  pedestal: string | null;
   myName: string | null;
 }
 
@@ -20,9 +24,34 @@ export const SCRIPT_PLACEHOLDERS: { token: string; key: keyof ScriptVars; what: 
   { token: '{name}', key: 'name', what: 'their full name' },
   { token: '{title}', key: 'title', what: 'their job title' },
   { token: '{company}', key: 'company', what: 'their company' },
-  { token: '{fit_reason}', key: 'fitReason', what: "why you picked them (the company's Fit: line)" },
+  {
+    token: '{their_world}',
+    key: 'theirWorld',
+    what: "what you're researching, in their industry's words (the company's World: line, to follow \"I'm researching\")",
+  },
+  {
+    token: '{pedestal}',
+    key: 'pedestal',
+    what: 'why them, in one spoken clause (the company\'s Pedestal: line, to follow "I\'m calling you because")',
+  },
   { token: '{my_name}', key: 'myName', what: 'your from name' },
 ];
+
+// The values for one call, from HubSpot's raw fields rather than
+// contactName/companyName: their fallbacks (an email, "Contact 123") would
+// fill a placeholder that should show it has nothing to fill in.
+export function scriptVars(contact: HubSpotObject, company: HubSpotObject | null, myName: string | null): ScriptVars {
+  const p = contact.properties;
+  return {
+    firstName: p.firstname,
+    lastName: p.lastname,
+    name: [p.firstname, p.lastname].filter(Boolean).join(' ') || null,
+    title: p.jobtitle,
+    company: company?.properties.name || null,
+    ...parseCallLines(company?.properties.description),
+    myName,
+  };
+}
 
 // Swaps in the contact's details. A placeholder with no value, or one that
 // isn't known, stays as written, so a gap shows instead of vanishing.

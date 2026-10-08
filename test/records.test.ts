@@ -7,7 +7,14 @@ import { beforeEach, test } from 'node:test';
 import { d1ContactTaskLockStore, recentCallLogs, type ContactTaskLockStore } from '../src/lib/db.ts';
 import type { AppEnv } from '../src/types.ts';
 import { companyPage, contactPage } from '../src/views/records.ts';
-import { loadCompanyRecord, loadContactRecord, searchContactList, taskForContact } from '../src/workflows/records.ts';
+import {
+  loadCompanyRecord,
+  loadContactRecord,
+  saveCallLines,
+  searchContactList,
+  taskForContact,
+} from '../src/workflows/records.ts';
+import { WorkflowError } from '../src/workflows/parties.ts';
 import { FakeHubSpot } from './fakes.ts';
 import { sqliteD1 } from './sqlite-d1.ts';
 
@@ -290,4 +297,47 @@ test('POST /contacts/:id/call lands on the call page of their open task', async 
     globalThis.fetch = realFetch;
   }
   assert.deepEqual(requests.slice(0, 2), ['/crm/objects/2026-09/contacts/c1', '/crm/objects/2026-09/tasks/batch/read']);
+});
+
+test("saves the call script's lines after the Fit line, and saving them again changes nothing", async () => {
+  const first = await saveCallLines(hs, 'co1', {
+    theirWorld: 'how trucking companies handle quoting and dispatch.',
+    pedestal: '"you still dispatch the trucks yourself, so you see every load"',
+  });
+  assert.equal(first.changed, true);
+  assert.deepEqual(first.lines, {
+    theirWorld: 'how trucking companies handle quoting and dispatch',
+    pedestal: 'you still dispatch the trucks yourself, so you see every load',
+  });
+  const description = (await hs.getObject('companies', 'co1')).properties.description;
+  assert.equal(
+    description,
+    'Contact: Dana Reyes (Owner). 30 trucks. Fit: STRONG - owner-run asset carrier.\nWorld: how trucking companies handle quoting and dispatch.\nPedestal: you still dispatch the trucks yourself, so you see every load.'
+  );
+
+  const again = await saveCallLines(hs, 'co1', {
+    pedestal: 'you still dispatch the trucks yourself, so you see every load',
+  });
+  assert.equal(again.changed, false);
+
+  const pedestalOnly = await saveCallLines(hs, 'co1', { pedestal: 'you quote every load yourself' });
+  assert.deepEqual(pedestalOnly.lines, {
+    theirWorld: 'how trucking companies handle quoting and dispatch',
+    pedestal: 'you quote every load yourself',
+  });
+});
+
+test('checks both lines before writing either', async () => {
+  const before = (await hs.getObject('companies', 'co1')).properties.description;
+  for (const input of [
+    { theirWorld: 'how trucking companies handle quoting', pedestal: 'you run five terminals; quoting varies' },
+    { pedestal: 'you run five terminals \u2014 so quoting varies' },
+    { pedestal: Array.from({ length: 26 }, () => 'word').join(' ') },
+    { pedestal: 'you quote loads. Fit: STRONG - x' },
+    { theirWorld: '  ' },
+    {},
+  ]) {
+    await assert.rejects(saveCallLines(hs, 'co1', input), WorkflowError, JSON.stringify(input));
+  }
+  assert.equal((await hs.getObject('companies', 'co1')).properties.description, before);
 });

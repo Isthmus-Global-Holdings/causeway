@@ -204,11 +204,23 @@ timeline like one made in HubSpot.
   - **Call script** comes next: one script shared by every call, for the
     notes you prepare once and reuse. Edit it under **Edit script** on any
     call page. `{first_name}`, `{last_name}`, `{name}`, `{title}`,
-    `{company}` and `{my_name}` fill in with the contact's details, and
-    `{fit_reason}` with why you picked them: the reason after the rating in
-    the company description's Fit line ("Fit: STRONG - runs …"), with no
-    final period, and nothing for a drop-flagged company. One with nothing
-    to fill in stays as written, highlighted, so the gap shows. Editing is
+    `{company}` and `{my_name}` fill in with the contact's details.
+    `{their_world}` and `{pedestal}` fill in from two lines the research
+    writes in the company description after its Fit line, each without its
+    final period:
+    `World: how freight forwarders handle quoting and shipments.` (the
+    Vision in their industry's words, to follow "I'm researching") and
+    `Pedestal: you run both ocean and air out of Miami, so no two quotes
+    look alike.` (why them, one clause under about 20 words said to them,
+    to follow "I'm calling you because"; the same observation as the
+    email's second paragraph). The Fit line's reasoning is written to rank
+    a prospect, so it isn't read out. A one-paragraph description works
+    too: each value ends at the next `Fit:`, `World:` or `Pedestal:`. The
+    connector's company results carry both (`theirWorld`, `pedestal`,
+    null until written), and `save_call_lines` writes them, by the rules in
+    `src/prompts/call-lines.ts` (also handed to Claude with the drafting
+    rules, so an email and the call after it use the same specific). One with nothing to fill in stays as written,
+    highlighted, so the gap shows. Editing is
     hidden while a call is live. A script in parts gets a tab for each part,
     one part showing at a time, and every new call starts on the first: a
     part starts at a heading on its own line between rules
@@ -810,7 +822,10 @@ as the pages.
   `snooze_call`, `drop_call_task`, `review_call` (a call's review for coaching, in the app
   only), `book_interview` (never with a calendar invite: send one from
   the interview's page), `log_meeting`, `open_task_for_contact` and
-  `save_contact_numbers` (phone and mobile, with extensions). Each is
+  `save_contact_numbers` (phone and mobile, with extensions) and
+  `save_call_lines` (a company's World and Pedestal lines, which fill the
+  call script; checked to be one spoken line, then written into its
+  description, the rest kept as written). Each is
   safe to repeat, like the pages' buttons, and each is in the audit log under
   your email.
 - **Not from Claude:** sending an email and placing a call. Every result
@@ -915,6 +930,8 @@ The static token is on the app's **Distribution** tab (not Auth).
   - `crm.objects.contacts.read`
   - `crm.objects.contacts.write`
   - `crm.objects.companies.read`
+  - `crm.objects.companies.write` (the call script's World and Pedestal
+    lines, from `save_call_lines`)
   - `crm.objects.deals.read`, `crm.objects.deals.write` (Upwork pitches)
   - `sales-email-read` (the HubSpot history's emails)
 - Tasks and notes have no scopes of their own. The contacts scopes cover

@@ -1,8 +1,14 @@
 import { html, raw } from 'hono/html';
 import type { CallCoaching } from '../actions/coaching';
-import { fillScript, MAX_SCRIPT, SCRIPT_PLACEHOLDERS, scriptParts, type ScriptLine } from '../lib/call-script';
+import {
+  fillScript,
+  MAX_SCRIPT,
+  SCRIPT_PLACEHOLDERS,
+  scriptParts,
+  scriptVars,
+  type ScriptLine,
+} from '../lib/call-script';
 import { suggestConversation } from '../lib/conversations';
-import { parseFitReason } from '../lib/fit';
 import { partyTimeZone, zoneLabel } from '../lib/address';
 import { addDays, ago, formatClock, formatDay, formatLocal, localDate } from '../lib/dates';
 import { sqliteTime, type CallLog, type Dial, type DialMode, type InboundCall, type RecentSend } from '../lib/db';
@@ -799,21 +805,7 @@ export interface CallPageState {
 function scriptCard(state: CallPageState, live: boolean): Html {
   const { task, contact, company } = state.parties;
   const script = state.callScript;
-  const p = contact.properties;
-  const filled = script
-    ? fillScript(script, {
-        firstName: p.firstname,
-        lastName: p.lastname,
-        // The raw fields, not contactName/companyName: their fallbacks (an
-        // email, "Contact 123") would fill a placeholder that should show
-        // it has nothing to fill in.
-        name: [p.firstname, p.lastname].filter(Boolean).join(' ') || null,
-        title: p.jobtitle,
-        company: company?.properties.name || null,
-        fitReason: parseFitReason(company?.properties.description),
-        myName: state.fromName,
-      })
-    : null;
+  const filled = script ? fillScript(script, scriptVars(contact, company, state.fromName)) : null;
   const edit = live
     ? ''
     : html`<details id="script-edit" ${script ? '' : 'open'}>

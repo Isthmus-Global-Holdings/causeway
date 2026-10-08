@@ -1,6 +1,7 @@
 // What the contact, call and interview pages and the Claude connector all do
 // to a contact: open their task of a type, creating one due now if there's
-// none, and save the numbers they gave.
+// none, and save the numbers they gave. And to a company: the call script's
+// World and Pedestal lines.
 
 import type { Context } from 'hono';
 import { d1ContactTaskLockStore, insertAudit } from '../lib/db';
@@ -8,7 +9,8 @@ import { createHubSpot } from '../lib/hubspot';
 import type { AppEnv } from '../types';
 import { saveContactNumbers, type NumbersInput } from '../workflows/numbers';
 import type { TaskType } from '../workflows/parties';
-import { taskForContact, type ContactTaskResult } from '../workflows/records';
+import type { CallLines } from '../lib/fit';
+import { saveCallLines, taskForContact, type ContactTaskResult } from '../workflows/records';
 
 export async function openContactTask(
   c: Context<AppEnv>,
@@ -54,4 +56,23 @@ export async function saveNumbers(
     });
   }
   return changes;
+}
+
+export async function saveCompanyCallLines(
+  c: Context<AppEnv>,
+  companyId: string,
+  input: Partial<Record<keyof CallLines, string>>
+): Promise<{ lines: CallLines; changed: boolean }> {
+  const result = await saveCallLines(createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN), companyId, input);
+  if (result.changed) {
+    await insertAudit(c.env.DB, {
+      actor: c.get('actor'),
+      workflow: 'connector',
+      taskId: companyId,
+      action: 'save call lines',
+      outcome: 'success',
+      detail: { companyId, ...result.lines },
+    });
+  }
+  return result;
 }

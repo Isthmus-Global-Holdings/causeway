@@ -20,7 +20,7 @@ import {
 } from '../actions/coaching';
 import { dropEmailTask, markEmailSent, saveEmailDraft } from '../actions/emails';
 import { latestMeetingDial, logMeeting, meetingsOverview } from '../actions/meetings';
-import { openContactTask, saveNumbers } from '../actions/records';
+import { openContactTask, saveCompanyCallLines, saveNumbers } from '../actions/records';
 import { loadAppSettings } from '../lib/app-settings';
 import {
   COMMITMENTS,
@@ -32,8 +32,7 @@ import {
   STAGES,
   type ObjectionKind,
 } from '../lib/call-insight';
-import { fillScript } from '../lib/call-script';
-import { parseFitReason } from '../lib/fit';
+import { fillScript, scriptVars } from '../lib/call-script';
 import { partyTimeZone } from '../lib/address';
 import { localDate, parseHubSpotTime } from '../lib/dates';
 import {
@@ -50,6 +49,7 @@ import {
 import { describeError } from '../lib/errors';
 import { createHubSpot } from '../lib/hubspot';
 import { parseTaskBody } from '../lib/richtext';
+import { CALL_LINES_RULES } from '../prompts/call-lines';
 import { DRAFT_SYSTEM_PROMPT } from '../prompts/draft-system';
 import { INTERVIEW_REMINDERS, INTERVIEW_SECTIONS } from '../prompts/interview-questions';
 import type { AppEnv } from '../types';
@@ -93,7 +93,7 @@ export const INSTRUCTIONS = `This connector is the rep's outreach app: HubSpot E
 - Start with "today" for what's next, or "call_queue" / "email_queue" / "meetings" for a list. Lists are already ranked by the app: keep its order.
 - Ids come from earlier results (taskId, contactId, meetingId). Never make one up.
 - Emails are sent and calls are dialled from the app's pages, not from here: give the rep the result's "url" to open.
-- To write an email: "get_email_task", then "drafting_rules", then "save_draft". The rep sends it from the page.
+- To write an email: "get_email_task", then "drafting_rules", then "save_draft", then "save_call_lines" for the call that follows it. The rep sends it from the page.
 - Dates are YYYY-MM-DD and times HH:MM, in the rep's time zone (every result says which). When the contact gave a time in their own zone ("call me at 2pm my time"), pass it as they said it with time_zone: their zone (theirTimeZone in results, from their address) or whichever they named. The app saves it in the rep's zone.
 - Writes are safe to repeat: running one again finishes what an earlier attempt started and never doubles it.`;
 
@@ -388,7 +388,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     },
     () =>
       run(async () => ({
-        rules: `${DRAFT_SYSTEM_PROMPT.split('\n## Output')[0].trim()}\n\n## Output\n\nSave the email with save_draft: the subject line, and the body as plain text with blank lines between paragraphs. The signature is added when it's sent.`,
+        rules: `${DRAFT_SYSTEM_PROMPT.split('\n## Output')[0].trim()}\n\n## Output\n\nSave the email with save_draft: the subject line, and the body as plain text with blank lines between paragraphs. The signature is added when it's sent.\n\n${CALL_LINES_RULES}`,
       }))
   );
 
@@ -421,7 +421,6 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
           latestSendToContact(env.DB, parties.contact.id),
           callCoaching(c, parties, log ? task_id : null, settings, now),
         ]);
-        const p = parties.contact.properties;
         return {
           timeZone,
           theirTimeZone: partyTimeZone(parties.contact, parties.company),
@@ -429,15 +428,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
           contact: contactSummary(parties.contact, origin),
           company: parties.company ? companySummary(parties.company, origin) : null,
           script: settings.callScript
-            ? fillScript(settings.callScript, {
-                firstName: p.firstname,
-                lastName: p.lastname,
-                name: [p.firstname, p.lastname].filter(Boolean).join(' ') || null,
-                title: p.jobtitle,
-                company: parties.company?.properties.name || null,
-                fitReason: parseFitReason(parties.company?.properties.description),
-                myName: settings.fromName,
-              })
+            ? fillScript(settings.callScript, scriptVars(parties.contact, parties.company, settings.fromName))
             : null,
           lastEmail: lastEmailSummary(lastEmail, timeZone),
           interviews: meetings?.interviews.map((r) => meetingRowSummary(r, timeZone, origin)) ?? null,
@@ -955,6 +946,28 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
           { workflow: 'task-action', taskId: contact_id }
         );
         return { saved: changes, unchanged: Object.keys(changes).length === 0 };
+      })
+  );
+
+  server.registerTool(
+    'save_call_lines',
+    {
+      title: 'Save call script lines',
+      description: `Write the company's World and/or Pedestal line in its HubSpot description, which fill the call script's {their_world} and {pedestal}. A line left out keeps what's there, and the rest of the description stays as written. Company results show the current ones (theirWorld, pedestal; null when missing).\n\n${CALL_LINES_RULES}`,
+      inputSchema: {
+        company_id: id,
+        their_world: z.string().max(200).optional(),
+        pedestal: z.string().max(300).optional(),
+      },
+      annotations: WRITE,
+    },
+    ({ company_id, their_world, pedestal }) =>
+      run(async () => {
+        const { lines, changed } = await saveCompanyCallLines(c, company_id, {
+          ...(their_world !== undefined ? { theirWorld: their_world } : {}),
+          ...(pedestal !== undefined ? { pedestal } : {}),
+        });
+        return { saved: lines, unchanged: !changed };
       })
   );
 

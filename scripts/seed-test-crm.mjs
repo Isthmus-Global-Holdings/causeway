@@ -35,7 +35,8 @@ const PROSPECTS = [
       numberofemployees: '40',
       city: 'Grand Junction',
       state: 'CO',
-      description: 'Fit: STRONG - small, family-owned, owner-run asset carrier',
+      description:
+        'Fit: STRONG - small, family-owned, owner-run asset carrier.\nWorld: how trucking companies handle quoting and dispatch.\nPedestal: you still run the trucks and the office out of one yard in Grand Junction.',
     },
     contact: { firstname: 'Dana', lastname: 'Ruiz', jobtitle: 'Owner', phone: '+13855550101' },
     tasks: [{ type: 'EMAIL', subject: 'Intro email', due: 0 }],
@@ -81,7 +82,8 @@ const PROSPECTS = [
       numberofemployees: '60',
       city: 'Casper',
       state: 'WY',
-      description: 'Fit: STRONG - asset carrier, owner still dispatches',
+      description:
+        'Fit: STRONG - asset carrier, owner still dispatches.\nWorld: how trucking companies handle quoting and dispatch.\nPedestal: you still dispatch the trucks yourself, so you see every load from quote to delivery.',
     },
     contact: { firstname: 'Tom', lastname: 'Becker', jobtitle: 'President', phone: '+13855550104' },
     tasks: [{ type: 'CALL', subject: 'Follow-up call', due: 0 }],
