@@ -201,9 +201,16 @@ export async function removeFromPlan(db: D1Database, key: 'call_plan' | 'email_p
 }
 
 // Puts a set-time call into today's plan (withSetTimeCall), from `at`.
-export async function addSetTimeCallToPlan(db: D1Database, today: string, taskId: string, at: number): Promise<void> {
+// `sameAs`: the call a follow-up came from, whose contact it's for.
+export async function addSetTimeCallToPlan(
+  db: D1Database,
+  today: string,
+  taskId: string,
+  at: number,
+  sameAs?: string
+): Promise<void> {
   const row = await db.prepare('SELECT value FROM settings WHERE key = ?').bind('call_plan').first<{ value: string }>();
-  const plan = withSetTimeCall(parsePlan(row?.value), today, taskId, at);
+  const plan = withSetTimeCall(parsePlan(row?.value), today, taskId, at, sameAs);
   if (plan) await savePlan(db, 'call_plan', plan);
 }
 

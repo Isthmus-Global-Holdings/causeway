@@ -93,6 +93,18 @@ export function formatLocal(epochMs: number, timeZone: string): string {
   }).format(new Date(epochMs));
 }
 
+// "2:30 PM" in `timeZone`, for a time today.
+export function formatClock(epochMs: number, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(epochMs));
+}
+
+// "Fri, Sep 25" in `timeZone`, for a day with no time that matters.
+export function formatDay(epochMs: number, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short', month: 'short', day: 'numeric' }).format(
+    new Date(epochMs)
+  );
+}
+
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 // The local calendar date of an instant, as "YYYY-MM-DD" (what <input type=date> uses).

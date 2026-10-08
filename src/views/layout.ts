@@ -58,7 +58,8 @@ const SPECULATION_RULES = JSON.stringify({
 // the draft page; on the call and interview pages the transcript poll and
 // calling from the browser
 // (Twilio's Voice SDK); and the fields that show only when they apply
-// (booking an interview, an interview's new time).
+// (booking an interview, an interview's new time); and on a call page, the
+// list of today's calls scrolled to this one.
 // `refreshSec` reloads the page, for an inbound call page waiting on Twilio,
 // and the calls queue when a set-time call comes on.
 export function layout(
