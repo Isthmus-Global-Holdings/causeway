@@ -5,7 +5,8 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import { Hono } from 'hono';
-import { d1CallLogStore, d1DialStore, type Dial, type DialStore } from '../src/lib/db.ts';
+import { d1CallLogStore, d1DialStore, type CallLog, type Dial, type DialStore } from '../src/lib/db.ts';
+import { planProgress } from '../src/lib/work-plan.ts';
 import { createHubSpot, HubSpotApiError } from '../src/lib/hubspot.ts';
 import { TwilioApiError, type NewCall, type Twilio } from '../src/lib/twilio.ts';
 import { twilioRoute } from '../src/routes/twilio.ts';
@@ -883,8 +884,9 @@ test('a call log that stopped after completing the task still offers the form to
           portalId: '1',
           now: NOW,
           timeZone: TZ,
-          justLogged: false,
+          justLogged: null,
           nextCallId: null,
+          today: null,
           callNow: false,
           coaching: { before: [], after: null },
         },
@@ -1145,9 +1147,66 @@ async function pageState(overrides: Partial<CallPageState> = {}): Promise<CallPa
     now: NOW,
     timeZone: TZ,
     coaching: { before: [], after: null },
+    justLogged: null,
+    nextCallId: null,
+    today: null,
+    callNow: false,
     ...overrides,
   };
 }
+
+test('landing on the next call after logging one says what was logged, and that this is the next call', async () => {
+  const previous = {
+    title: 'Call with Bo Bolt (Bolt Co)',
+    outcome: 'no_answer',
+    next_type: 'CALL',
+    next_due: '2026-09-28T15:00:00.000Z',
+    next_set_time: 0,
+    book_start: null,
+  } as unknown as CallLog;
+  const page = String(
+    await callPage(await pageState({ justLogged: { taskId: '9', log: previous } }), 'rep@example.com')
+  );
+  assert.match(
+    page,
+    /✓ Logged<\/strong> <a href="\/calls\/9">Call with Bo Bolt \(Bolt Co\)<\/a> · No answer · follow-up call Mon, Sep 28/
+  );
+  assert.match(page, /class="kicker">Next call</);
+  assert.match(page, /class="tight arrived"/);
+  const unread = String(await callPage(await pageState({ justLogged: { taskId: '9', log: null } }), 'rep@example.com'));
+  assert.match(unread, /✓ Logged<\/strong> <a href="\/calls\/9">the last call<\/a>/);
+  const usual = String(await callPage(await pageState(), 'rep@example.com'));
+  assert.doesNotMatch(usual, /✓ Logged|class="kicker"/);
+});
+
+test("the call page lists today's calls beside it, any a click away", async () => {
+  const today = planProgress(
+    {
+      date: '2026-09-25',
+      items: [
+        { id: '7', drafted: false, company: 'Done Co', contact: 'Dee' },
+        { id: '1', drafted: false, company: 'Acme', contact: 'Ana' },
+        { id: '8', drafted: false, company: 'Next Co', contact: 'Ned' },
+        { id: '6', drafted: false, at: NOW + 3_600_000, contact: 'Lou' },
+      ],
+    },
+    '2026-09-25',
+    '1',
+    new Set(['7']),
+    { now: NOW }
+  );
+  const page = String(await callPage(await pageState({ today }), 'rep@example.com'));
+  assert.match(page, /Today’s calls<\/h2>\s*<span class="muted">3 left · 1 done/);
+  assert.match(
+    page,
+    /<li class="done">\s*<a href="\/calls\/7" data-prefetch-hover>\s*<span class="rail-who">✓ Done Co/
+  );
+  assert.match(page, /<li class="current">\s*<a href="\/calls\/1" aria-current="page">/);
+  assert.match(page, /<li class="next">\s*<a href="\/calls\/8"[\s\S]*?>Next</);
+  assert.match(page, /<span class="rail-who">Lou<\/span>[\s\S]*?11:00 AM/, 'a set-time call shows its time');
+  const none = String(await callPage(await pageState(), 'rep@example.com'));
+  assert.match(none, /to line up today’s calls here/);
+});
 
 test('the call page shows the filled-in script first, with its editor', async () => {
   const page = String(await callPage(await pageState(), 'rep@example.com'));

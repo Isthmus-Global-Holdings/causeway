@@ -17,7 +17,7 @@ import {
 } from '../lib/db';
 import { createHubSpot } from '../lib/hubspot';
 import { rememberQueueTab } from '../lib/queue-tab';
-import { nextInPlan } from '../lib/work-plan';
+import { nextInPlan, planProgress } from '../lib/work-plan';
 import type { AppEnv } from '../types';
 import { callPage, callsPage, type CallsFlash } from '../views/calls';
 import { HISTORY_LINKS, loadCallContext } from '../workflows/call-context';
@@ -86,14 +86,18 @@ callsRoute.get('/:id', async (c) => {
   const now = Date.now();
   // The task, contact and company come with the ids of the contact's history
   // and meetings, so everything after is one batch read each, side by side.
-  const [parties, dial, log, settings, worked] = await Promise.all([
+  // The call just logged, when logging it landed here: said at the top.
+  const loggedId = c.req.query('logged') || null;
+  const [parties, dial, log, settings, worked, previous] = await Promise.all([
     loadTask(hs, taskId, 'CALL', [...HISTORY_LINKS, 'meetings']),
     d1DialStore(c.env.DB).latestForTask(taskId),
     d1CallLogStore(c.env.DB).get(taskId),
     loadAppSettings(c.env),
     recentlyWorked(c.env.DB, 'call'),
+    loggedId ? d1CallLogStore(c.env.DB).get(loggedId) : null,
   ]);
-  const nextCall = nextInPlan(settings.callPlan ?? null, localDate(now, settings.timeZone), taskId, worked, { now });
+  const today = localDate(now, settings.timeZone);
+  const nextCall = nextInPlan(settings.callPlan ?? null, today, taskId, worked, { now });
   const [context, meetings, lastEmail, coaching] = await Promise.all([
     loadCallContext(hs, parties),
     // Only for the notice: the call page still works if meetings can't be read.
@@ -104,7 +108,7 @@ callsRoute.get('/:id', async (c) => {
     latestSendToContact(c.env.DB, parties.contact.id),
     // After the call just logged (the previous one, or this task's own), and
     // before this one.
-    callCoaching(c, parties, c.req.query('logged') || (log ? taskId : null), settings, now),
+    callCoaching(c, parties, loggedId || (log ? taskId : null), settings, now),
   ]);
   // A transcript that finished but never reached the logged HubSpot call
   // (HubSpot failed at the time) is written now. It's idempotent, and runs
@@ -135,8 +139,9 @@ callsRoute.get('/:id', async (c) => {
         portalId: c.env.HUBSPOT_PORTAL_ID,
         now,
         timeZone: settings.timeZone,
-        justLogged: Boolean(c.req.query('logged')),
+        justLogged: loggedId ? { taskId: loggedId, log: previous } : null,
         nextCallId: nextCall?.id ?? null,
+        today: planProgress(settings.callPlan ?? null, today, taskId, worked, { now }),
         callNow: c.req.query('call') === '1',
         coaching,
       },

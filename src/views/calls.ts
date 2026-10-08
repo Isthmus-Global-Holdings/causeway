@@ -3,10 +3,11 @@ import type { CallCoaching } from '../actions/coaching';
 import { fillScript, MAX_SCRIPT, SCRIPT_PLACEHOLDERS } from '../lib/call-script';
 import { suggestConversation } from '../lib/conversations';
 import { parseFitReason } from '../lib/fit';
-import { addDays, formatLocal, localDate } from '../lib/dates';
+import { addDays, formatClock, formatDay, formatLocal, localDate } from '../lib/dates';
 import { sqliteTime, type CallLog, type Dial, type DialMode, type InboundCall, type RecentSend } from '../lib/db';
 import { extensionOf, formatPhone, toE164 } from '../lib/phone';
 import { callableFrom } from '../lib/set-time';
+import type { PlanProgress } from '../lib/work-plan';
 import { htmlToText } from '../lib/richtext';
 import { dialTranscript, SPEAKER_LABELS, type Turn } from '../lib/transcript';
 import { historyTimeline, type CallContext, type HistoryItem } from '../workflows/call-context';
@@ -760,8 +761,11 @@ export interface CallPageState {
   portalId: string;
   now: number;
   timeZone: string;
-  justLogged: boolean; // the rep landed here from logging the previous call
+  // The rep landed here from logging the previous call: its task, and its
+  // row (null if it can't be read).
+  justLogged: { taskId: string; log: CallLog | null } | null;
   nextCallId: string | null; // the call after this one in today's order
+  today: PlanProgress | null; // today's calls in order, for the list beside this one
   callNow: boolean; // opened with the queue's Call: start calling on load
   coaching: CallCoaching; // what to adjust after the last call, and what's worked on calls like this
 }
@@ -1337,6 +1341,78 @@ const CHANNEL_SCRIPT = `(() => {
   show();
 })();`;
 
+// Said once the rep lands on the next call: what was just logged, so the new
+// page doesn't read as the same one. Its HubSpot steps are still running.
+function handoff(j: NonNullable<CallPageState['justLogged']>, timeZone: string): Html {
+  const log = j.log;
+  const nextDue = log?.next_due ? Date.parse(log.next_due) : NaN;
+  const followUp =
+    log?.next_type && Number.isFinite(nextDue)
+      ? `follow-up ${log.next_type === 'CALL' ? 'call' : 'email'} ${
+          log.next_set_time ? formatLocal(nextDue, timeZone) : formatDay(nextDue, timeZone)
+        }`
+      : log
+        ? 'no follow-up'
+        : '';
+  const done = log
+    ? html`<a href="/calls/${j.taskId}">${log.title}</a> · ${OUTCOME_LABELS[log.outcome] ?? log.outcome}${followUp ? ` · ${followUp}` : ''}${
+        log.book_start ? ' · interview booked' : ''
+      }`
+    : html`<a href="/calls/${j.taskId}">the last call</a>`;
+  return html`<div class="handoff" role="status">
+    <p><strong>✓ Logged</strong> ${done}</p>
+    <p class="muted">Saving to HubSpot now; the notice at the top says if anything didn’t finish. This is your next call.</p>
+  </div>`;
+}
+
+// Today's calls in the order the queue ranks them, beside the call: done,
+// this one (highlighted), the one logging goes to next, and the rest (a
+// set-time one with its time), any of them a click away. Who each is comes from the saved order, so this reads no HubSpot.
+function todaysCalls(today: PlanProgress | null, timeZone: string): Html {
+  if (!today) {
+    return html`<nav class="card rail" aria-label="Today’s calls">
+      <h2>Today’s calls</h2>
+      <p class="muted">Open <a href="/queue/calls">Calls to make</a> to line up today’s calls here.</p>
+    </nav>`;
+  }
+  return html`<nav class="card rail" aria-label="Today’s calls">
+    <div class="row">
+      <h2>Today’s calls</h2>
+      <span class="muted">${today.left} left${today.done ? ` · ${today.done} done` : ''}</span>
+    </div>
+    ${
+      today.items.length
+        ? html`<ol class="rail-list">
+            ${today.items.map(
+              (i) => html`<li class="${i.state}">
+                <a href="/calls/${i.id}" ${i.state === 'current' ? html`aria-current="page"` : html`data-prefetch-hover`}>
+                  <span class="rail-who">${i.state === 'done' ? '✓ ' : ''}${i.company ?? i.contact ?? `Call task ${i.id}`}</span>
+                  ${i.state === 'next' ? html`<span class="tag">Next</span>` : ''}
+                  ${
+                    i.company && i.contact
+                      ? html`<span class="muted">${i.contact}${i.at !== undefined ? ` · ${formatClock(i.at, timeZone)}` : ''}</span>`
+                      : i.at !== undefined
+                        ? html`<span class="muted">${formatClock(i.at, timeZone)}</span>`
+                        : ''
+                  }
+                </a>
+              </li>`
+            )}
+          </ol>`
+        : html`<p class="muted">Nothing lined up for today.</p>`
+    }
+    <a href="/queue/calls">All calls to make →</a>
+  </nav>
+  <script>${raw(RAIL_SCRIPT)}</script>`;
+}
+
+// Scrolls the list (not the page) to this call, a few above it showing.
+const RAIL_SCRIPT = `(() => {
+  const rail = document.querySelector('.rail');
+  const current = rail && rail.querySelector('.current');
+  if (current) rail.scrollTop += current.getBoundingClientRect().top - rail.getBoundingClientRect().top - 96;
+})();`;
+
 export function callPage(state: CallPageState, actor: string): Html {
   const { task, contact, company } = state.parties;
   const company_ = companyName(company);
@@ -1355,20 +1431,16 @@ export function callPage(state: CallPageState, actor: string): Html {
   return layout(
     `Call · ${company_ ?? contact_}`,
     actor,
-    html`
+    html`<div class="with-rail">
+      ${todaysCalls(state.today, state.timeZone)}
+      <div class="stack">
       <p class="row">
         <a href="/queue/calls">← Calls to make</a>
         ${state.nextCallId ? html`<a href="/calls/${state.nextCallId}" data-prefetch>Next call →</a>` : ''}
       </p>
-      ${
-        state.justLogged
-          ? flashBox(
-              'ok',
-              'Call logged. It’s being saved to HubSpot, and the notice above says if anything didn’t finish. Here’s your next call.'
-            )
-          : ''
-      }
-      <div class="tight">
+      ${state.justLogged ? handoff(state.justLogged, state.timeZone) : ''}
+      <div class="tight${state.justLogged ? ' arrived' : ''}">
+        ${state.justLogged ? html`<p class="kicker">Next call</p>` : ''}
         <h1>${company_ ?? contact_}</h1>
         <p class="muted">
           <a href="/contacts/${contact.id}">${contact_}</a>${contact.properties.jobtitle ? ` · ${contact.properties.jobtitle}` : ''} ·
@@ -1417,7 +1489,8 @@ export function callPage(state: CallPageState, actor: string): Html {
       ${state.callNow ? html`<script>${raw(DROP_CALL_NOW_SCRIPT)}</script>` : ''}
       ${state.callNow && canDial ? html`<script>${raw(CALL_NOW_SCRIPT)}</script>` : ''}
       ${live ? html`<script>${raw(LIVE_STATUS_SCRIPT)}</script>` : ''}
-    `,
+      </div>
+    </div>`,
     'queue'
   );
 }

@@ -169,7 +169,8 @@ export async function logCall(
         c.env.DB,
         localDate(now, timeZone),
         result.nextTaskId,
-        callableFrom(Date.parse(next_due))
+        callableFrom(Date.parse(next_due)),
+        taskId
       );
     }
     if (dial) {
