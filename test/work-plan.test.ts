@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  keepingDone,
   nextInPlan,
   parsePlan,
   planProgress,
@@ -143,4 +144,28 @@ test('a set-time call keeps who it is: its own entry, or the call its follow-up 
     withSetTimeCall(calls, '2026-09-25', 'g', 2_000)?.items.find((i) => i.id === 'g'),
     { id: 'g', drafted: false, at: 2_000 }
   );
+});
+
+test("rebuilding today's order keeps the calls done today, first", () => {
+  const before: WorkPlan = {
+    date: '2026-09-25',
+    items: [
+      { id: 'a', drafted: false, contact: 'Ann' },
+      { id: 'b', drafted: false },
+      { id: 'c', drafted: false, contact: 'Cy' },
+      { id: 'd', drafted: false },
+    ],
+  };
+  const rebuilt = [
+    { id: 'd', drafted: false },
+    { id: 'e', drafted: false },
+  ];
+  const done = new Set(['a', 'c', 'x']);
+  assert.deepEqual(
+    keepingDone(before, rebuilt, '2026-09-25', done).map((i) => i.id),
+    ['a', 'c', 'd', 'e'],
+    'b, not done and no longer due, drops out'
+  );
+  assert.equal(keepingDone(before, rebuilt, '2026-09-26', done), rebuilt, "another day's plan keeps nothing");
+  assert.equal(keepingDone(null, rebuilt, '2026-09-25', done), rebuilt);
 });

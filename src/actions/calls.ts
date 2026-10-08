@@ -68,6 +68,7 @@ export interface CallsOverview {
   plan: CallPlan; // today's ranked, then the upcoming ones
   meetings: MeetingRow[] | null; // null when HubSpot's meetings couldn't be read
   recent: RecentCallLog[];
+  logged: Set<string>; // calls worked lately (recentlyWorked), the one just logged included
 }
 
 // Every open CALL task, with today's ranked by who to call first. `logged`
@@ -99,7 +100,7 @@ export async function callsOverview(
     now,
     settings.timeZone
   );
-  return { hs, now, settings, queue, plan: planCalls(queue.rows, now, settings.timeZone), meetings, recent };
+  return { hs, now, settings, queue, plan: planCalls(queue.rows, now, settings.timeZone), meetings, recent, logged };
 }
 
 export type CallLogged =

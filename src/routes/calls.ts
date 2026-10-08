@@ -17,7 +17,7 @@ import {
 } from '../lib/db';
 import { createHubSpot } from '../lib/hubspot';
 import { rememberQueueTab } from '../lib/queue-tab';
-import { nextInPlan, planProgress } from '../lib/work-plan';
+import { keepingDone, nextInPlan, planProgress } from '../lib/work-plan';
 import type { AppEnv } from '../types';
 import { callPage, callsPage, type CallsFlash } from '../views/calls';
 import { HISTORY_LINKS, loadCallContext } from '../workflows/call-context';
@@ -59,17 +59,17 @@ callQueueRoute.get('/', async (c) => {
     movedId && Number.isFinite(movedDue)
       ? { taskId: movedId, dueAt: movedDue, setTime: c.req.query('set') === '1' }
       : null;
-  const [{ hs, now, settings, queue, plan, meetings }, waiting] = await Promise.all([
+  const [{ hs, now, settings, queue, plan, meetings, logged: worked }, waiting] = await Promise.all([
     callsOverview(c, { logged, moved }),
     waitingOnCallBack(c.env.DB, Math.floor(Date.now() / 1000)),
   ]);
   const [today] = await Promise.all([
     loadTodayCounts(c.env.DB, hs, now, settings.timeZone, meetings),
     // Today's calls in the order the page ranks them, so logging one can go
-    // straight to the next (see POST /:id/log).
+    // straight to the next (see POST /:id/log), after the ones done today.
     savePlan(c.env.DB, 'call_plan', {
       date: localDate(now, settings.timeZone),
-      items: planItems(plan),
+      items: keepingDone(settings.callPlan, planItems(plan), localDate(now, settings.timeZone), worked),
     }),
   ]);
   return c.html(

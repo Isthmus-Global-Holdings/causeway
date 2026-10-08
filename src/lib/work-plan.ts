@@ -81,6 +81,21 @@ export function withSetTimeCall(
   return { ...plan, items };
 }
 
+// Today's order rebuilt from the queue, which leaves out the calls already
+// worked: the ones done today stay in it, first, as they were, so the list
+// beside a call still shows them and counts them done. A plan from another
+// day keeps nothing.
+export function keepingDone(
+  previous: WorkPlan | null,
+  items: WorkPlan['items'],
+  today: string,
+  done: Set<string>
+): WorkPlan['items'] {
+  if (!previous || previous.date !== today) return items;
+  const fresh = new Set(items.map((i) => i.id));
+  return [...previous.items.filter((i) => done.has(i.id) && !fresh.has(i.id)), ...items];
+}
+
 export function withoutItem(plan: WorkPlan, id: string): WorkPlan {
   return { ...plan, items: plan.items.filter((i) => i.id !== id) };
 }
