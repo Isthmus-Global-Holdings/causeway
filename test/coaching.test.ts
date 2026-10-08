@@ -258,6 +258,16 @@ test('talked with someone, on one channel (all “call”): words past the menu 
     false,
     'a greeting’s own opening, then the rep’s message'
   );
+  assert.equal(
+    talkedWithSomeone([
+      call(
+        0,
+        'Hello, this is Ruth from Acme Logistics Incorporated. I cannot take your call right now. Hi Ruth, this is Anel, I’ll call back.'
+      ),
+    ]),
+    false,
+    'a greeting that introduces itself at length'
+  );
 });
 
 test('talked with someone: a person in the same turn as the menu, on their channel', () => {

@@ -637,9 +637,10 @@ const SWITCHBOARD = [MENU, TRANSFER, KEYPAD];
 // A voicemail greeting's opening, which reads like a person on its own.
 const GREETING =
   /\b(you(['’]ve| have) reached|(can['’]?t|cannot|unable to|not able to) (take|answer|get to|come to) (your|the|my) (call|phone)|sorry (i|we) missed your call|leave (me )?(a|your) (message|name))/i;
-// Fewer words than this before a greeting, in its turn, are its opening
-// ("Hey, it's Ruth."), not someone who answered.
-const BEFORE_GREETING_WORDS = 6;
+// What makes the words before a greeting, in its turn, an exchange with
+// someone rather than the greeting's own introduction ("Hello, this is Ruth
+// from Acme Logistics."): a question, or being put on hold or through.
+const EXCHANGE = /\?|\b(voice ?mail|put you through|transfer)\b/i;
 
 const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+/);
 const greets = (sentence: string) => VOICEMAIL.test(sentence) || GREETING.test(sentence);
@@ -648,16 +649,18 @@ const greets = (sentence: string) => VOICEMAIL.test(sentence) || GREETING.test(s
 // started in it. One turn can run a menu's or a transfer notice's line into
 // a person's, when they came on within seconds of it, so those are dropped
 // sentence by sentence. A greeting ends what counts: what follows is the
-// greeting or the rep's message, and what came before counts only if it's
-// more than the greeting's own opening.
+// greeting or the rep's message, and what came before counts only if it was
+// an exchange (EXCHANGE, HOLD), not the greeting introducing itself.
 function personWords(text: string): { words: number; greeting: boolean } {
   const sentences = sentencesOf(text);
   const at = sentences.findIndex(greets);
-  const said = (at < 0 ? sentences : sentences.slice(0, at))
-    .filter((sentence) => !SWITCHBOARD.some((re) => re.test(sentence)))
-    .reduce((n, sentence) => n + words(sentence), 0);
+  const before = (at < 0 ? sentences : sentences.slice(0, at)).filter(
+    (sentence) => !SWITCHBOARD.some((re) => re.test(sentence))
+  );
+  const said = before.reduce((n, sentence) => n + words(sentence), 0);
   if (at < 0) return { words: said, greeting: false };
-  return { words: said >= BEFORE_GREETING_WORDS ? said : 0, greeting: true };
+  const exchange = before.some((sentence) => EXCHANGE.test(sentence) || HOLD.test(sentence));
+  return { words: exchange ? said : 0, greeting: true };
 }
 
 // The rep talked with someone: the rep said something, and a person said a
