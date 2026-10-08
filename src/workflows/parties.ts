@@ -1,3 +1,4 @@
+import type { TaskLocks } from '../lib/db';
 import type { HubSpot, HubSpotObject, ObjectType } from '../lib/hubspot';
 import { toE164 } from '../lib/phone';
 import { htmlToText } from '../lib/richtext';
@@ -280,4 +281,29 @@ export async function resolveParties(
     contact: contactById.get(recordContacts.get(id)?.[0] ?? '') ?? null,
     company: companyById.get(companyOf(id) ?? '') ?? null,
   });
+}
+
+const TASK_LOCK_SEC = 60;
+
+// Runs `run` holding the CALL task's lock (lib/db.ts TaskLocks): Drop, logging
+// a call and dialling each check the task and write under it, so none of them
+// acts on what another is changing.
+export async function withTaskLock<T>(
+  locks: TaskLocks,
+  taskId: string,
+  nowSec: number,
+  run: () => Promise<T>
+): Promise<T> {
+  const lease = await locks.lockTask(taskId, nowSec, TASK_LOCK_SEC);
+  if (lease === null) {
+    throw new WorkflowError(
+      'This call task is being changed right now (a call, a log or a Drop). Try again in a moment.',
+      409
+    );
+  }
+  try {
+    return await run();
+  } finally {
+    await locks.unlockTask(taskId, lease);
+  }
 }

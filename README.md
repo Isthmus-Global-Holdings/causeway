@@ -163,13 +163,13 @@ timeline like one made in HubSpot.
   `DEFERRED`, which takes it off the queue: no call is logged and no
   follow-up is created. It's refused while any call for the task is live, and
   once the call was logged from the app (that task completes with its log).
-  When a log or a dial and a Drop overlap, the call wins, as with Send and
-  Drop: Drop puts the task back (Completed for a log, the status the log
-  writes itself, so the two never fight over it; open for a dial).
-  A dropped task is never dialled or logged: a dial reads the task again
-  once it's recorded, before anything rings, and a log once its row is in
-  D1, before its first HubSpot write. The call page of a dropped task says so,
-  without the log form.
+  A dropped task is never dialled or logged. Drop, logging a call and
+  dialling each hold the task's lock (`task_locks` in D1) from their check of
+  the task to their write, so none of them starts in the middle of another:
+  the one that comes second sees what the first did (the task dropped, or a
+  call live or logged) and refuses, or says the task is being changed and to
+  try again in a moment. The call page of a dropped task says so, without the
+  log form.
 - **The call page** puts what you need on the call in one place:
   - **Where they are**, under the name: the city in large type, the street,
     and a small map, from the company's address (the contact's when the

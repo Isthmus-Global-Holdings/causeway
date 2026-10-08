@@ -13,6 +13,7 @@ import {
   d1CallLogStore,
   d1DialStore,
   d1MeetingBookingStore,
+  d1TaskLocks,
   dismissCallBack,
   engagementByContact,
   insertAudit,
@@ -321,7 +322,7 @@ export async function dropCallTask(c: Context<AppEnv>, taskId: string): Promise<
   try {
     await dropCall(
       createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN),
-      { callLogs: d1CallLogStore(c.env.DB), dials: d1DialStore(c.env.DB) },
+      { callLogs: d1CallLogStore(c.env.DB), dials: d1DialStore(c.env.DB), locks: d1TaskLocks(c.env.DB) },
       taskId,
       Math.floor(Date.now() / 1000)
     );

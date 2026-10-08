@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import { Hono } from 'hono';
-import { d1CallLogStore, d1DialStore, type Dial, type DialStore } from '../src/lib/db.ts';
+import { d1CallLogStore, d1DialStore, d1TaskLocks, type Dial, type DialStore } from '../src/lib/db.ts';
 import { createHubSpot, HubSpotApiError } from '../src/lib/hubspot.ts';
 import { TwilioApiError, type NewCall, type Twilio } from '../src/lib/twilio.ts';
 import { twilioRoute } from '../src/routes/twilio.ts';
@@ -20,7 +20,7 @@ import {
 import { callNowHref, callPage, type CallPageState } from '../src/views/calls.ts';
 import { BOOKING_FIELDS, bookingFieldsOf, parseBookingForm } from '../src/workflows/book-interview.ts';
 import { loadCallContext, historyTimeline, type CallContext } from '../src/workflows/call-context.ts';
-import { dialState, isLive, startDial } from '../src/workflows/dial.ts';
+import { dialState, startDial } from '../src/workflows/dial.ts';
 import { dropCall } from '../src/workflows/task-actions.ts';
 import { loadCallQueue } from '../src/workflows/call-queue.ts';
 import { recordingState, runTranscription, type Transcriber } from '../src/workflows/transcribe.ts';
@@ -118,41 +118,25 @@ test('a dropped call task is never dialled', async () => {
   assert.equal(await dials.latestForTask('1'), null);
 });
 
-test('a Drop that lands while the dial is being recorded cancels it before anything rings', async () => {
-  const begin = dials.begin.bind(dials);
-  dials.begin = async (dial, windowSec) => {
-    const ok = await begin(dial, windowSec);
-    await hs.updateObject('tasks', '1', { hs_task_status: 'DEFERRED' });
-    return ok;
-  };
-  await assert.rejects(startDial({ hs, twilio, dials }, '1', 'phone', dialOpts()), /dropped/);
+test('a dial waits for a Drop holding the task: refused, nothing recorded or rung', async () => {
+  const lease = await dials.lockTask('1', NOW_SEC, 60);
+  await assert.rejects(startDial({ hs, twilio, dials }, '1', 'phone', dialOpts()), /being changed/);
   assert.equal(twilio.calls.length, 0);
-  const dial = await dials.get(DIAL_ID);
-  assert.ok(dial && !isLive(dialState(dial, NOW_SEC)), 'the dial is over, so the task is free');
+  assert.equal(await dials.latestForTask('1'), null);
+  await dials.unlockTask('1', lease!);
+  await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts());
+  assert.equal(twilio.calls.length, 1, 'the dial released the lock it held');
 });
 
-test('Drop refuses a task with a live call, and backs off from a dial recorded while it drops', async () => {
-  const stores = { callLogs: d1CallLogStore(db), dials };
+test('Drop refuses a task with a live call', async () => {
+  const stores = { callLogs: d1CallLogStore(db), dials, locks: d1TaskLocks(db) };
   await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts());
   await assert.rejects(dropCall(hs, stores, '1', NOW_SEC), /in progress/);
-  assert.equal((await hs.getObject('tasks', '1')).properties.hs_task_status, 'NOT_STARTED');
-
-  await dials.setRepStatus(DIAL_ID, 'completed');
-  const update = hs.updateObject.bind(hs);
-  let raced = false;
-  hs.updateObject = async (type, id, props) => {
-    await update(type, id, props);
-    if (!raced && props.hs_task_status === 'DEFERRED') {
-      raced = true; // a dial recorded between Drop's check and its write
-      await dials.begin({ ...(await dials.get(DIAL_ID))!, id: 'f'.repeat(32), started_sec: NOW_SEC + 1 }, 30);
-    }
-  };
-  await assert.rejects(dropCall(hs, stores, '1', NOW_SEC + 1), /in progress/);
   assert.equal((await hs.getObject('tasks', '1')).properties.hs_task_status, 'NOT_STARTED');
 });
 
 test('Drop sees a long call still on, after a later dial for the same task ended', async () => {
-  const stores = { callLogs: d1CallLogStore(db), dials };
+  const stores = { callLogs: d1CallLogStore(db), dials, locks: d1TaskLocks(db) };
   await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts()); // confirmed: live up to two hours
   const later = 'f'.repeat(32);
   await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts({ now: NOW + 200_000, newId: () => later }));
@@ -512,24 +496,21 @@ test('a follow-up call at a set time is due then, with a reminder 5 minutes befo
   assert.equal(hs.created[0].properties.hs_task_reminders, String(due - 5 * 60_000));
 });
 
-test('a dropped call task is never logged, even when the Drop lands while the log is recorded', async () => {
+test('a dropped call task is never logged, and a log waits for a Drop holding the task', async () => {
   const store = d1CallLogStore(db);
   const input = { outcome: 'connected' as const, notes: '', next: null, dial: null, transcript: null };
   await hs.updateObject('tasks', '1', { hs_task_status: 'DEFERRED' });
   await assert.rejects(runCallLogged(hs, store, '1', input, LOG_OPTS), /dropped/);
   assert.equal(await store.get('1'), null, 'nothing recorded');
 
-  // The Drop writes DEFERRED after the log's check, before its row is read back.
   await hs.updateObject('tasks', '1', { hs_task_status: 'NOT_STARTED' });
-  const create = store.create.bind(store);
-  store.create = async (row) => {
-    await create(row);
-    await hs.updateObject('tasks', '1', { hs_task_status: 'DEFERRED' });
-  };
-  await assert.rejects(runCallLogged(hs, store, '1', input, LOG_OPTS), /dropped/);
+  const lease = await store.lockTask('1', NOW_SEC, 60);
+  await assert.rejects(runCallLogged(hs, store, '1', input, LOG_OPTS), /being changed/);
+  assert.equal(await store.get('1'), null, 'nothing recorded');
   assert.equal(hs.calls.length, 0, 'nothing logged on the contact');
-  assert.equal(hs.created.length, 0, 'no follow-up');
-  assert.equal((await hs.getObject('tasks', '1')).properties.hs_task_status, 'DEFERRED');
+  await store.unlockTask('1', lease!);
+  await runCallLogged(hs, store, '1', input, LOG_OPTS);
+  assert.equal(hs.calls.length, 1);
 });
 
 test('a second submission writes nothing more', async () => {

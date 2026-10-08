@@ -77,7 +77,9 @@ See README.md for the behaviour.
   `excluded` flag kept), with the call's reviews (`call_reviews`, one per
   reviewer, replaced whole by `review_call`) laid over the rules each time; the cron sweep (`runCoachingSweep`) repeats safely. Real conversations (`conversations`) are D1 only too, one row per counted call or interview, replaced whole when marked again; logging only adds one, Coaching's Uncount takes it back. `taskForContact`
   reuses the contact's open task before creating one, under a lock in
-  `contact_task_locks`. A new meeting is
+  `contact_task_locks`. Dropping a CALL task (`dropCall`), logging one
+  (`prepareCallLog`) and dialling it (`startDial`) each hold the task's lock
+  in `task_locks` from their check to their write (`withTaskLock`). A new meeting is
   looked for on the contact before one is created, and a calendar invite's id
   comes from its booking, so neither is ever made twice. Any new multi-step write should follow the same
   resume-not-repeat pattern.

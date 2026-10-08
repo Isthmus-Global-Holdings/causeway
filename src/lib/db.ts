@@ -673,7 +673,7 @@ export type NewDial = Pick<
   | 'subject'
 >;
 
-export interface DialStore {
+export interface DialStore extends TaskLocks {
   get(id: string): Promise<Dial | null>;
   getByRepCallSid(sid: string): Promise<Dial | null>;
   latestForTask(taskId: string): Promise<Dial | null>;
@@ -723,6 +723,7 @@ const DIAL_COLUMNS = `id, task_id, subject, contact_id, contact_label, to_number
 
 export function d1DialStore(db: D1Database): DialStore {
   return {
+    ...d1TaskLocks(db),
     async get(id) {
       return db.prepare(`SELECT ${DIAL_COLUMNS} FROM dials WHERE id = ?`).bind(id).first<Dial>();
     },
@@ -960,7 +961,7 @@ export type NewCallLog = Omit<
 >;
 
 // What the "call logged" workflow needs from storage.
-export interface CallLogStore {
+export interface CallLogStore extends TaskLocks {
   get(callTaskId: string): Promise<CallLog | null>;
   // No-op if the row already exists: the first submission's values stick.
   create(row: NewCallLog): Promise<void>;
@@ -986,6 +987,7 @@ export interface CallLogStore {
 
 export function d1CallLogStore(db: D1Database): CallLogStore {
   return {
+    ...d1TaskLocks(db),
     async get(callTaskId) {
       return db
         .prepare(
@@ -1271,6 +1273,38 @@ export async function dismissCallBack(db: D1Database, inboundCallId: string, at:
     .bind(at, inboundCallId)
     .run();
   return (result.meta.changes ?? 0) > 0;
+}
+
+// --- A CALL task's lock ---
+
+// Drop, logging a call and dialling each hold the task's lock from their check
+// to their write (migrations/0032_task_locks.sql).
+export interface TaskLocks {
+  // The lease (its expiry, epoch seconds) if this caller now holds the task's
+  // lock; null while another does.
+  lockTask(taskId: string, nowSec: number, ttlSec: number): Promise<number | null>;
+  // Frees this caller's lease only, as ContactTaskLockStore.release.
+  unlockTask(taskId: string, lease: number): Promise<void>;
+}
+
+export function d1TaskLocks(db: D1Database): TaskLocks {
+  return {
+    async lockTask(taskId, nowSec, ttlSec) {
+      const result = await db
+        .prepare(
+          `INSERT INTO task_locks (task_id, lock_until) VALUES (?, ?)
+           ON CONFLICT (task_id) DO UPDATE SET lock_until = excluded.lock_until
+           WHERE task_locks.lock_until < ?`
+        )
+        .bind(taskId, nowSec + ttlSec, nowSec)
+        .run();
+      return result.meta.changes === 1 ? nowSec + ttlSec : null;
+    },
+
+    async unlockTask(taskId, lease) {
+      await db.prepare('DELETE FROM task_locks WHERE task_id = ? AND lock_until = ?').bind(taskId, lease).run();
+    },
+  };
 }
 
 // --- Opening a contact's task from their page ---

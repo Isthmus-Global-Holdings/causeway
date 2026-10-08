@@ -31,7 +31,7 @@ import { extensionOf, toE164 } from '../lib/phone';
 import { TwilioApiError, type Twilio } from '../lib/twilio';
 import { randomToken } from '../lib/tracking';
 import { isOpen, loadMeeting, meetingOutcome } from './meeting-queue';
-import { companyName, contactName, loadTask, WorkflowError, type TaskParties } from './parties';
+import { companyName, contactName, loadTask, withTaskLock, WorkflowError, type TaskParties } from './parties';
 
 // A dial for the same task within this window that hasn't ended blocks a new
 // one, so a double-click doesn't ring the rep's phone twice. A browser dial's
@@ -78,24 +78,16 @@ export interface DialOptions {
 }
 
 export async function startDial(deps: DialDeps, taskId: string, field: PhoneField, opts: DialOptions): Promise<Dial> {
-  const { task, contact, company } = await loadTask(deps.hs, taskId, 'CALL');
-  if (task.properties.hs_task_status === 'COMPLETED') {
-    throw new WorkflowError('This call task is already completed.', 409);
-  }
-  if (task.properties.hs_task_status === 'DEFERRED') throw new WorkflowError(DROPPED, 409);
-  // A Drop writes DEFERRED, then looks for a live dial; this records the dial,
-  // then reads the status again. So when the two overlap, at least one sees
-  // the other, and a dropped task never rings.
-  return beginDial(
-    deps,
-    { subject: 'task', id: taskId },
-    hubspotTarget({ contact, company }, field),
-    opts,
-    async () => {
-      const current = await deps.hs.getObject('tasks', taskId, ['hs_task_status']);
-      if (current.properties.hs_task_status === 'DEFERRED') throw new WorkflowError(DROPPED, 409);
+  // Under the task's lock from the status check to the dial's row: a Drop
+  // waits for it and sees the dial live, or wrote DEFERRED first and is seen here.
+  return withTaskLock(deps.dials, taskId, Math.floor(opts.now / 1000), async () => {
+    const { task, contact, company } = await loadTask(deps.hs, taskId, 'CALL');
+    if (task.properties.hs_task_status === 'COMPLETED') {
+      throw new WorkflowError('This call task is already completed.', 409);
     }
-  );
+    if (task.properties.hs_task_status === 'DEFERRED') throw new WorkflowError(DROPPED, 409);
+    return beginDial(deps, { subject: 'task', id: taskId }, hubspotTarget({ contact, company }, field), opts);
+  });
 }
 
 const DROPPED = 'This call task was dropped, so it wasn’t dialled.';
@@ -155,9 +147,7 @@ export async function beginDial(
   deps: Pick<DialDeps, 'twilio' | 'dials'>,
   from: { subject: DialSubject; id: string },
   target: DialTarget,
-  opts: DialOptions,
-  // Runs once the dial is recorded, before anything rings: a throw cancels it.
-  stillOpen?: () => Promise<void>
+  opts: DialOptions
 ): Promise<Dial> {
   // Only a phone dial rings the rep's phone; a browser dial rings nothing.
   const repNumber = opts.mode === 'phone' ? opts.repNumber : null;
@@ -188,15 +178,6 @@ export async function beginDial(
       `A call for this ${SUBJECT_NOUN[from.subject]} is already ringing or in progress. Refresh in a moment.`,
       409
     );
-  }
-
-  if (stillOpen) {
-    try {
-      await stillOpen();
-    } catch (err) {
-      await deps.dials.setRepStatus(id, 'canceled', Math.floor(opts.now / 1000));
-      throw err;
-    }
   }
 
   if (repNumber) await ringRep(deps, id, repNumber, opts.fromNumber, base);

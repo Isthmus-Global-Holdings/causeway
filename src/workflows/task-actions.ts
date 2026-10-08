@@ -6,11 +6,11 @@
 // writes the same thing again and needs no D1 row.
 
 import { isDate, localDate, localDateAt, parseHubSpotTime, sameTimeOn, type TimeOfDay } from '../lib/dates';
-import type { CallLogStore, ConfirmationStore, DialStore, SentEmailStore } from '../lib/db';
+import type { CallLogStore, ConfirmationStore, DialStore, SentEmailStore, TaskLocks } from '../lib/db';
 import type { HubSpot, HubSpotObject } from '../lib/hubspot';
 import { hasReminder, reminderFor } from '../lib/set-time';
 import { DIAL_MAX_SEC, dialState, isLive } from './dial';
-import { WorkflowError, type TaskType } from './parties';
+import { withTaskLock, WorkflowError, type TaskType } from './parties';
 
 const DEFAULT_CALL_TIME: TimeOfDay = { hour: 9, minute: 0 };
 const PROPS = ['hs_task_type', 'hs_task_status', 'hs_timestamp', 'hs_task_reminders'];
@@ -104,7 +104,7 @@ const CALL_LIVE = 'A call for this task is still in progress. Drop it once the c
 // Why a call task can't be dropped now, if it can't: a call logged here
 // finishes through that flow, which completes it, and a live call is the
 // rep's to finish. Every dial young enough to be live is checked, not only
-// the latest.
+// the latest: a stale page can start a second while a long first one is on.
 async function callStarted(stores: DropCallStores, taskId: string, nowSec: number): Promise<string | null> {
   const [log, dials] = await Promise.all([
     stores.callLogs.get(taskId),
@@ -118,32 +118,23 @@ async function callStarted(stores: DropCallStores, taskId: string, nowSec: numbe
 interface DropCallStores {
   callLogs: Pick<CallLogStore, 'get'>;
   dials: Pick<DialStore, 'startedSince'>;
+  locks: TaskLocks;
 }
 
-// The rep won't make this call.
+// The rep won't make this call. Under the task's lock, which logging and
+// dialling hold from their check of the task to their D1 row: so neither
+// starts between this check and the write, and once it's written they see
+// the task dropped and refuse.
 export async function dropCall(hs: HubSpot, stores: DropCallStores, taskId: string, nowSec: number): Promise<void> {
-  const before = await callStarted(stores, taskId, nowSec);
-  if (before) throw new WorkflowError(before, 409);
-  const task = await loadOpen(hs, taskId, 'CALL');
-  const status = task.properties.hs_task_status;
-  if (status === 'DEFERRED') return;
-  if (status !== 'NOT_STARTED') {
-    throw new WorkflowError('This call task is no longer open, so it wasn’t dropped.', 409);
-  }
-  await hs.updateObject('tasks', taskId, { hs_task_status: 'DEFERRED' });
-
-  // As dropEmail: logging and dialling write their D1 row, then read the task;
-  // this writes the task, then reads D1. If either started meanwhile, it wins.
-  // A log puts back COMPLETED, the status its own run writes: so this can't
-  // reopen a task the log completed at the same moment, and a log that hasn't
-  // read the task yet still goes ahead. A dial alone writes no status: the
-  // task is open again for its log.
-  const after = await callStarted(stores, taskId, nowSec);
-  if (after) {
-    const current = await hs.getObject('tasks', taskId, ['hs_task_status']);
-    if (current.properties.hs_task_status === 'DEFERRED') {
-      await hs.updateObject('tasks', taskId, { hs_task_status: after === CALL_LOGGED ? 'COMPLETED' : 'NOT_STARTED' });
+  await withTaskLock(stores.locks, taskId, nowSec, async () => {
+    const started = await callStarted(stores, taskId, nowSec);
+    if (started) throw new WorkflowError(started, 409);
+    const task = await loadOpen(hs, taskId, 'CALL');
+    const status = task.properties.hs_task_status;
+    if (status === 'DEFERRED') return;
+    if (status !== 'NOT_STARTED') {
+      throw new WorkflowError('This call task is no longer open, so it wasn’t dropped.', 409);
     }
-    throw new WorkflowError(after, 409);
-  }
+    await hs.updateObject('tasks', taskId, { hs_task_status: 'DEFERRED' });
+  });
 }
