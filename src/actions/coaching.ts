@@ -156,10 +156,11 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
     d1CallInsightStore(db).get(callTaskId),
     d1CallReviewStore(db).list(callTaskId),
   ]);
-  if (row) {
-    // Laid over again: a review whose read failed isn't in the row yet (the
-    // sweep reads it again); one that is comes out the same.
-    const read = withReviews(row, reviews);
+  // A review saved since the row was read (its read failed; the sweep reads
+  // it again) may replace one already laid into the row: read from the rules
+  // now, below, rather than over what the old review said.
+  if (row && !reviews.some((r) => r.reviewed_at > row.extracted_at)) {
+    const read = withReviews(row, reviews); // the same reviews again: no change
     return {
       label: row.label,
       read,

@@ -1734,3 +1734,33 @@ test('a review whose read failed shows at once, and the sweep reads the call aga
   assert.equal((await d1CallInsightStore(db).get('t1'))?.stage, 'conversation', 'stored with it');
   assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), [], 'and not read again after');
 });
+
+test('a replacement review whose read failed drops what the old review said', async () => {
+  await logCall('t1');
+  const rules = await readCall(deps(), 't1', Date.now());
+  await reviewCall(
+    deps(),
+    't1',
+    {
+      reviewer: 'claude',
+      corrections: { stage: 'opening' },
+      what_worked: null,
+      adjust: 'Old advice.',
+      reviewed_at: new Date().toISOString(),
+    },
+    Date.now()
+  );
+  assert.equal((await d1CallInsightStore(db).get('t1'))?.stage, 'opening');
+  // Claude's new review says nothing of the stage; its read failed.
+  await d1CallReviewStore(db).save('t1', {
+    reviewer: 'claude',
+    corrections: {},
+    what_worked: null,
+    adjust: null,
+    reviewed_at: new Date(Date.now() + 60_000).toISOString(),
+  });
+  const notes = await callNotes(db, 't1');
+  assert.equal(notes?.read.stage, rules?.stage, 'the rules’ stage, not the old review’s');
+  assert.equal(notes?.read.adjust, null);
+  assert.deepEqual(notes?.feedbackBy, { whatWorked: null, adjust: null });
+});
