@@ -140,6 +140,12 @@ test('a line is checked for one breath in the rep’s voice', () => {
   assert.deepEqual(checkCallLine('pedestal', ` "${PEDESTAL}." `), { value: PEDESTAL });
   assert.ok('problem' in checkCallLine('theirWorld', `${WORLD} ${WORLD} ${WORLD}`), 'too long');
   assert.ok('problem' in checkCallLine('pedestal', 'you quote;\nI listen'));
+  for (const separator of ['\u2028', '\u2029']) {
+    assert.ok(
+      'problem' in checkCallLine('pedestal', `you quote${separator}every load`),
+      'a Unicode line break is a second line'
+    );
+  }
 });
 
 test("the call script's lines never rate a company", () => {

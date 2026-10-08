@@ -111,7 +111,8 @@ export function checkCallLine(kind: keyof CallLines, raw: string): { value: stri
   const name = kind === 'theirWorld' ? 'World' : 'Pedestal';
   const value = spoken(raw);
   if (!value) return { problem: `${name} is empty.` };
-  if (/[\r\n]/.test(value)) return { problem: `${name} has to be one line.` };
+  // Every line break a regex's `.` stops at, or the saved line couldn't be read back.
+  if (/[\r\n\u2028\u2029]/.test(value)) return { problem: `${name} has to be one line.` };
   if (/[—;]/.test(value)) return { problem: `${name}: no em-dashes or semicolons. Use a comma instead.` };
   if (new RegExp(`(?:^|\\s)(?:${LABELS})\\s*:`, 'i').test(value)) {
     return { problem: `${name} can't hold another label (Fit:, World:, Pedestal:).` };
