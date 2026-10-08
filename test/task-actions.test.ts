@@ -144,25 +144,30 @@ test('dropEmail backs off when a send claims the task while it drops', async () 
   assert.equal((await hs.getObject('tasks', 'e1')).properties.hs_task_status, 'NOT_STARTED');
 });
 
-// Only `get` is read; a row is a call logged from the app.
+// Only `get` is read; a row is a call logged from the app. No dials: those
+// are in calls.test.ts, on the real SQL.
 function callLogs(rows: Record<string, { completed_at: string | null }> = {}) {
-  return { get: async (id: string) => (rows[id] ?? null) as CallLog | null };
+  return {
+    callLogs: { get: async (id: string) => (rows[id] ?? null) as CallLog | null },
+    dials: { latestForTask: async () => null },
+  };
 }
+const NOW_SEC = NOW / 1000;
 
 test('dropCall defers the task, and a repeat is a no-op', async () => {
-  await dropCall(hs, callLogs(), 'c1');
-  await dropCall(hs, callLogs(), 'c1');
+  await dropCall(hs, callLogs(), 'c1', NOW_SEC);
+  await dropCall(hs, callLogs(), 'c1', NOW_SEC);
   assert.equal((await hs.getObject('tasks', 'c1')).properties.hs_task_status, 'DEFERRED');
 });
 
 test('dropCall refuses non-CALL and completed tasks', async () => {
-  await assert.rejects(dropCall(hs, callLogs(), 'e1'), /not CALL/);
+  await assert.rejects(dropCall(hs, callLogs(), 'e1', NOW_SEC), /not CALL/);
   await hs.updateObject('tasks', 'c1', { hs_task_status: 'COMPLETED' });
-  await assert.rejects(dropCall(hs, callLogs(), 'c1'), /no longer open/);
+  await assert.rejects(dropCall(hs, callLogs(), 'c1', NOW_SEC), /no longer open/);
 });
 
 test('dropCall refuses a call logged from the app', async () => {
-  await assert.rejects(dropCall(hs, callLogs({ c1: { completed_at: null } }), 'c1'), /call page/);
+  await assert.rejects(dropCall(hs, callLogs({ c1: { completed_at: null } }), 'c1', NOW_SEC), /call page/);
   assert.equal((await hs.getObject('tasks', 'c1')).properties.hs_task_status, 'NOT_STARTED');
 });
 
@@ -173,7 +178,7 @@ test('dropCall puts the task back when a log lands while it drops', async () => 
     await update(type, id, props);
     if (props.hs_task_status === 'DEFERRED') rows.c1 = { completed_at: null };
   };
-  await assert.rejects(dropCall(hs, callLogs(rows), 'c1'), /call page/);
+  await assert.rejects(dropCall(hs, callLogs(rows), 'c1', NOW_SEC), /call page/);
   assert.equal((await hs.getObject('tasks', 'c1')).properties.hs_task_status, 'NOT_STARTED');
   // One that finished first: the task goes back to Completed.
   hs.updateObject = update;
@@ -187,7 +192,7 @@ test('dropCall puts the task back when a log lands while it drops', async () => 
     }
     await update(type, id, props);
   };
-  await assert.rejects(dropCall(hs, callLogs(rows), 'c2'), /call page/);
+  await assert.rejects(dropCall(hs, callLogs(rows), 'c2', NOW_SEC), /call page/);
   assert.equal((await hs.getObject('tasks', 'c2')).properties.hs_task_status, 'COMPLETED');
 });
 

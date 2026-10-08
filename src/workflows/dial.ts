@@ -82,8 +82,23 @@ export async function startDial(deps: DialDeps, taskId: string, field: PhoneFiel
   if (task.properties.hs_task_status === 'COMPLETED') {
     throw new WorkflowError('This call task is already completed.', 409);
   }
-  return beginDial(deps, { subject: 'task', id: taskId }, hubspotTarget({ contact, company }, field), opts);
+  if (task.properties.hs_task_status === 'DEFERRED') throw new WorkflowError(DROPPED, 409);
+  // A Drop writes DEFERRED, then looks for a live dial; this records the dial,
+  // then reads the status again. So when the two overlap, at least one sees
+  // the other, and a dropped task never rings.
+  return beginDial(
+    deps,
+    { subject: 'task', id: taskId },
+    hubspotTarget({ contact, company }, field),
+    opts,
+    async () => {
+      const current = await deps.hs.getObject('tasks', taskId, ['hs_task_status']);
+      if (current.properties.hs_task_status === 'DEFERRED') throw new WorkflowError(DROPPED, 409);
+    }
+  );
 }
+
+const DROPPED = 'This call task was dropped, so it wasn’t dialled.';
 
 // Calls the contact of an interview, from its prep page.
 export async function startMeetingDial(
@@ -140,7 +155,9 @@ export async function beginDial(
   deps: Pick<DialDeps, 'twilio' | 'dials'>,
   from: { subject: DialSubject; id: string },
   target: DialTarget,
-  opts: DialOptions
+  opts: DialOptions,
+  // Runs once the dial is recorded, before anything rings: a throw cancels it.
+  stillOpen?: () => Promise<void>
 ): Promise<Dial> {
   // Only a phone dial rings the rep's phone; a browser dial rings nothing.
   const repNumber = opts.mode === 'phone' ? opts.repNumber : null;
@@ -171,6 +188,15 @@ export async function beginDial(
       `A call for this ${SUBJECT_NOUN[from.subject]} is already ringing or in progress. Refresh in a moment.`,
       409
     );
+  }
+
+  if (stillOpen) {
+    try {
+      await stillOpen();
+    } catch (err) {
+      await deps.dials.setRepStatus(id, 'canceled', Math.floor(opts.now / 1000));
+      throw err;
+    }
   }
 
   if (repNumber) await ringRep(deps, id, repNumber, opts.fromNumber, base);

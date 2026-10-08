@@ -319,11 +319,12 @@ export async function dropCallTask(c: Context<AppEnv>, taskId: string): Promise<
   const audit = (outcome: 'success' | 'failed', error?: string) =>
     insertAudit(c.env.DB, { actor, workflow: 'task-action', taskId, action: 'drop call task', outcome, error });
   try {
-    const latest = await d1DialStore(c.env.DB).latestForTask(taskId);
-    if (latest && isLive(dialState(latest, Math.floor(Date.now() / 1000)))) {
-      throw new WorkflowError('A call for this task is still in progress. Drop it once the call has ended.', 409);
-    }
-    await dropCall(createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN), d1CallLogStore(c.env.DB), taskId);
+    await dropCall(
+      createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN),
+      { callLogs: d1CallLogStore(c.env.DB), dials: d1DialStore(c.env.DB) },
+      taskId,
+      Math.floor(Date.now() / 1000)
+    );
     await audit('success');
     await removeFromPlan(c.env.DB, 'call_plan', taskId);
   } catch (err) {

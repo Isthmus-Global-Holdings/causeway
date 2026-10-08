@@ -20,7 +20,8 @@ import {
 import { callNowHref, callPage, type CallPageState } from '../src/views/calls.ts';
 import { BOOKING_FIELDS, bookingFieldsOf, parseBookingForm } from '../src/workflows/book-interview.ts';
 import { loadCallContext, historyTimeline, type CallContext } from '../src/workflows/call-context.ts';
-import { dialState, startDial } from '../src/workflows/dial.ts';
+import { dialState, isLive, startDial } from '../src/workflows/dial.ts';
+import { dropCall } from '../src/workflows/task-actions.ts';
 import { loadCallQueue } from '../src/workflows/call-queue.ts';
 import { recordingState, runTranscription, type Transcriber } from '../src/workflows/transcribe.ts';
 import { FakeHubSpot } from './fakes.ts';
@@ -108,6 +109,46 @@ test("rings the rep from the Twilio number, with this dial's webhooks", async ()
   assert.equal(dial.to_number, '+13855550100', 'the prospect number comes from HubSpot, as E.164');
   assert.equal(dial.contact_label, 'Ana Díaz at Acme');
   assert.equal(dial.rep_call_sid, 'CA1');
+});
+
+test('a dropped call task is never dialled', async () => {
+  await hs.updateObject('tasks', '1', { hs_task_status: 'DEFERRED' });
+  await assert.rejects(startDial({ hs, twilio, dials }, '1', 'phone', dialOpts()), /dropped/);
+  assert.equal(twilio.calls.length, 0);
+  assert.equal(await dials.latestForTask('1'), null);
+});
+
+test('a Drop that lands while the dial is being recorded cancels it before anything rings', async () => {
+  const begin = dials.begin.bind(dials);
+  dials.begin = async (dial, windowSec) => {
+    const ok = await begin(dial, windowSec);
+    await hs.updateObject('tasks', '1', { hs_task_status: 'DEFERRED' });
+    return ok;
+  };
+  await assert.rejects(startDial({ hs, twilio, dials }, '1', 'phone', dialOpts()), /dropped/);
+  assert.equal(twilio.calls.length, 0);
+  const dial = await dials.get(DIAL_ID);
+  assert.ok(dial && !isLive(dialState(dial, NOW_SEC)), 'the dial is over, so the task is free');
+});
+
+test('Drop refuses a task with a live call, and backs off from a dial recorded while it drops', async () => {
+  const stores = { callLogs: d1CallLogStore(db), dials };
+  await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts());
+  await assert.rejects(dropCall(hs, stores, '1', NOW_SEC), /in progress/);
+  assert.equal((await hs.getObject('tasks', '1')).properties.hs_task_status, 'NOT_STARTED');
+
+  await dials.setRepStatus(DIAL_ID, 'completed');
+  const update = hs.updateObject.bind(hs);
+  let raced = false;
+  hs.updateObject = async (type, id, props) => {
+    await update(type, id, props);
+    if (!raced && props.hs_task_status === 'DEFERRED') {
+      raced = true; // a dial recorded between Drop's check and its write
+      await dials.begin({ ...(await dials.get(DIAL_ID))!, id: 'f'.repeat(32), started_sec: NOW_SEC + 1 }, 30);
+    }
+  };
+  await assert.rejects(dropCall(hs, stores, '1', NOW_SEC + 1), /in progress/);
+  assert.equal((await hs.getObject('tasks', '1')).properties.hs_task_status, 'NOT_STARTED');
 });
 
 test("the number's extension is keyed in, and a call to an extension isn't recorded", async () => {
