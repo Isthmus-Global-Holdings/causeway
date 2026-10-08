@@ -131,6 +131,7 @@ test('it introduces itself and lists its tools, marked read-only or safe to repe
     'book_interview',
     'mark_email_sent',
     'review_call',
+    'save_call_lines',
   ]) {
     assert.equal(byName.get(name)?.annotations?.idempotentHint, true, name);
   }
@@ -400,4 +401,40 @@ test('calls are reviewed from here: the ones to review, one with its rules, and 
   const none = await callTool('review_call', { task_id: '2', corrections: {} });
   assert.equal(none.isError, true);
   assert.match(none.text, /nothing to review/);
+});
+
+test('save_call_lines writes both lines into the description and audits every save, changed or not', async () => {
+  hs.put('companies', '22', { name: 'Cole', description: 'Fit: GOOD - owner quotes.' });
+  const args = {
+    company_id: '22',
+    their_world: 'how trucking companies handle quoting and dispatch',
+    pedestal: 'you quote every load yourself',
+  };
+  const first = await callTool('save_call_lines', args);
+  assert.equal(first.isError, false, first.text);
+  assert.deepEqual(first.data, {
+    saved: { theirWorld: args.their_world, pedestal: args.pedestal },
+    unchanged: false,
+  });
+  assert.equal(
+    (await hs.getObject('companies', '22')).properties.description,
+    `Fit: GOOD - owner quotes.\nWorld: ${args.their_world}.\nPedestal: ${args.pedestal}.`
+  );
+
+  // A retry (say the first audit write failed) finds nothing to change and still records the save.
+  const again = await callTool('save_call_lines', args);
+  assert.equal(again.data.unchanged, true);
+  const audit = await db
+    .prepare(`SELECT actor, detail_json FROM audit_log WHERE task_id = '22' AND action = 'save call lines'`)
+    .all<{ actor: string; detail_json: string }>();
+  assert.deepEqual(
+    audit.results.map((r) => [r.actor, (JSON.parse(r.detail_json) as { changed: boolean }).changed]),
+    [
+      [REP, true],
+      [REP, false],
+    ]
+  );
+
+  const noPedestal = await callTool('save_call_lines', { company_id: '22', their_world: args.their_world });
+  assert.equal(noPedestal.isError, true, 'both lines every time: pedestal is null for none, never left out');
 });

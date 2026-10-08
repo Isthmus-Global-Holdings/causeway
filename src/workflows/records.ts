@@ -4,6 +4,7 @@
 // draft page (with their logging and follow-ups) do the rest.
 
 import type { ContactTaskLockStore, LoggedCallRecord } from '../lib/db';
+import { checkCallLine, parseCallLines, withCallLines, type CallLines } from '../lib/fit';
 import type { HubSpot, HubSpotObject } from '../lib/hubspot';
 import { HISTORY_LINKS, loadCallContext, type CallContext } from './call-context';
 import { MEETING_PROPS, meetingRow, type MeetingRow } from './meeting-queue';
@@ -178,6 +179,32 @@ export async function loadCompanyRecord(hs: HubSpot, companyId: string): Promise
   ]);
   contacts.sort((a, b) => contactName(a).localeCompare(contactName(b)));
   return { company, contacts, tasks };
+}
+
+// The call script's World and Pedestal lines on the company, written from a
+// Claude chat: both at once (a null Pedestal for none), so a save is never
+// merged with another. Checks both before anything is written, reads the
+// description fresh, and writes it only when it changed, so saving the same
+// lines again changes nothing.
+export async function saveCallLines(
+  hs: HubSpot,
+  companyId: string,
+  input: { theirWorld: string; pedestal: string | null }
+): Promise<{ lines: CallLines; changed: boolean }> {
+  const lines: CallLines = { theirWorld: null, pedestal: null };
+  for (const kind of ['theirWorld', 'pedestal'] as const) {
+    const raw = input[kind];
+    if (raw === null) continue;
+    const checked = checkCallLine(kind, raw);
+    if ('problem' in checked) throw new WorkflowError(checked.problem);
+    lines[kind] = checked.value;
+  }
+  const company = await hs.getObject('companies', companyId, ['description']);
+  const was = company.properties.description ?? '';
+  const description = withCallLines(was, lines);
+  const changed = description !== was;
+  if (changed) await hs.updateObject('companies', companyId, { description });
+  return { lines: parseCallLines(description), changed };
 }
 
 export interface ContactTaskDeps {

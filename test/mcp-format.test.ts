@@ -36,6 +36,7 @@ test('a company says how well it fits', () => {
   assert.equal(summary.name, 'Acme');
   assert.equal(typeof summary.fit, 'string');
   assert.equal(summary.url, `${ORIGIN}/companies/20`);
+  assert.equal(summary.pedestal, null, 'a gap Claude can see');
 });
 
 test('a task links to its call page or its draft page', () => {

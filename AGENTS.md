@@ -75,7 +75,8 @@ See README.md for the behaviour.
   by it first and HubSpot refuses a second one. Coaching (`readCall`) writes
   only D1, one `call_insights` row per logged call, replaced whole (its
   `excluded` flag kept), with the call's reviews (`call_reviews`, one per
-  reviewer, replaced whole by `review_call`) laid over the rules each time; the cron sweep (`runCoachingSweep`) repeats safely. Real conversations (`conversations`) are D1 only too, one row per counted call or interview, replaced whole when marked again; logging only adds one, Coaching's Uncount takes it back. `taskForContact`
+  reviewer, replaced whole by `review_call`) laid over the rules each time; the cron sweep (`runCoachingSweep`) repeats safely. Real conversations (`conversations`) are D1 only too, one row per counted call or interview, replaced whole when marked again; logging only adds one, Coaching's Uncount takes it back. `saveCallLines`
+  writes a company's description only when it changed. `taskForContact`
   reuses the contact's open task before creating one, under a lock in
   `contact_task_locks`. Dropping a CALL task (`dropCall`), logging one
   (`prepareCallLog`) and dialling it (`startDial`) each hold the task's lock
@@ -130,7 +131,7 @@ See README.md for the behaviour.
   reviewed.)
 - **Pure logic stays pure.** `lib/fit.ts`, `lib/richtext.ts`, `lib/dates.ts`,
   `lib/prompt.ts`, `lib/phone.ts`, `lib/twiml.ts`, `lib/transcript.ts`,
-  `lib/call-script.ts`, `lib/call-insight.ts`, `lib/call-timeline.ts`, `lib/coaching.ts`, `lib/conversations.ts`, `lib/heard.ts`, `lib/voice-token.ts`, `lib/whatsapp.ts`, `lib/work-plan.ts`, `lib/address.ts`, `lib/call-history.ts`, `lib/sent-rank.ts`, `lib/set-time.ts`, `lib/upwork.ts` (also bundled into the extension), `mcp/format.ts`, `prompts/follow-up-emails.ts`, `prompts/whatsapp-messages.ts` and `prompts/call-review.ts` do no I/O and are unit tested. Workflows take interfaces (`HubSpot`, `Twilio`, and the D1 stores
+  `lib/call-script.ts`, `lib/call-insight.ts`, `lib/call-timeline.ts`, `lib/coaching.ts`, `lib/conversations.ts`, `lib/heard.ts`, `lib/voice-token.ts`, `lib/whatsapp.ts`, `lib/work-plan.ts`, `lib/address.ts`, `lib/call-history.ts`, `lib/sent-rank.ts`, `lib/set-time.ts`, `lib/upwork.ts` (also bundled into the extension), `mcp/format.ts`, `prompts/follow-up-emails.ts`, `prompts/whatsapp-messages.ts`, `prompts/call-review.ts` and `prompts/call-lines.ts` do no I/O and are unit tested. Workflows take interfaces (`HubSpot`, `Twilio`, and the D1 stores
   in `lib/db.ts`), so tests use fakes or the real SQL on SQLite.
 - **Sending never repeats.** `runSend` records a `sent_emails` row before
   calling Gmail, and never resends a row whose outcome is unknown. The rep
@@ -156,8 +157,9 @@ See README.md for the behaviour.
   when they change. `src/prompts/interview-questions.ts` is the rep's
   interview guide, `src/prompts/follow-up-emails.ts` the rep's no-show
   follow-up emails, `src/prompts/whatsapp-messages.ts` the rep's WhatsApp
-  messages (templates, not Claude) and `src/prompts/call-review.ts` how Claude
-  reviews a call through the connector, none a skill copy: edit them directly. Claude, Twilio's per-minute calling and recording, and
+  messages (templates, not Claude), `src/prompts/call-review.ts` how Claude
+  reviews a call through the connector and `src/prompts/call-lines.ts` how
+  Claude writes a company's World and Pedestal lines for the call script, none a skill copy: edit them directly. Claude, Twilio's per-minute calling and recording, and
   TypeSafe (Jev, negligible, once built) are the only paid dependencies; everything else
   stays on free tiers (call transcripts use the free daily Workers AI
   allowance, and the cron trigger is one of the free plan's five).

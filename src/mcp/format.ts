@@ -30,7 +30,7 @@ import {
 } from '../lib/coaching';
 import { formatLocal, parseHubSpotTime } from '../lib/dates';
 import { sqliteTime, type CallInsight, type InboundCall, type RecentCallLog, type RecentSend } from '../lib/db';
-import { parseFitLabel } from '../lib/fit';
+import { parseCallLines, parseFitLabel } from '../lib/fit';
 import { SPEAKER_LABELS, turnSpan } from '../lib/transcript';
 import { CALL_REVIEW_RULES } from '../prompts/call-review';
 import type { HubSpotObject } from '../lib/hubspot';
@@ -90,6 +90,8 @@ export function companySummary(company: HubSpotObject, origin: string) {
     industry: p.industry ?? null,
     employees: p.numberofemployees ?? null,
     fit: parseFitLabel(p.description),
+    // The call script's {their_world} and {pedestal}, null when not written yet.
+    ...parseCallLines(p.description),
     description: p.description ?? null,
     address: formatAddress(p)?.join(', ') ?? null,
     url: pageUrl(origin, `/companies/${company.id}`),

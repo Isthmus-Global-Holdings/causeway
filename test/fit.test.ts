@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseFitLabel, parseFitReason, pickNextUp, rankByFit, type FitLabel } from '../src/lib/fit.ts';
+import {
+  checkCallLine,
+  parseCallLines,
+  parseFitLabel,
+  pickNextUp,
+  rankByFit,
+  withCallLines,
+  type FitLabel,
+} from '../src/lib/fit.ts';
 
 // Shapes taken from the account's real Company descriptions (Sept 2026).
 const cases: [string | null, FitLabel][] = [
@@ -76,31 +84,83 @@ test('nothing to suggest when every task is drop-flagged', () => {
   assert.equal(pickNextUp([row('drop', 'DROP', '2026-01-01')]), null);
 });
 
-const reasons: [string | null, string | null][] = [
-  [
-    'Contact: Jesse Ferris (President). Family-owned. Fit: STRONG - runs the full quote-to-invoice workflow, closest match to the pilot.',
-    'runs the full quote-to-invoice workflow, closest match to the pilot',
-  ],
-  ['Fit: GOOD – family-owned rural asset carrier.\nContact: Ana', 'family-owned rural asset carrier'],
-  ['Fit: WEAK-MODERATE - mainly e-commerce fulfillment.', 'mainly e-commerce fulfillment'],
-  ['Fit: niche/partial - mostly a depot business.', 'mostly a depot business'],
-  [
-    'Fit: mid-size family carrier since 1947. Good learning interview.',
-    'mid-size family carrier since 1947. Good learning interview',
-  ],
-  ['Fit label: strong — owner-run.', 'owner-run'],
-  ['Fit: POOR - large, almost certainly on an enterprise TMS.', null],
-  ['NOT A FIT - polar expeditions. Fit: none.', null],
-  ['Overall a good fit for the pilot.', null],
-  ['Fit: STRONG - ', null],
-  ['Fit: STRONG -', null],
-  ['Fit: STRONG', null],
-  ['Fit: GOOD.\nContact: Ana', null],
-  [null, null],
-];
+const WORLD = 'how freight forwarders handle quoting and shipments';
+const PEDESTAL = 'you run both ocean and air out of Miami, so no two quotes look alike';
 
-for (const [description, expected] of reasons) {
-  test(`parseFitReason(${JSON.stringify(description)}) → ${JSON.stringify(expected)}`, () => {
-    assert.equal(parseFitReason(description), expected);
+test('reads the World and Pedestal lines written after the Fit line', () => {
+  const description = `Contact: Ana Ruiz (President). FMC OTI license 012345. Fit: GOOD - ocean and air, owner quotes.\nWorld: ${WORLD}.\nPedestal: ${PEDESTAL}.`;
+  assert.deepEqual(parseCallLines(description), { theirWorld: WORLD, pedestal: PEDESTAL });
+  assert.equal(parseFitLabel(description), 'GOOD', 'the new lines leave the rating alone');
+});
+
+test('reads them from one paragraph, each ending at the next label', () => {
+  assert.deepEqual(parseCallLines(`Fit: STRONG - owner-run. World: ${WORLD}. Pedestal: ${PEDESTAL}.`), {
+    theirWorld: WORLD,
+    pedestal: PEDESTAL,
   });
-}
+  assert.deepEqual(
+    parseCallLines('Pedestal: you run terminals in St. George and Price. Fit: GOOD - LTL and TL.'),
+    { theirWorld: null, pedestal: 'you run terminals in St. George and Price' },
+    'a period inside the clause stays'
+  );
+});
+
+test('labels match in any case, and quotes around a value come off', () => {
+  assert.deepEqual(parseCallLines(`WORLD: "${WORLD}"\npedestal :  ‘${PEDESTAL}’`), {
+    theirWorld: WORLD,
+    pedestal: PEDESTAL,
+  });
+});
+
+test('a line that is missing, empty, or only mid-sentence fills nothing', () => {
+  const none = { theirWorld: null, pedestal: null };
+  assert.deepEqual(parseCallLines(null), none);
+  assert.deepEqual(parseCallLines('Fit: STRONG - owner-run asset carrier.'), none);
+  assert.deepEqual(parseCallLines('World:\nPedestal: .'), none);
+  assert.deepEqual(parseCallLines('Hauls for the Old World: Imports chain.'), none);
+});
+
+test('rewriting the lines moves them after the Fit line and keeps the rest', () => {
+  assert.equal(
+    withCallLines(`Contact: Ana. World: old world. Fit: GOOD - x. Pedestal: old one.`, {
+      theirWorld: WORLD,
+      pedestal: PEDESTAL,
+    }),
+    `Contact: Ana. Fit: GOOD - x.\nWorld: ${WORLD}.\nPedestal: ${PEDESTAL}.`
+  );
+  assert.equal(withCallLines(null, { theirWorld: WORLD, pedestal: null }), `World: ${WORLD}.`);
+  assert.equal(
+    withCallLines(`Fit: GOOD - x.\nWorld: a.\nPedestal: b.`, { theirWorld: WORLD, pedestal: null }),
+    `Fit: GOOD - x.\nWorld: ${WORLD}.`,
+    'a null pedestal takes the old one out'
+  );
+});
+
+test('a line is checked for one breath in the rep’s voice', () => {
+  assert.deepEqual(checkCallLine('pedestal', ` "${PEDESTAL}." `), { value: PEDESTAL });
+  assert.ok('problem' in checkCallLine('theirWorld', `${WORLD} ${WORLD} ${WORLD}`), 'too long');
+  assert.ok('problem' in checkCallLine('pedestal', 'you quote;\nI listen'));
+  for (const separator of ['\u2028', '\u2029']) {
+    assert.ok(
+      'problem' in checkCallLine('pedestal', `you quote${separator}every load`),
+      'a Unicode line break is a second line'
+    );
+  }
+});
+
+test("the call script's lines never rate a company", () => {
+  const description =
+    'Fit: STRONG - owner quotes every load.\nWorld: how trucking companies handle quoting.\nPedestal: you work spot freight, so rates probably drop between quote and tender.';
+  assert.equal(parseFitLabel(description), 'STRONG');
+  assert.equal(parseFitLabel('Family carrier. Pedestal: you are a good fit for this, NOT A FIT for that.'), 'UNKNOWN');
+  assert.equal(parseFitLabel('World: how carriers quote. Fit: POOR - enterprise TMS.'), 'DROP');
+});
+
+test('every line of a label goes, even two sentences in a row', () => {
+  const description = 'Fit: STRONG - x. Pedestal: benign. Pedestal: rates probably drop. World: a. World: b.';
+  assert.equal(parseFitLabel(description), 'STRONG');
+  assert.equal(
+    withCallLines(description, { theirWorld: WORLD, pedestal: PEDESTAL }),
+    `Fit: STRONG - x.\nWorld: ${WORLD}.\nPedestal: ${PEDESTAL}.`
+  );
+});
