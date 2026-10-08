@@ -43,6 +43,7 @@ import {
   momTestReport,
   prepNotes,
   STRIPS,
+  talkReport,
   type BookingReport,
   type CallBrief,
   type CoachingReport,
@@ -69,7 +70,7 @@ import type { HubSpotObject } from '../lib/hubspot';
 import { dialTranscript, type Turn } from '../lib/transcript';
 import type { AppEnv } from '../types';
 import { excludeCall, readUnreadCalls, reviewCall } from '../workflows/call-insight';
-import { dialState, isLive } from '../workflows/dial';
+import { DIAL_MAX_SEC, dialState, isLive } from '../workflows/dial';
 import { WorkflowError } from '../workflows/parties';
 
 // How many unread calls opening the report reads, after it answers (the cron
@@ -84,6 +85,7 @@ export interface CoachingOverview {
   funnel: Funnel;
   interviews: CallInsight[]; // the interviews' calls read, oldest first
   momTest: MomTestReport;
+  talk: Pick<CoachingReport, 'talk' | 'theyLed'>; // who did the talking, interviews included
   strips: Strip[]; // the latest calls drawn to scale, newest first
   unread: number; // calls not read yet (up to READ_ON_OPEN + 1)
 }
@@ -100,7 +102,7 @@ export async function coachingOverview(c: Context<AppEnv>): Promise<CoachingOver
     allCallInsights(c.env.DB),
     allCallInsights(c.env.DB, 'meeting'),
     allBookedInterviews(c.env.DB),
-    deps.insights.needing(READ_ON_OPEN + 1, RULES_VERSION),
+    deps.insights.needing(READ_ON_OPEN + 1, RULES_VERSION, Math.floor(Date.now() / 1000) - DIAL_MAX_SEC),
   ]);
   if (unread.length) {
     afterResponse(c, 'reading calls for coaching', () => readUnreadCalls(deps, READ_ON_OPEN, Date.now()));
@@ -124,6 +126,7 @@ export async function coachingOverview(c: Context<AppEnv>): Promise<CoachingOver
     funnel: callFunnel(report, booked, now),
     interviews,
     momTest: momTestReport(rows, interviews),
+    talk: talkReport([...rows, ...interviews].sort((a, b) => b.at_sec - a.at_sec)),
     strips: latest.map((call) => ({ call, timeline: parseTimeline(drawn.get(call.call_task_id)?.timeline_json) })),
     unread: unread.length,
   };

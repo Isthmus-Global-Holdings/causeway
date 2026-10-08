@@ -39,7 +39,7 @@ import type {
   MeetingLogStore,
 } from '../lib/db';
 import { dialTranscript, type CallTranscript } from '../lib/transcript';
-import { dialState, isLive } from './dial';
+import { DIAL_MAX_SEC, dialState, isLive } from './dial';
 
 export interface InsightDeps {
   callLogs: Pick<CallLogStore, 'get' | 'taskForDial'>;
@@ -131,7 +131,19 @@ async function readFacts(
   const source = insightSource(facts);
   const [before, reviews] = await Promise.all([deps.insights.get(key.id), deps.reviews.list(key.id)]);
   const reviewedSince = reviews.some((r) => before && r.reviewed_at > before.extracted_at);
-  if (!reread && before && before.source === source && before.rules_version >= RULES_VERSION && !reviewedSince) {
+  // Read already, from this source by these rules, of the same call with the
+  // same outcome, and no review since: as it was. An interview's latest dial
+  // or logged outcome changing (a redial, a no-show logged after the read)
+  // is a different call to read.
+  const sameCall = before?.dial_id === (key.dial?.id ?? null) && before?.outcome === key.outcome;
+  if (
+    !reread &&
+    before &&
+    sameCall &&
+    before.source === source &&
+    before.rules_version >= RULES_VERSION &&
+    !reviewedSince
+  ) {
     return before;
   }
 
@@ -225,7 +237,8 @@ export async function readDialCall(deps: InsightDeps, dialId: string, now: numbe
 // many it read.
 export async function readUnreadCalls(deps: InsightDeps, limit: number, now: number): Promise<number> {
   let read = 0;
-  for (const { id, subject } of await deps.insights.needing(limit, RULES_VERSION)) {
+  const endedBySec = Math.floor(now / 1000) - DIAL_MAX_SEC;
+  for (const { id, subject } of await deps.insights.needing(limit, RULES_VERSION, endedBySec)) {
     try {
       const row = subject === 'meeting' ? await readInterview(deps, id, now) : await readCall(deps, id, now);
       if (row) read++;

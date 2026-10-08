@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
-import { d1CallLogStore, d1DialStore, setSetting } from '../src/lib/db.ts';
+import { d1CallLogStore, d1DialStore, d1MeetingLogStore, setSetting } from '../src/lib/db.ts';
 import { mcpApp } from '../src/mcp/app.ts';
 import type { AppEnv } from '../src/types.ts';
 import { callLogDone } from '../src/workflows/call-logged.ts';
@@ -315,6 +315,25 @@ test('calls are reviewed from here: the ones to review, one with its rules, and 
   assert.match(interview.data.call.url, /\/meetings\/m1$/);
   assert.ok(interview.data.transcript.length > 10, 'turn by turn, with stamps');
   assert.equal(interview.data.reading.tags.reachedThem, true);
+  // The interview logged with a follow-up: the review's answer keeps its time.
+  await d1MeetingLogStore(db).create({
+    log_id: 'm1@log',
+    meeting_id: 'm1',
+    contact_id: '10',
+    company_id: '20',
+    owner_id: null,
+    outcome: 'COMPLETED',
+    canceled_by: null,
+    notes: '',
+    internal_notes_html: '',
+    new_start: null,
+    new_end: null,
+    next_type: 'CALL',
+    next_subject: null,
+    next_due: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+    next_body: null,
+    calendar_event_id: null,
+  });
   const saved = await callTool('review_call', {
     task_id: 'm1',
     corrections: { commitment: 'time' },
@@ -322,6 +341,7 @@ test('calls are reviewed from here: the ones to review, one with its rules, and 
   });
   assert.equal(saved.isError, false, saved.text);
   assert.equal(saved.data.reading.tags.momTest.commitment, 'time');
+  assert.ok(saved.data.reading.tags.nextStep.when, 'the follow-up’s time, from the interview’s log');
   assert.match(saved.data.url, /\/meetings\/m1$/);
 
   assert.deepEqual((await callTool('calls_to_review')).data.calls, [], 'both reviewed: off the list');

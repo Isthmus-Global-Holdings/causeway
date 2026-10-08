@@ -397,3 +397,59 @@ test('a WhatsApp message logged on a task shows in the record as one', async () 
   assert.match(out, /<strong>They replied\.<\/strong> <span class="muted">Messaged on WhatsApp\.<\/span>/);
   assert.match(await render(filters({ q: 'WhatsApp' })), /href="\/calls\/t-wa"/, 'found by its title');
 });
+
+test('an interview’s reading shows on the call it describes, not on an earlier attempt from the same page', async () => {
+  await dial('m-first', T0 + 4 * DAY, { subject: 'meeting', task_id: 'm1', prospect_status: 'no-answer' });
+  await dial('m-second', T0 + 4 * DAY + 1800, { subject: 'meeting', task_id: 'm1', duration: 600 });
+  const insight = {
+    call_task_id: 'm1',
+    subject: 'meeting',
+    dial_id: 'm-second',
+    label: 'Dana Reyes',
+    outcome: 'connected',
+    gate: 'owner',
+    gatekeeper_result: null,
+    gatekeeper_name: null,
+    phone_tree_sec: null,
+    phone_tree_digit: null,
+    reached: 1,
+    talk_sec: 600,
+    stage: 'conversation',
+    objection: null,
+    objection_kind: null,
+    got_past_objection: 0,
+    next_step: 0,
+    next_step_text: null,
+    unsure: '[]',
+    excluded: 0,
+    timeline_json: null,
+    asked_last_time: null,
+    pitched: null,
+    longest_story_sec: null,
+    fluff_caught: null,
+    commitment: null,
+  } as never;
+  const out = String(
+    await historyPage(
+      {
+        page: await callHistory(db, filters(), 25),
+        filters: filters(),
+        setup: { twilioReady: true, fromNumber: '+13852557051', repPhone: '+15555550100' },
+        nowSec: NOW_SEC,
+        timeZone: TZ,
+        insights: new Map([['m1', insight]]),
+        back: '/calls',
+      },
+      'rep@example.com'
+    )
+  );
+  const cards = out.split('<li class="card">').slice(1);
+  const second = cards.find((c) => c.includes('/meetings/m1') && c.includes('10m 00s'))!;
+  const first = cards.find((c) => c.includes('/meetings/m1') && !c.includes('10m 00s'))!;
+  assert.match(second, /Talked 10:00/, 'the latest call carries the reading');
+  assert.doesNotMatch(
+    first,
+    /Talked 10:00|Not read for coaching yet|Leave out of coaching/,
+    'the earlier attempt shows no coaching'
+  );
+});

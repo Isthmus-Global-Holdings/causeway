@@ -39,7 +39,7 @@ import { companyName, contactName, loadTask, WorkflowError, type TaskParties } f
 export const DIAL_GUARD_SEC = 120;
 // Longer than any real call. A dial with no final status by then lost its
 // webhook, and is treated as ended so the page stops waiting on it.
-const DIAL_MAX_SEC = 2 * 60 * 60;
+export const DIAL_MAX_SEC = 2 * 60 * 60;
 // Twilio reports each leg on its own. Once the rep's leg ends, the page waits
 // this long for the prospect's (its status and length) before showing the
 // log form, so a quick log doesn't save the call without them.
