@@ -11,7 +11,13 @@ import { d1CallLogStore, d1DialStore, d1MeetingBookingStore, d1MeetingLogStore }
 import type { NewCall, Twilio } from '../src/lib/twilio.ts';
 import type { AppEnv } from '../src/types.ts';
 import { meetingPage } from '../src/views/meetings.ts';
-import { parseBookingForm, runBooking, type Calendar, type Invite } from '../src/workflows/book-interview.ts';
+import {
+  bookingTimes,
+  parseBookingForm,
+  runBooking,
+  type Calendar,
+  type Invite,
+} from '../src/workflows/book-interview.ts';
 import { callLogDone, LAST_TRY, parseCallLogForm, runCallLogged } from '../src/workflows/call-logged.ts';
 import { loadCallQueue, withInterviews } from '../src/workflows/call-queue.ts';
 import { startDial, startMeetingDial } from '../src/workflows/dial.ts';
@@ -339,6 +345,24 @@ test('booking from a call task creates one meeting, however many times it is sub
   assert.equal(hs.objects.get('tasks/1')!.properties.hs_task_status, 'NOT_STARTED', 'the call task stays open');
   const { meeting } = await loadMeeting(hs, first.meetingId);
   assert.equal(meeting.properties.hs_meeting_outcome, 'SCHEDULED');
+});
+
+test("an interview booked in their time zone is saved in the rep's", async () => {
+  // 10:30 in New York (EDT) is 08:30 in Denver.
+  const input = parseBookingForm(
+    { book_date: '2026-09-28', book_time: '10:30', book_time_tz: 'America/New_York', book_format: 'phone' },
+    '2026-09-25'
+  );
+  assert.equal(bookingTimes(input, TZ).startAt, '2026-09-28T14:30:00.000Z');
+  // Rescheduled the same way.
+  const moved = parseMeetingLogForm(
+    { outcome: 'RESCHEDULED', new_date: '2026-09-29', new_time: '1pm', new_time_tz: 'America/Los_Angeles' },
+    '2026-09-25'
+  );
+  assert.deepEqual(moved.newStart, {
+    date: '2026-09-29',
+    time: { hour: 13, minute: 0, timeZone: 'America/Los_Angeles' },
+  });
 });
 
 test('a booking whose result was lost reuses the meeting HubSpot created', async () => {

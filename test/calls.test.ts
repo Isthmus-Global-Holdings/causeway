@@ -371,6 +371,13 @@ test('parseCallLogForm takes a set time for a follow-up call only', () => {
     time: { hour: 16, minute: 0 },
   });
   assert.throws(() => parseCallLogForm({ ...form, next_time: '4' }, today), /like 4pm/);
+  // Said in their time zone: kept with the time, turned into the rep's when the task is made.
+  assert.deepEqual(parseCallLogForm({ ...form, next_time: '2pm', next_time_tz: 'America/New_York' }, today).next, {
+    type: 'CALL',
+    date: today,
+    time: { hour: 14, minute: 0, timeZone: 'America/New_York' },
+  });
+  assert.throws(() => parseCallLogForm({ ...form, next_time: '2pm', next_time_tz: 'Nowhere' }, today), /like 4pm/);
 });
 
 // --- runCallLogged ---

@@ -18,7 +18,16 @@
 // found by meeting instead, since a reschedule that landed has already moved
 // the meeting off the start time in its key.
 
-import { isDate, localDateAt, parseHubSpotTime, parseTime, saidWhen, type TimeOfDay } from '../lib/dates';
+import {
+  isDate,
+  localDateAt,
+  parseHubSpotTime,
+  parseSaidTime,
+  saidAt,
+  saidWhen,
+  type SaidTime,
+  type TimeOfDay,
+} from '../lib/dates';
 import type { CanceledBy, MeetingLog, MeetingLogStore } from '../lib/db';
 import type { HubSpot } from '../lib/hubspot';
 import { escapeHtml, textToHtml, toTaskBodyHtml } from '../lib/richtext';
@@ -57,7 +66,7 @@ export interface MeetingLogInput {
   outcome: LoggableOutcome;
   canceledBy?: CanceledBy | null; // CANCELED only
   notes: string;
-  newStart: { date: string; time: TimeOfDay } | null; // RESCHEDULED only, in the rep's time zone
+  newStart: { date: string; time: SaidTime } | null; // RESCHEDULED only, in the rep's time zone unless said in theirs
   next: { type: TaskType; date: string } | null;
   // The transcript of a call made from the interview page, if it finished
   // before the rep logged: it goes into the meeting's notes with theirs.
@@ -99,7 +108,7 @@ export function parseMeetingLogForm(form: Record<string, string | undefined>, to
   let newStart: MeetingLogInput['newStart'] = null;
   if (outcome === 'RESCHEDULED') {
     const date = form.new_date ?? '';
-    const time = parseTime(form.new_time ?? '');
+    const time = parseSaidTime(form.new_time ?? '', form.new_time_tz);
     if (!isDate(date) || !time) throw new WorkflowError('Pick the new date and time for the interview.');
     if (date < today) throw new WorkflowError('The new date is in the past.');
     newStart = { date, time };
@@ -217,7 +226,7 @@ export async function runMeetingLogged(
     let newStartIso: string | null = null;
     let newEndIso: string | null = null;
     if (newStart) {
-      const startAt = localDateAt(newStart.date, opts.timeZone, newStart.time);
+      const startAt = saidAt(newStart.date, newStart.time, opts.timeZone);
       if (startAt <= opts.now) throw new WorkflowError('That time has already passed. Pick a later one.');
       const oldEnd = parseHubSpotTime(p.hs_meeting_end_time);
       const length = seenStartAt !== null && oldEnd !== null && oldEnd > seenStartAt ? oldEnd - seenStartAt : 1_800_000;

@@ -13,6 +13,7 @@ import { createTwilio, type Twilio } from './twilio';
 import { clientIdentity, voiceAccessToken } from './voice-token';
 import { workersAiTranscriber } from './ai';
 import { stateTimeZone } from './address';
+import { isTimeZone } from './dates';
 import { parsePlan, type WorkPlan } from './work-plan';
 import { whatsappOpens, type WhatsAppOpens } from './whatsapp';
 import {
@@ -92,15 +93,8 @@ export async function loadAppSettings(env: Env): Promise<AppSettings> {
   };
 }
 
-// An IANA time zone this runtime knows, e.g. "America/Denver".
-export function isTimeZone(value: string): boolean {
-  try {
-    new Intl.DateTimeFormat('en-US', { timeZone: value });
-    return value.includes('/') || value === 'UTC';
-  } catch {
-    return false;
-  }
-}
+// The settings page checks a picked zone with it.
+export { isTimeZone };
 
 // The Worker can reach Twilio. Which numbers to use is picked on /settings.
 export function twilioConfigured(env: Env): boolean {

@@ -141,6 +141,7 @@ export function callRowSummary(row: CallRow, timeZone: string, origin: string) {
     contact: row.contactName,
     company: row.companyName,
     phone: row.phone,
+    theirTimeZone: row.timeZone, // from their address; null when it doesn't say
     fit: row.fit,
     emailOpens: row.engagement?.opens ?? 0,
     emailClicks: row.engagement?.clicks ?? 0,

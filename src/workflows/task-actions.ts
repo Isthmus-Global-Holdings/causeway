@@ -4,7 +4,7 @@
 // Each is one PATCH to an absolute value, so a double submit or a retry
 // writes the same thing again and needs no D1 row.
 
-import { isDate, localDate, localDateAt, parseHubSpotTime, sameTimeOn, type TimeOfDay } from '../lib/dates';
+import { isDate, localDate, parseHubSpotTime, saidAt, sameTimeOn, type SaidTime, type TimeOfDay } from '../lib/dates';
 import type { ConfirmationStore, SentEmailStore } from '../lib/db';
 import type { HubSpot, HubSpotObject } from '../lib/hubspot';
 import { hasReminder, reminderFor } from '../lib/set-time';
@@ -29,13 +29,13 @@ export async function snoozeCall(
   hs: HubSpot,
   taskId: string,
   date: string,
-  time: TimeOfDay | null,
+  time: SaidTime | null,
   opts: { now: number; timeZone: string }
 ): Promise<{ dueAt: number }> {
   if (!isDate(date)) throw new WorkflowError('Pick a day to move the call to.');
   const today = localDate(opts.now, opts.timeZone);
   if (time ? date < today : date <= today) throw new WorkflowError('Pick a day after today, or a time.');
-  const dueAt = time ? localDateAt(date, opts.timeZone, time) : null;
+  const dueAt = time ? saidAt(date, time, opts.timeZone) : null;
   if (dueAt !== null && dueAt <= opts.now) throw new WorkflowError('That time has already passed.');
   const task = await loadOpen(hs, taskId, 'CALL');
   if (task.properties.hs_task_status !== 'NOT_STARTED') {
