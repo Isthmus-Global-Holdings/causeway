@@ -157,12 +157,15 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
     d1CallReviewStore(db).list(callTaskId),
   ]);
   if (row) {
+    // Laid over again: a review whose read failed isn't in the row yet (the
+    // sweep reads it again); one that is comes out the same.
+    const read = withReviews(row, reviews);
     return {
       label: row.label,
-      read: row,
-      unsure: parseUnsure(row.unsure),
-      sources: parseSources(row.sources),
-      notes: adjustNotes(row),
+      read,
+      unsure: parseUnsure(read.unsure),
+      sources: parseSources(read.sources),
+      notes: adjustNotes(read),
       feedbackBy: feedbackBy(reviews),
     };
   }

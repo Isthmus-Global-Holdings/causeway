@@ -52,7 +52,10 @@ export async function readCall(
   const facts = callFacts(log, dial, transcript);
   const source = insightSource(facts);
   const [before, reviews] = await Promise.all([deps.insights.get(callTaskId), deps.reviews.list(callTaskId)]);
-  if (!reread && before && before.source === source && before.rules_version >= RULES_VERSION) return before;
+  const reviewedSince = reviews.some((r) => before && r.reviewed_at > before.extracted_at);
+  if (!reread && before && before.source === source && before.rules_version >= RULES_VERSION && !reviewedSince) {
+    return before;
+  }
 
   const { unsure, ...fields } = ruleInsight(facts);
   const stats = transcript ? transcriptStats(theirPart(transcript.turns, facts.firstName)) : null;
@@ -86,7 +89,10 @@ export async function readCall(
   // A review reads it again, but a stored reading from a better source or
   // newer rules is never replaced (the store refuses): the review goes over
   // that one instead, so what's saved is what's returned.
-  const base = reread && before && outranks(before, row) ? before : row;
+  const base =
+    (reread || reviewedSince) && before && outranks(before, row)
+      ? { ...before, extracted_at: new Date(now).toISOString() }
+      : row;
   const reviewed = withReviews(base, reviews);
   await deps.insights.save(reviewed);
   // A review saved while this read ran (review_call, mid-sweep) may have had

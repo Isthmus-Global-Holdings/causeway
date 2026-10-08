@@ -1935,7 +1935,8 @@ export interface CallInsightStore {
   // not dialled from the app.
   loggedAt(callTaskId: string): Promise<number | null>;
   // Logged calls to read: never read, read by rules older than
-  // `rulesVersion`, or read from the notes before their transcript arrived.
+  // `rulesVersion`, read from the notes before their transcript arrived, or
+  // reviewed since they were read.
   // Newest first; WhatsApp messages aren't calls, and left-out calls stay out.
   needing(limit: number, rulesVersion: number): Promise<string[]>;
   // Leaves the call out of coaching, or puts it back. False when it hasn't
@@ -1985,6 +1986,9 @@ export function d1CallInsightStore(db: D1Database): CallInsightStore {
            WHERE l.channel != 'whatsapp_message'
              AND (i.call_task_id IS NULL
                   OR (i.excluded = 0 AND i.rules_version < ?1)
+                  -- A review saved after its last read (a read that failed after review_call).
+                  OR (i.excluded = 0 AND EXISTS (SELECT 1 FROM call_reviews r
+                      WHERE r.call_task_id = l.call_task_id AND r.reviewed_at > i.extracted_at))
                   -- A silent recording's transcript is done with no turns: nothing to read again.
                   OR (i.excluded = 0 AND i.source != 'transcript' AND d.transcript_status = 'done'
                       AND json_array_length(d.transcript_json) > 0))

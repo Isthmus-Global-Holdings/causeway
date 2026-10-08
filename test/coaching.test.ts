@@ -1712,3 +1712,25 @@ test('who did the talking counts every recorded connect; the bars are the latest
   assert.equal(report.talk.length, 12);
   assert.deepEqual(report.theyLed, { calls: 4, of: 14 }, 'the four oldest led, though none is among the latest twelve');
 });
+
+test('a review whose read failed shows at once, and the sweep reads the call again for it', async () => {
+  await logCall('t1');
+  const first = await readCall(deps(), 't1', Date.parse('2026-10-07T16:00:00Z'));
+  assert.notEqual(first?.stage, 'conversation');
+  // review_call saved this, then its read failed.
+  await d1CallReviewStore(db).save('t1', {
+    reviewer: 'claude',
+    corrections: { stage: 'conversation' },
+    what_worked: 'Asked about their last load.',
+    adjust: null,
+    reviewed_at: '2026-10-07T17:00:00Z',
+  });
+  const notes = await callNotes(db, 't1');
+  assert.equal(notes?.read.stage, 'conversation', 'shown with the review');
+  assert.equal(notes?.read.what_worked, 'Asked about their last load.');
+
+  assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), ['t1'], 'reviewed since its read');
+  assert.equal(await readUnreadCalls(deps(), 10, Date.parse('2026-10-07T17:10:00Z')), 1);
+  assert.equal((await d1CallInsightStore(db).get('t1'))?.stage, 'conversation', 'stored with it');
+  assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), [], 'and not read again after');
+});
