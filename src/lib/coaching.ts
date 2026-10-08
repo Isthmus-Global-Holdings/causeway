@@ -117,7 +117,8 @@ export interface CoachingReport {
   fastNoNextStep: { connects: number; calls: CallInsight[] }; // newest first
   longConnects: CallInsight[]; // longest first
   style: { long: Style; short: Style };
-  talk: CallInsight[]; // connects with a transcript (their share of the words), newest first
+  talk: CallInsight[]; // the latest connects with a transcript (their share of the words), newest first
+  theyLed: { calls: number; of: number }; // every connect with a transcript: where they talked more than half
   recent: CallInsight[]; // the last calls read, newest first
   callTaskIds: ReadonlySet<string>; // the calls counted
 }
@@ -252,6 +253,7 @@ export function coachingReport(rows: CallInsight[], repTimeZone: string): Coachi
 
   const connects = calls.filter((c) => c.reached);
   const long = connects.filter(isLongConnect);
+  const talked = newest.filter((c) => c.reached && c.prospect_talk_share !== null);
   return {
     calls: calls.length,
     reached: connects.length,
@@ -270,7 +272,8 @@ export function coachingReport(rows: CallInsight[], repTimeZone: string): Coachi
     fastNoNextStep: { connects: connects.length, calls: newest.filter(fastNoNextStep) },
     longConnects: [...long].sort((a, b) => (b.talk_sec ?? b.duration_sec ?? 0) - (a.talk_sec ?? a.duration_sec ?? 0)),
     style: { long: styleOf(long), short: styleOf(connects.filter((c) => (c.talk_sec ?? c.duration_sec ?? 0) < 120)) },
-    talk: newest.filter((c) => c.reached && c.prospect_talk_share !== null).slice(0, RECENT),
+    talk: talked.slice(0, RECENT),
+    theyLed: { calls: talked.filter((c) => (c.prospect_talk_share ?? 0) > 0.5).length, of: talked.length },
     recent: newest.slice(0, RECENT),
     callTaskIds: new Set(calls.map((c) => c.call_task_id)),
   };

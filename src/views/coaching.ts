@@ -25,6 +25,7 @@ import {
   rateOf,
   type BookingReport,
   type BookingSplit,
+  type CoachingReport,
   type Funnel,
   type Quote,
   type Rate,
@@ -153,18 +154,17 @@ function funnelCard({ steps, leak, upcoming }: Funnel): Html {
 
 // On each call that reached them and has a transcript: their share of the
 // words, against half.
-function talkCard(talk: CallInsight[], timeZone: string): Html {
+function talkCard({ talk, theyLed }: Pick<CoachingReport, 'talk' | 'theyLed'>, timeZone: string): Html {
   if (!talk.length) {
     return html`<section class="card">
       <h2>Who did the talking</h2>
       <p class="muted">No recorded call has reached them yet. Each one that does shows here: how much of it they talked.</p>
     </section>`;
   }
-  const theyLed = talk.filter((c) => (c.prospect_talk_share ?? 0) > 0.5).length;
   return html`<section class="card">
     <h2>Who did the talking</h2>
     <p>
-      They talked more than you on ${theyLed} of the ${talk.length} recorded call${talk.length === 1 ? '' : 's'} that reached them.
+      They talked more than you on ${theyLed.calls} of the ${theyLed.of} recorded call${theyLed.of === 1 ? '' : 's'} that reached them.
       On an interview they should do most of it: their world, what they did the last time, not your idea.
     </p>
     ${bars(
@@ -181,7 +181,9 @@ function talkCard(talk: CallInsight[], timeZone: string): Html {
         };
       })
     )}
-    <p class="muted">Their share of the words, from the transcript; the line is half.</p>
+    <p class="muted">
+      Their share of the words, from the transcript; the line is half.${talk.length < theyLed.of ? ` The latest ${talk.length} are shown.` : ''}
+    </p>
   </section>`;
 }
 
@@ -376,7 +378,7 @@ export function coachingPage({ settings, report, bookings, funnel, unread }: Coa
         }
       </section>
 
-      ${talkCard(report.talk, tz)}
+      ${talkCard(report, tz)}
 
       <section class="card">
         <h2>Objections, and the openings that got past them</h2>

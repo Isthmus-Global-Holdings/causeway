@@ -1672,3 +1672,43 @@ test('a review saved before the call was read still shows, read from the rules o
   assert.deepEqual(notes?.feedbackBy, { whatWorked: null, adjust: 'rep' });
   assert.ok(notes?.notes.some((n) => n.text === 'Leave with a time.'));
 });
+
+test('a review that lands while the sweep reads the call isn’t overwritten by the sweep', async () => {
+  await logCall('t1');
+  const review = {
+    reviewer: 'rep' as const,
+    corrections: { stage: 'conversation' as const },
+    what_worked: null,
+    adjust: null,
+    reviewed_at: '2026-10-07T17:00:00Z',
+  };
+  const plain = deps();
+  let raced = false;
+  // review_call runs, and finishes, between the sweep's look at the reviews and its save.
+  const sweep: InsightDeps = {
+    ...plain,
+    insights: {
+      ...plain.insights,
+      save: async (row) => {
+        if (!raced) {
+          raced = true;
+          await reviewCall(plain, 't1', review, Date.now());
+        }
+        await plain.insights.save(row);
+      },
+    },
+  };
+  const read = await readCall(sweep, 't1', Date.now(), { reread: true });
+  assert.ok(raced);
+  assert.equal(read?.stage, 'conversation');
+  assert.equal((await d1CallInsightStore(db).get('t1'))?.stage, 'conversation', 'the stored reading keeps the review');
+});
+
+test('who did the talking counts every recorded connect; the bars are the latest', () => {
+  const rows = Array.from({ length: 14 }, (_, i) =>
+    insight({ call_task_id: `w${i}`, at_sec: T0 + i * HOUR, prospect_talk_share: i < 4 ? 0.7 : 0.3 })
+  );
+  const report = coachingReport(rows, TZ);
+  assert.equal(report.talk.length, 12);
+  assert.deepEqual(report.theyLed, { calls: 4, of: 14 }, 'the four oldest led, though none is among the latest twelve');
+});

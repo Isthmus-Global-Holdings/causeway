@@ -89,7 +89,15 @@ export async function readCall(
   const base = reread && before && outranks(before, row) ? before : row;
   const reviewed = withReviews(base, reviews);
   await deps.insights.save(reviewed);
-  return reviewed;
+  // A review saved while this read ran (review_call, mid-sweep) may have had
+  // its own read land first, which this save just overwrote: look again,
+  // and lay the newer reviews over once more. A review saved after this
+  // look has its own read, which lands after.
+  const latest = await deps.reviews.list(callTaskId);
+  if (JSON.stringify(latest) === JSON.stringify(reviews)) return reviewed;
+  const again = withReviews(base, latest);
+  await deps.insights.save(again);
+  return again;
 }
 
 const SOURCE_RANK: Record<CallInsight['source'], number> = { outcome: 0, notes: 1, transcript: 2 };
