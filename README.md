@@ -158,7 +158,14 @@ timeline like one made in HubSpot.
   has none). Give it a time and it's a set-time call, which can be later
   today; a set-time call moved without one keeps its time. The form sends the
   date itself, not "+1 day", so a double submit lands on the same day.
-- **The call page** puts what you need on the call in one place:
+- **The call page** puts what you need on the call in one place, in this
+  order: script, numbers, coaching, recording, HubSpot history, about them,
+  and the log form beside them (below them on a phone). A bar of links to
+  each, with an icon for each, stays at the top while the page scrolls and
+  marks the one you're on. Each card's heading has the same icon. History,
+  About them and Coaching fold away from their heading, and stay folded on
+  every call (in this browser) until you open them again; a link in the bar
+  opens a folded one.
   - **Where they are**, under the name: the city in large type, the street,
     and a small map, from the company's address (the contact's when the
     company has none), linked to Google Maps. The interview page shows it
@@ -171,15 +178,23 @@ timeline like one made in HubSpot.
     `{fit_reason}` with why you picked them: the reason after the rating in
     the company description's Fit line ("Fit: STRONG - runs …"), with no
     final period, and nothing for a drop-flagged company. One with nothing
-    to fill in stays as written so the gap shows. Editing is
-    hidden while a call is live.
+    to fill in stays as written, highlighted, so the gap shows. Editing is
+    hidden while a call is live. A script in parts gets a tab for each part,
+    one part showing at a time, and every new call starts on the first: a
+    part starts at a heading on its own line between rules
+    (`━━━ 1 · OPENER ━━━`, `== Close ==`) or after a Markdown `#`. A line in
+    quotes (after any bullet) is set apart as one to say, and one starting
+    with `→` or `⏸` as a cue; a line in capitals is a small label. The words
+    are always as you wrote them.
   - **About them**: the contact's title, email, lead status, lifecycle stage
     and location, the company's website, industry, size and description,
-    and the CALL task's own description. Prep notes for one prospect go on
+    the last email this app sent them, and the CALL task's own description. Prep notes for one prospect go on
     the task or as a note on the contact in HubSpot, and show up here.
   - **HubSpot history**: the contact's notes, logged calls (with the
     transcript summaries this app writes) and emails, newest first, ten of
-    each. It's read-only. If one kind can't be read, the page says so and
+    each, each with its kind's icon and how long ago it was ("3 days ago").
+    With more than one kind, buttons over the list show one kind at a time.
+    It's read-only. If one kind can't be read, the page says so and
     shows the rest. Emails need the `sales-email-read` scope (see
     [HubSpot app](#hubspot-app)). Without it, the page shows notes and calls
     and says emails are missing that scope.

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { fillScript, normalizeScript, type ScriptVars } from '../src/lib/call-script.ts';
+import { fillScript, normalizeScript, scriptParts, type ScriptVars } from '../src/lib/call-script.ts';
 
 const VARS: ScriptVars = {
   firstName: 'Ana',
@@ -42,4 +42,74 @@ test('a missing value or unknown placeholder stays as written', () => {
 
 test('normalizes line endings and trailing space', () => {
   assert.equal(normalizeScript('One\r\nTwo\rThree\n\n  '), 'One\nTwo\nThree');
+});
+
+const SCRIPT = `Before you dial: smile.
+
+━━━━━━━━  1 · OPENER  ━━━━━━━━
+
+"Hey {first_name}, this is Anel."
+
+   ⏸  wait for a yes.
+
+━━━━━━━━  2 · QUESTIONS  ━━━━━━━━
+
+→ Follow what they get animated about.
+
+THE LAST TIME
+  •  Walk me through the last load you quoted.
+  1.  "Is there anyone else I should talk to?"
+━━━━━━━━━━━━━━━━
+FOLLOW-UP VOICEMAIL (~10 sec)
+
+## If they push back
+"What's this really for?" → "Learning."`;
+
+test('cuts the script into its parts at each heading, the text before the first one untitled', () => {
+  const parts = scriptParts(SCRIPT);
+  assert.deepEqual(
+    parts.map((p) => [p.number, p.title]),
+    [
+      [null, null],
+      ['1', 'OPENER'],
+      ['2', 'QUESTIONS'],
+      [null, 'If they push back'],
+    ]
+  );
+  assert.deepEqual(parts[0].lines, [{ kind: 'text', text: 'Before you dial: smile.' }]);
+});
+
+test('each line keeps its words and indentation, styled by what it is', () => {
+  const [, opener, questions, pushBack] = scriptParts(SCRIPT);
+  assert.deepEqual(opener.lines, [
+    { kind: 'say', text: '"Hey {first_name}, this is Anel."' },
+    { kind: 'blank', text: '' },
+    { kind: 'cue', text: '   ⏸  wait for a yes.' },
+  ]);
+  assert.deepEqual(
+    questions.lines.map((l) => l.kind),
+    ['cue', 'blank', 'subhead', 'text', 'say', 'blank', 'subhead'],
+    'a rule with no words is a blank line'
+  );
+  assert.equal(questions.lines[4].text, '  1.  "Is there anyone else I should talk to?"');
+  assert.deepEqual(pushBack.lines, [{ kind: 'say', text: '"What\'s this really for?" → "Learning."' }]);
+});
+
+test('a script with no headings is one untitled part', () => {
+  assert.deepEqual(scriptParts('Hi {first_name}.\n\nHow do you quote?'), [
+    {
+      number: null,
+      title: null,
+      lines: [
+        { kind: 'text', text: 'Hi {first_name}.' },
+        { kind: 'blank', text: '' },
+        { kind: 'text', text: 'How do you quote?' },
+      ],
+    },
+  ]);
+  assert.deepEqual(
+    scriptParts('━━━ OPENER ━━━\nHi.').map((p) => p.title),
+    ['OPENER'],
+    'no empty part before the first heading'
+  );
 });

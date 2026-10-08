@@ -1,9 +1,9 @@
 import { html, raw } from 'hono/html';
 import type { CallCoaching } from '../actions/coaching';
-import { fillScript, MAX_SCRIPT, SCRIPT_PLACEHOLDERS } from '../lib/call-script';
+import { fillScript, MAX_SCRIPT, SCRIPT_PLACEHOLDERS, scriptParts, type ScriptLine } from '../lib/call-script';
 import { suggestConversation } from '../lib/conversations';
 import { parseFitReason } from '../lib/fit';
-import { addDays, formatLocal, localDate } from '../lib/dates';
+import { addDays, ago, formatLocal, localDate } from '../lib/dates';
 import { sqliteTime, type CallLog, type Dial, type DialMode, type InboundCall, type RecentSend } from '../lib/db';
 import { extensionOf, formatPhone, toE164 } from '../lib/phone';
 import { callableFrom } from '../lib/set-time';
@@ -49,6 +49,7 @@ import type { TodayCounts } from '../workflows/today';
 import type { Recorded, RecordingState } from '../workflows/transcribe';
 import { coachingCard } from './coaching';
 import { address, companyLinks, contactLinks, facts, humanize, lifecycle, website, whereTheyAre } from './facts';
+import { cardHead, foldCard, icon, jumpBar, type IconName, type JumpLink } from './sections';
 import {
   conversationBox,
   flash as flashBox,
@@ -445,7 +446,7 @@ export function recordingCard(dial: Recorded, state: RecordingState, links: Reco
   const audio = dial.recording_sid
     ? html`<audio class="recording" controls preload="none" src="${links.audio}"></audio>`
     : '';
-  const heading = html`<h2>Recording &amp; transcript</h2>`;
+  const heading = cardHead('recording', 'Recording & transcript');
   const id = links.id ?? 'transcript';
   if (state.kind === 'pending') {
     return html`<div class="card" id="${id}" data-src="${links.poll}" data-pending>
@@ -797,25 +798,94 @@ function scriptCard(state: CallPageState, live: boolean): Html {
             placeholder="Hi {first_name}, this is {my_name}…">${script ?? ''}</textarea>
           <p class="muted">The same script shows on every call. These fill in with the contact's details:
             ${SCRIPT_PLACEHOLDERS.map((ph, i) => html`${i ? ', ' : ''}<code>${ph.token}</code> ${ph.what}`)}.
-            One with nothing to fill in stays as written.</p>
+            One with nothing to fill in stays as written, highlighted.</p>
+          <p class="muted">Start each part on a line of its own between rules, like <code>━━━ 1 · OPENER ━━━</code>
+            or <code># Opener</code>, and the parts become tabs. A line in quotes is set as one to say, and one
+            starting with <code>→</code> or <code>⏸</code> as a cue.</p>
           <div class="actions"><button type="submit" class="primary">Save script</button></div>
         </form>
       </details>`;
   return html`<div class="card" id="script">
-    <h2>Call script</h2>
-    ${filled ? html`<pre class="script">${filled}</pre>` : html`<p class="muted">No call script yet. Write the one you want in front of you on every call.</p>`}
+    ${cardHead('script', 'Call script')}
+    ${filled ? scriptBody(filled) : html`<p class="muted">No call script yet. Write the one you want in front of you on every call.</p>`}
     ${edit}
   </div>`;
 }
+
+// The filled-in script, a tab for each of its parts (SCRIPT_TABS_SCRIPT;
+// without it every part shows, one under the other).
+function scriptBody(filled: string): Html {
+  const parts = scriptParts(filled);
+  const intro = parts[0]?.title === null ? parts[0] : null;
+  const titled = parts.filter((part) => part.title !== null);
+  const unfilled = PLACEHOLDER.test(filled);
+  return html`<div class="script" data-script>
+    ${intro ? scriptLines(intro.lines) : ''}
+    ${
+      titled.length > 1
+        ? html`<div class="script-tabs" role="group" aria-label="Parts of the script" hidden>
+            ${titled.map(
+              (part, i) =>
+                html`<button type="button" aria-pressed="${i === 0 ? 'true' : 'false'}">${part.number ? html`<span class="n">${part.number}</span>` : ''}${part.title}</button>`
+            )}
+          </div>`
+        : ''
+    }
+    ${titled.map(
+      (part) => html`<section class="script-part">
+        <h3 class="part-title">${part.number ? html`<span class="n">${part.number}</span>` : ''}${part.title}</h3>
+        ${scriptLines(part.lines)}
+      </section>`
+    )}
+    ${unfilled ? html`<p class="muted"><mark class="unfilled">Highlighted</mark>: nothing to fill it in with. Say it your way, or change it under Edit script.</p>` : ''}
+  </div>
+  ${titled.length > 1 ? html`<script>${raw(SCRIPT_TABS_SCRIPT)}</script>` : ''}`;
+}
+
+const PLACEHOLDER = /\{[^{}\n]+\}/;
+
+function scriptLines(lines: ScriptLine[]): Html {
+  return html`<div class="lines">
+    ${lines.map((line) =>
+      line.kind === 'blank'
+        ? html`<p class="gap"></p>`
+        : html`<p class="${line.kind}">${line.text.split(/(\{[^{}\n]+\})/).map((piece, i) => (i % 2 ? html`<mark class="unfilled">${piece}</mark>` : piece))}</p>`
+    )}
+  </div>`;
+}
+
+// One part of the script at a time. A new call starts on the first.
+const SCRIPT_TABS_SCRIPT = `(() => {
+  const box = document.currentScript.previousElementSibling;
+  const bar = box.querySelector('.script-tabs');
+  const tabs = [...bar.querySelectorAll('button')];
+  const parts = [...box.querySelectorAll('.script-part')];
+  const show = (i) => {
+    tabs.forEach((t, j) => t.setAttribute('aria-pressed', String(j === i)));
+    parts.forEach((p, j) => (p.hidden = j !== i));
+  };
+  tabs.forEach((t, i) =>
+    t.addEventListener('click', () => {
+      show(i);
+      // Back to the top of the part when the bar was stuck above a long one.
+      if (box.getBoundingClientRect().top < 0) box.scrollIntoView({ block: 'start' });
+    })
+  );
+  box.classList.add('tabbed');
+  bar.hidden = false;
+  show(0);
+})();`;
 
 function aboutCard(state: CallPageState): Html {
   const { task, contact, company } = state.parties;
   const c = contact.properties;
   const taskNotes = task.properties.hs_task_body ? htmlToText(task.properties.hs_task_body) : '';
   const co = company?.properties;
-  return html`<div class="card">
-    <h2>About them</h2>
-    ${facts([
+  return foldCard(
+    'about',
+    'person',
+    'About them',
+    html`${facts([
       ['Contact', contactLinks(state.portalId, contact)],
       ['Title', c.jobtitle],
       ['Email', c.email],
@@ -837,35 +907,58 @@ function aboutCard(state: CallPageState): Html {
           </div>`
         : html`<p class="muted">No company in HubSpot.</p>`
     }
-    ${taskNotes ? html`<div class="divided tight"><h3>Notes on this task</h3><pre>${taskNotes}</pre></div>` : ''}
-  </div>`;
+    <div class="divided tight"><h3>Last email from this app</h3>${lastEmailCard(state.lastEmail, state.timeZone)}</div>
+    ${taskNotes ? html`<div class="divided tight"><h3>Notes on this task</h3><pre>${taskNotes}</pre></div>` : ''}`
+  );
 }
 
-const HISTORY_KIND: Record<HistoryItem['kind'], string> = { note: 'Note', call: 'Call', email: 'Email' };
+const HISTORY_KIND: Record<HistoryItem['kind'], { label: string; plural: string; icon: IconName }> = {
+  call: { label: 'Call', plural: 'Calls', icon: 'phone' },
+  email: { label: 'Email', plural: 'Emails', icon: 'mail' },
+  note: { label: 'Note', plural: 'Notes', icon: 'note' },
+};
 
-// Also on the interview page.
-export function historyCard(state: Pick<CallPageState, 'context' | 'timeZone'>): Html {
+// Also on the interview, contact and company pages. Newest first, each with
+// its kind's icon and how long ago it was; buttons over the list show one
+// kind at a time (HISTORY_FILTER_SCRIPT).
+export function historyCard(state: Pick<CallPageState, 'context' | 'timeZone' | 'now'>): Html {
   const items = historyTimeline(state.context);
   const failed = (['notes', 'calls', 'emails'] as const).filter((k) => state.context[k].failed);
-  return html`<div class="card">
-    <h2>HubSpot history</h2>
+  const kinds = (['call', 'email', 'note'] as const)
+    .map((kind) => ({ kind, n: items.filter((item) => item.kind === kind).length }))
+    .filter((k) => k.n > 0);
+  return foldCard(
+    'history',
+    'history',
+    'HubSpot history',
+    html`${
+      kinds.length > 1
+        ? html`<div class="filters" role="group" aria-label="Show">
+            <button type="button" aria-pressed="true" data-kind="">All ${items.length}</button>
+            ${kinds.map((k) => html`<button type="button" aria-pressed="false" data-kind="${k.kind}">${HISTORY_KIND[k.kind].plural} ${k.n}</button>`)}
+          </div>`
+        : ''
+    }
     ${
       items.length
         ? html`<ol class="history">
             ${items.map(
               (item) => html`<li class="${item.kind}">
-                <span class="muted">${HISTORY_KIND[item.kind]}${item.at === null ? '' : ` · ${formatLocal(item.at, state.timeZone)}`}${item.detail ? ` · ${item.detail}` : ''}</span>
-                ${item.kind === 'note' ? '' : html`<strong>${item.title}</strong>`}
-                ${
-                  item.fullText
-                    ? html`<details class="clipped">
-                        <summary><pre>${item.text}</pre><span class="more">Show all</span><span class="less">Show less</span></summary>
-                        <pre>${item.fullText}</pre>
-                      </details>`
-                    : item.text
-                      ? html`<pre>${item.text}</pre>`
-                      : ''
-                }
+                <span class="kind" title="${HISTORY_KIND[item.kind].label}">${icon(HISTORY_KIND[item.kind].icon)}</span>
+                <div class="tight">
+                  <span class="muted"><strong class="kind-label">${HISTORY_KIND[item.kind].label}</strong>${item.at === null ? '' : html` · ${ago(item.at, state.now, state.timeZone)} <span class="when">· ${formatLocal(item.at, state.timeZone)}</span>`}${item.detail ? ` · ${item.detail}` : ''}</span>
+                  ${item.kind === 'note' ? '' : html`<strong>${item.title}</strong>`}
+                  ${
+                    item.fullText
+                      ? html`<details class="clipped">
+                          <summary><pre>${item.text}</pre><span class="more">Show all</span><span class="less">Show less</span></summary>
+                          <pre>${item.fullText}</pre>
+                        </details>`
+                      : item.text
+                        ? html`<pre>${item.text}</pre>`
+                        : ''
+                  }
+                </div>
               </li>`
             )}
           </ol>`
@@ -879,8 +972,21 @@ export function historyCard(state: Pick<CallPageState, 'context' | 'timeZone'>):
           : '. Reload to try again.'
       }</p>`;
     })}
-  </div>`;
+    ${kinds.length > 1 ? html`<script>${raw(HISTORY_FILTER_SCRIPT)}</script>` : ''}`,
+    html`<span class="muted">${items.length ? `${items.length} · newest first` : ''}</span>`
+  );
 }
+
+const HISTORY_FILTER_SCRIPT = `(() => {
+  const card = document.currentScript.closest('details');
+  const buttons = [...card.querySelectorAll('.filters button')];
+  for (const b of buttons) {
+    b.addEventListener('click', () => {
+      for (const o of buttons) o.setAttribute('aria-pressed', String(o === b));
+      for (const li of card.querySelectorAll('ol.history > li')) li.hidden = Boolean(b.dataset.kind) && !li.classList.contains(b.dataset.kind);
+    });
+  }
+})();`;
 
 export function numbersCard(state: DialView, canDial: boolean): Html {
   const browser = state.setup.callWith === 'browser';
@@ -1174,8 +1280,8 @@ const BOOKING_FORMAT_SCRIPT = `(() => {
 })();`;
 
 function bookCard(state: CallPageState): Html {
-  return html`<details class="card">
-    <summary><strong>Book an interview</strong> <span class="muted">set up another way, without logging a call</span></summary>
+  return html`<details class="card" id="book">
+    <summary class="card-head"><h2>${icon('calendar')}Book an interview</h2><span class="muted">set up another way, without logging a call</span></summary>
     <form method="post" action="/calls/${state.parties.task.id}/book" class="stack">
       ${bookingFields('solo', state, true)}
       <p class="muted">Creates the meeting in HubSpot on ${contactName(state.parties.contact)}. This call task stays open.</p>
@@ -1211,7 +1317,7 @@ function logForm(state: CallPageState): Html {
   const today = localDate(state.now, state.timeZone);
   const waFields = whatsappFields(state.parties.contact);
   return html`<form class="card" id="log-form" method="post" action="/calls/${taskId}/log">
-    <h2>Log the call</h2>
+    ${cardHead('log', 'Log the call')}
     ${state.dial ? html`<input type="hidden" name="dial_id" value="${state.dial.id}" />` : ''}
     ${
       waFields.length
@@ -1337,6 +1443,24 @@ const CHANNEL_SCRIPT = `(() => {
   show();
 })();`;
 
+function showRecording(state: CallPageState, live: boolean): boolean {
+  return !live && state.dial !== null && state.recordingState !== null && state.recordingState.kind !== 'none';
+}
+
+// The call page's cards, in the order they're on the page.
+function jumpLinks(state: CallPageState, live: boolean): JumpLink[] {
+  const coached = !live && (state.coaching.after !== null || state.coaching.before.length > 0);
+  return [
+    { id: 'script', icon: 'script', label: 'Script' },
+    { id: 'numbers', icon: 'phone', label: 'Numbers' },
+    ...(coached ? [{ id: 'coaching', icon: 'coaching', label: 'Coaching' } as const] : []),
+    ...(showRecording(state, live) ? [{ id: 'transcript', icon: 'recording', label: 'Recording' } as const] : []),
+    { id: 'history', icon: 'history', label: 'History' },
+    { id: 'about', icon: 'person', label: 'About' },
+    { id: 'log', icon: 'log', label: 'Log' },
+  ];
+}
+
 export function callPage(state: CallPageState, actor: string): Html {
   const { task, contact, company } = state.parties;
   const company_ = companyName(company);
@@ -1382,33 +1506,32 @@ export function callPage(state: CallPageState, actor: string): Html {
       ${interviewsNotice(state)}
       ${live ? liveDialStatus(`/calls/${task.id}`, state) : dialStatus(state)}
 
+      ${jumpBar(jumpLinks(state, live))}
       <div class="with-aside">
         <div class="stack">
           ${scriptCard(state, live)}
           ${browserCalls ? browserCallPanel : ''}
-          ${live ? '' : coachingCard(state.coaching)}
-          ${!live && state.dial && state.recordingState && state.recordingState.kind !== 'none' ? transcriptCard(`/calls/${task.id}`, state.dial, state.recordingState) : ''}
           <div class="card" id="numbers">
-            <h2>Numbers</h2>
+            ${cardHead('phone', 'Numbers')}
             ${numbersCard({ ...state, page: `/calls/${task.id}`, whatsapp: completed ? null : callWhatsApp(state) }, canDial)}
           </div>
-          <div class="card">
-            <h2>Last email from this app</h2>
-            ${lastEmailCard(state.lastEmail, state.timeZone)}
-          </div>
-          ${aboutCard(state)}
+          ${live ? '' : coachingCard(state.coaching)}
+          ${showRecording(state, live) && state.dial && state.recordingState ? transcriptCard(`/calls/${task.id}`, state.dial, state.recordingState) : ''}
           ${historyCard(state)}
+          ${aboutCard(state)}
           ${bookCard(state)}
         </div>
-        ${
-          completed
-            ? html`<div class="card"><p>This call task is completed.</p><p class="muted">${state.log?.logged_message_id ? 'The WhatsApp message is on the contact’s timeline.' : state.log?.logged_call_id ? 'The call is on the contact’s timeline.' : 'Check the contact’s timeline in HubSpot for the call.'}</p></div>`
-            : live
-              ? html`<div class="card"><p class="muted">The log form appears when the call ends. This page updates on its own.</p></div>`
-              : saving
-                ? html`<div class="card"><p>Saving this call to HubSpot.</p><p class="muted">It takes a few seconds. Refresh to see it finished.</p></div>`
-                : logForm(state)
-        }
+        <div id="log">
+          ${
+            completed
+              ? html`<div class="card"><p>This call task is completed.</p><p class="muted">${state.log?.logged_message_id ? 'The WhatsApp message is on the contact’s timeline.' : state.log?.logged_call_id ? 'The call is on the contact’s timeline.' : 'Check the contact’s timeline in HubSpot for the call.'}</p></div>`
+              : live
+                ? html`<div class="card"><p class="muted">The log form appears when the call ends. This page updates on its own.</p></div>`
+                : saving
+                  ? html`<div class="card"><p>Saving this call to HubSpot.</p><p class="muted">It takes a few seconds. Refresh to see it finished.</p></div>`
+                  : logForm(state)
+          }
+        </div>
       </div>
       ${!live && state.recordingState?.kind === 'pending' ? html`<script>${raw(POLL_SCRIPT)}</script>` : ''}
       ${!completed && !live ? html`<script>${raw(BOOKING_SCRIPT)}</script><script>${raw(NEXT_TIME_SCRIPT)}</script>` : ''}

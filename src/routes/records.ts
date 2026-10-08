@@ -32,7 +32,10 @@ recordsRoute.get('/contacts/:id', async (c) => {
     latestSendToContact(c.env.DB, contactId),
   ]);
   return c.html(
-    contactPage({ record, lastEmail, portalId: c.env.HUBSPOT_PORTAL_ID, timeZone: settings.timeZone }, c.get('actor'))
+    contactPage(
+      { record, lastEmail, portalId: c.env.HUBSPOT_PORTAL_ID, timeZone: settings.timeZone, now: Date.now() },
+      c.get('actor')
+    )
   );
 });
 
