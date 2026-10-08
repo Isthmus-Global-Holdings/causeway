@@ -1140,7 +1140,10 @@ const BOOKING_SCRIPT = `(() => {
         next.value = '';
         next.dispatchEvent(new Event('change'));
       }
-      if (outcome) outcome.value = 'connected';
+      if (outcome) {
+        outcome.value = 'connected';
+        outcome.dispatchEvent(new Event('change'));
+      }
     }
   });
   sync();
@@ -1323,6 +1326,7 @@ const CHANNEL_SCRIPT = `(() => {
     }
     if (outcome.selectedOptions[0]?.parentElement.disabled) {
       outcome.value = outcome.querySelector('optgroup:not([disabled]) option').value;
+      outcome.dispatchEvent(new Event('change'));
     }
   };
   channel.addEventListener('change', show);

@@ -201,7 +201,8 @@ export function conversationBox(outcomes: readonly string[], ticked: boolean): H
 }
 
 // Shows the box only for an outcome that can count (and leaves it out of
-// the form otherwise), and the line only once it's ticked.
+// the form otherwise), and the line only once it's ticked. A script that sets
+// the outcome itself (booking, the WhatsApp channel) fires its change event.
 const CONVERSATION_SCRIPT = `(() => {
   const box = document.getElementById('conversation-box');
   const outcome = document.getElementById('outcome');
@@ -217,6 +218,5 @@ const CONVERSATION_SCRIPT = `(() => {
   };
   outcome.addEventListener('change', sync);
   tick.addEventListener('change', sync);
-  for (const el of document.querySelectorAll('#channel')) el.addEventListener('change', () => setTimeout(sync));
   sync();
 })();`;
