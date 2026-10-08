@@ -21,3 +21,8 @@ export function hasReminder(value: string | null | undefined): boolean {
 export function callableFrom(dueMs: number): number {
   return dueMs - SET_TIME_LEAD_MS;
 }
+
+// The time they asked to be called at, from callableFrom's: what a page shows.
+export function askedFor(callableMs: number): number {
+  return callableMs + SET_TIME_LEAD_MS;
+}
