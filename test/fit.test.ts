@@ -133,3 +133,11 @@ test('a line is checked for one breath in the rep’s voice', () => {
   assert.ok('problem' in checkCallLine('theirWorld', `${WORLD} ${WORLD} ${WORLD}`), 'too long');
   assert.ok('problem' in checkCallLine('pedestal', 'you quote;\nI listen'));
 });
+
+test("the call script's lines never rate a company", () => {
+  const description =
+    'Fit: STRONG - owner quotes every load.\nWorld: how trucking companies handle quoting.\nPedestal: you work spot freight, so rates probably drop between quote and tender.';
+  assert.equal(parseFitLabel(description), 'STRONG');
+  assert.equal(parseFitLabel('Family carrier. Pedestal: you are a good fit for this, NOT A FIT for that.'), 'UNKNOWN');
+  assert.equal(parseFitLabel('World: how carriers quote. Fit: POOR - enterprise TMS.'), 'DROP');
+});

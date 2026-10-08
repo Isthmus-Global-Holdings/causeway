@@ -36,7 +36,10 @@ const FIT_LINE = /\bfit(?:\s+label)?\s*[:=\-–—]\s*([a-z]+)/i;
 // Prose without a Fit line: "a strong fit", "GOOD fit".
 const PROSE_LABEL = /\b(strong|good)\s+fit\b/i;
 
-export function parseFitLabel(description: string | null | undefined): FitLabel {
+export function parseFitLabel(raw: string | null | undefined): FitLabel {
+  // The call script's lines are words to say to them ("rates probably drop
+  // between quote and tender"), not an assessment, so they never rate a company.
+  const description = withoutCallLines(raw ?? '');
   if (!description) return 'UNKNOWN';
   if (DROP_FLAGS.some((re) => re.test(description))) return 'DROP';
 
@@ -120,6 +123,17 @@ export function checkCallLine(kind: keyof CallLines, raw: string): { value: stri
   return { value };
 }
 
+// The description without its World and Pedestal lines. A line of its own
+// goes with its newline; a sentence leaves the period that ended the one
+// before it.
+function withoutCallLines(description: string): string {
+  let rest = description;
+  for (const label of ['world', 'pedestal']) {
+    rest = rest.replace(lineOf(label, 'gi'), (_m, before: string) => (before === '\n' ? '' : before));
+  }
+  return rest.trim();
+}
+
 // The description with these lines in place of any it had, each on a line of
 // its own at the end (after the Fit line). A line not given keeps what's
 // there. Everything else stays as written.
@@ -129,12 +143,7 @@ export function withCallLines(description: string | null | undefined, lines: Par
     theirWorld: lines.theirWorld ?? current.theirWorld,
     pedestal: lines.pedestal ?? current.pedestal,
   };
-  let rest = description ?? '';
-  for (const label of ['world', 'pedestal']) {
-    // A line of its own goes with its newline; a sentence leaves the period
-    // that ended the one before it.
-    rest = rest.replace(lineOf(label, 'gi'), (_m, before: string) => (before === '\n' ? '' : before));
-  }
+  const rest = withoutCallLines(description ?? '');
   const added = [
     next.theirWorld && `World: ${next.theirWorld}.`,
     next.pedestal && `Pedestal: ${next.pedestal}.`,
