@@ -58,13 +58,16 @@ test('on hold and never put through: the menu, the front desk by name, then the 
 
 test('put through: the menu, the front desk, the hold, then them, with the opening, the objection and the next step marked', () => {
   const t = drawn(recorded(putThrough))!;
+  // Rex came back ("we'll try this again") before the transfer took.
   assert.deepEqual(kinds(t), [
     ['menu', 0, 14.2],
     ['desk', 14.2, 19.1],
-    ['hold', 19.1, 55.5],
+    ['hold', 19.1, 38.5],
+    ['desk', 38.5, 55.5],
     ['them', 55.5, 543],
   ]);
   assert.equal(t.phases[1].label, 'Rex');
+  assert.equal(t.phases[3].label, 'Rex');
   assert.deepEqual(
     t.marks.map((m) => [m.kind, m.at]),
     [
@@ -85,7 +88,29 @@ test('put through: the menu, the front desk, the hold, then them, with the openi
   assert.ok(lyle.to - lyle.from <= 11 * 0.6 + 0.01, 'capped by its eleven words');
   assert.match(
     timelineText(t),
-    /^Phone menu 0:14 · Front desk \(Rex\) 0:14–0:19 · On hold from 0:19 to 0:56 · Them from 0:56 · Objection at 2:29 · Next step at 8:47 · 9:03 in all$/
+    /^Phone menu 0:14 · Front desk \(Rex\) 0:14–0:19 · On hold from 0:19 to 0:39 · Front desk \(Rex\) 0:39–0:56 · Them from 0:56 · Objection at 2:29 · Next step at 8:47 · 9:03 in all$/
+  );
+});
+
+test('a hold the front desk comes back from ends there: not available, a message, a refusal', () => {
+  const turns: Turn[] = [
+    { speaker: 'prospect', start: 0, end: 2, text: 'marlow trucking this is nina' },
+    { speaker: 'rep', start: 3, end: 6, text: 'hi nina this is anel is hank available' },
+    { speaker: 'prospect', start: 7, end: 9, text: 'let me check one moment' },
+    { speaker: 'prospect', start: 40, end: 45, text: 'he is not available right now can i take a message' },
+    { speaker: 'rep', start: 46, end: 50, text: 'no thanks i will try him later' },
+  ];
+  const t = drawn(
+    facts({ label: 'Hank Marlow', firstName: 'Hank', durationSec: 52, transcript: { turns, summary: [] } })
+  )!;
+  assert.deepEqual(kinds(t), [
+    ['desk', 0, 7],
+    ['hold', 7, 40],
+    ['desk', 40, 52],
+  ]);
+  assert.equal(
+    timelineText(t),
+    'Front desk (Nina) 0:00–0:07 · On hold from 0:07 to 0:40 · Front desk (Nina) 0:40–0:52 · 0:52 in all'
   );
 });
 
@@ -160,7 +185,7 @@ test('the strip is a picture with its text after it, every position a custom pro
   const t = drawn(recorded(putThrough))!;
   const strip = String(timelineStrip(t));
   assert.match(strip, /^<div class="strip" aria-hidden="true" style="--w: 100%">/);
-  assert.match(strip, /<span class="phase hold" style="--l: 3\.5%; --w: 6\.7%"><\/span>/);
+  assert.match(strip, /<span class="phase hold" style="--l: 3\.5%; --w: 3\.6%"><\/span>/);
   assert.match(strip, /<span class="phase them" style="--l: 10\.2%; --w: 89\.8%"><\/span>/);
   assert.match(strip, /<span class="tick rep" style="--l: /);
   assert.match(strip, /<span class="tick prospect" style="--l: /);
