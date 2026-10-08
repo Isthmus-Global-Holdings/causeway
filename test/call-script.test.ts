@@ -113,3 +113,18 @@ test('a script with no headings is one untitled part', () => {
     'no empty part before the first heading'
   );
 });
+
+test('a bold label stays in its part; only words with rules on both sides start one', () => {
+  const parts = scriptParts(
+    '━━━ OPENER ━━━\n**Ask:** what do you use today?\n__Note__ keep it short\n**Ask** about **this**\n**Close**\n━━━ VOICEMAIL (~18 sec) ━━━'
+  );
+  assert.deepEqual(
+    parts.map((p) => p.title),
+    ['OPENER', 'Close', 'VOICEMAIL (~18 sec)']
+  );
+  assert.deepEqual(parts[0].lines, [
+    { kind: 'text', text: '**Ask:** what do you use today?' },
+    { kind: 'text', text: '__Note__ keep it short' },
+    { kind: 'text', text: '**Ask** about **this**' },
+  ]);
+});

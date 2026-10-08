@@ -61,7 +61,11 @@ export interface ScriptPart {
 }
 
 const RULE_CHARS = '━═─—=_*~';
-const RULED_HEADING = new RegExp(`^[${RULE_CHARS}]{2,}\\s*(.*?)\\s*[${RULE_CHARS}]*$`);
+// Words between rules on both sides, with no rule inside them (a single
+// character is fine: "VOICEMAIL (~18 sec)"): "**Ask:** what do you use?" is
+// a bold label in the part, not a heading. A line of rules alone is a divider.
+const RULED_HEADING = new RegExp(`^[${RULE_CHARS}]{2,}\\s*((?:(?![${RULE_CHARS}]{2}).)+?)\\s*[${RULE_CHARS}]{2,}$`);
+const DIVIDER = new RegExp(`^[${RULE_CHARS}]{3,}$`);
 const MARKDOWN_HEADING = /^#{1,3}\s+(.+?)\s*#*$/;
 const NUMBERED_TITLE = /^(\d{1,2})\s*[·.):-]\s*(.+)$/;
 const LIST_MARK = /^(?:[•\-*·]|\d{1,2}[.)])\s+/;
@@ -95,12 +99,11 @@ function trimBlank(lines: ScriptLine[]): ScriptLine[] {
 export function scriptParts(script: string): ScriptPart[] {
   const parts: ScriptPart[] = [{ number: null, title: null, lines: [] }];
   for (const line of normalizeScript(script).split('\n')) {
-    const isRule = RULED_HEADING.test(line.trim()) || MARKDOWN_HEADING.test(line.trim());
-    const title = isRule ? headingTitle(line) : null;
+    const title = headingTitle(line);
     if (title) {
       const numbered = NUMBERED_TITLE.exec(title);
       parts.push({ number: numbered?.[1] ?? null, title: numbered?.[2].trim() ?? title, lines: [] });
-    } else if (isRule) {
+    } else if (DIVIDER.test(line.trim())) {
       // A rule with no words is a divider: a blank line.
       parts[parts.length - 1].lines.push({ kind: 'blank', text: '' });
     } else {
