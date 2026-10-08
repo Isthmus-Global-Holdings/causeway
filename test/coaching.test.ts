@@ -398,6 +398,7 @@ test('the front desk’s flag says what to do about what it did', () => {
 function insight(over: Partial<CallInsight> & Pick<CallInsight, 'call_task_id'>): CallInsight {
   return {
     subject: 'task',
+    meeting_log_id: null,
     contact_id: `c-${over.call_task_id}`,
     company_id: null,
     dial_id: null,
@@ -1943,12 +1944,17 @@ test('an interview read once is read again after a redial, a later log, or when 
   assert.deepEqual([again?.dial_id, again?.outcome], ['second', 'connected']);
   assert.deepEqual(await store.needing(10, RULES_VERSION), []);
 
-  // Logged as a no-show after the read: the outcome is the log's, so it's read again.
-  const later = Date.now() + 60_000;
-  await logMeeting('m1', 'NO_SHOW', new Date(later).toISOString().slice(0, 19).replace('T', ' '));
+  // Logged as a no-show after the read, in the same second as the read even:
+  // a log the reading wasn't made with, so it's read again.
+  const readAt = (await store.get('m1'))!.extracted_at;
+  await logMeeting('m1', 'NO_SHOW', readAt.slice(0, 19).replace('T', ' '));
   assert.deepEqual(await store.needing(10, RULES_VERSION), [{ id: 'm1', subject: 'meeting' }], 'logged since');
-  assert.equal((await readInterview(deps(), 'm1', later + 60_000))?.outcome, 'no_answer');
-  assert.deepEqual(await store.needing(10, RULES_VERSION), [], 'read after the log');
+  const logged = await readInterview(deps(), 'm1', Date.now());
+  assert.deepEqual(
+    [logged?.outcome, logged?.meeting_log_id],
+    ['no_answer', `m1@${readAt.slice(0, 19).replace('T', ' ')}`]
+  );
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [], 'read with the log');
 
   // A dial whose final statuses never came: ended once it's older than the timeout, for the sweep too.
   await dials.begin(dial({ id: 'lost', task_id: 'm2', subject: 'meeting', started_sec: T0 }), 120);

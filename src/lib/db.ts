@@ -1871,6 +1871,7 @@ export function d1MeetingBookingStore(db: D1Database): MeetingBookingStore {
 export interface CallInsight extends InsightFields {
   call_task_id: string; // the CALL task, or the meeting for an interview (see subject)
   subject: InsightSubject;
+  meeting_log_id: string | null; // an interview's: the log it was read with (none yet: null)
   contact_id: string;
   company_id: string | null;
   dial_id: string | null;
@@ -1902,6 +1903,7 @@ export type InsightSubject = 'task' | 'meeting';
 const INSIGHT_COLUMNS = [
   'call_task_id',
   'subject',
+  'meeting_log_id',
   'contact_id',
   'company_id',
   'dial_id',
@@ -2047,10 +2049,11 @@ export function d1CallInsightStore(db: D1Database): CallInsightStore {
                AND (d.rep_status IS NOT NULL OR d.prospect_status IS NOT NULL OR d.started_sec < ?3)
                AND d.id = (SELECT d2.id FROM dials d2 WHERE d2.task_id = d.task_id AND d2.subject = 'meeting'
                            ORDER BY d2.started_sec DESC, d2.id DESC LIMIT 1)
-               -- Read of an earlier dial, or before the interview was logged: read again.
+               -- Read of an earlier dial, or with an earlier log (or none) of the interview: read again.
                AND (i.call_task_id IS NULL OR i.dial_id IS NOT d.id
-                    OR (i.excluded = 0 AND EXISTS (SELECT 1 FROM meeting_logs m WHERE m.meeting_id = d.task_id
-                        AND strftime('%s', m.created_at) > strftime('%s', i.extracted_at)))
+                    OR (i.excluded = 0 AND i.meeting_log_id IS NOT
+                        (SELECT m.log_id FROM meeting_logs m WHERE m.meeting_id = d.task_id
+                         ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1))
                     OR ${stale('d.task_id')})
            )
            ORDER BY at DESC LIMIT ?2`
