@@ -41,6 +41,7 @@ import { formatLocal } from '../lib/dates';
 import type { CallInsight, ConversationCandidate } from '../lib/db';
 import { CALL_OUTCOMES } from '../workflows/call-logged';
 import { coachingTabs, layout, type Html } from './layout';
+import { foldCard } from './sections';
 import { timelineStrip } from './timeline';
 
 const outcomeLabel = (outcome: string) => CALL_OUTCOMES.find((o) => o.value === outcome)?.label ?? outcome;
@@ -102,9 +103,11 @@ export function callTags(call: InsightFields, unsure: Tag[]): Html {
 export function coachingCard(coaching: CallCoaching): Html | '' {
   const { after } = coaching;
   if (!after && !coaching.before.length) return '';
-  return html`<div class="card" id="coaching">
-    <div class="row"><h2>Coaching</h2><a class="muted" href="/coaching">Patterns across your calls</a></div>
-    ${
+  return foldCard(
+    'coaching',
+    'coaching',
+    'Coaching',
+    html`${
       after
         ? html`<div class="tight">
             <h3>After the call with ${after.label}</h3>
@@ -113,8 +116,9 @@ export function coachingCard(coaching: CallCoaching): Html | '' {
           </div>`
         : ''
     }
-    ${coaching.before.length ? html`<div class="tight"><h3>Before this call</h3>${noteList(coaching.before)}</div>` : ''}
-  </div>`;
+    ${coaching.before.length ? html`<div class="tight"><h3>Before this call</h3>${noteList(coaching.before)}</div>` : ''}`,
+    html`<a class="muted" href="/coaching">Patterns across your calls</a>`
+  );
 }
 
 function rateCells(rate: Rate): Html {

@@ -243,6 +243,7 @@ export interface ContactPageState {
   lastEmail: RecentSend | null;
   portalId: string;
   timeZone: string;
+  now: number;
 }
 
 export function contactPage(state: ContactPageState, actor: string): Html {
@@ -278,7 +279,7 @@ export function contactPage(state: ContactPageState, actor: string): Html {
             <h2>Company</h2>
             ${company ? companyFacts(company, state.portalId) : html`<p class="muted">No company in HubSpot.</p>`}
           </div>
-          ${historyCard({ context, timeZone: state.timeZone })}
+          ${historyCard({ context, timeZone: state.timeZone, now: state.now })}
         </div>
         <div class="stack first-on-phone">
           ${actionsCard(contact, company, tasks, state.portalId)}

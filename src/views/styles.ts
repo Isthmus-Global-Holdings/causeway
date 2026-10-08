@@ -10,8 +10,8 @@ export const STYLES = `
   --ok-bg: #dcfce7; --ok-fg: #14532d; --err-bg: #fee2e2; --err-fg: #7f1d1d;
   --sans: system-ui, sans-serif; --mono: ui-monospace, monospace;
   --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem; --space-4: 1rem; --space-5: 1.25rem; --space-6: 1.5rem;
-  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px;
-  --content-max: 60rem; --preview-height: 24rem;
+  --radius-sm: 4px; --radius-md: 6px; --radius-lg: 8px; --radius-pill: 999px;
+  --content-max: 60rem; --preview-height: 24rem; --jump-height: 3rem;
   --shadow: 0 8px 24px rgb(0 0 0 / 0.18);
 }
 @media (prefers-color-scheme: dark) {
@@ -148,10 +148,54 @@ ul.summary { margin: 0; padding-left: var(--space-5); }
 .transcript { max-height: 24rem; overflow: auto; display: flex; flex-direction: column; gap: var(--space-2); }
 .transcript .turn strong { display: block; font-size: 0.8rem; color: var(--muted); }
 .transcript .turn.prospect { padding-left: var(--space-4); border-left: 2px solid var(--accent); }
-pre.script { max-height: 28rem; overflow: auto; font-size: 1rem; line-height: 1.6; }
+/* Card headings: an icon, the title, and on the right anything that goes with it */
+.icon { width: 1.1em; height: 1.1em; flex: none; }
+.card-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-4); }
+.card-head h2 { display: flex; align-items: center; gap: var(--space-2); }
+.card-head h2 .icon { color: var(--accent); }
+summary.card-head .muted { font-weight: 400; }
+/* A card that folds: its heading is the toggle, the chevron points down when it's open */
+details.fold > summary, details.card > summary.card-head { list-style: none; }
+details.fold > summary::-webkit-details-marker, details.card > summary.card-head::-webkit-details-marker { display: none; }
+details.card > summary.card-head h2::after { content: ''; width: 0.4em; height: 0.4em; margin: -0.25em 0 0 var(--space-1);
+  border: solid var(--muted); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+details.card:not([open]) > summary.card-head h2::after { transform: rotate(-45deg); margin-top: 0; }
+/* The call page's bar of its cards, at the top while the page scrolls */
+nav.jump { position: sticky; top: 0; z-index: 5; display: flex; gap: var(--space-1); overflow-x: auto; scrollbar-width: none;
+           margin: 0 calc(-1 * var(--space-4)); padding: var(--space-2) var(--space-4); background: var(--bg); border-bottom: 1px solid var(--line); }
+nav.jump a { display: inline-flex; align-items: center; gap: var(--space-1); padding: 0.3rem var(--space-3); border-radius: var(--radius-pill);
+             color: var(--muted); text-decoration: none; white-space: nowrap; font-size: 0.9em; }
+nav.jump a:hover { color: var(--fg); background: var(--card); }
+nav.jump a[aria-current] { color: var(--accent-fg); background: var(--accent); }
+nav.jump ~ .with-aside > :last-child { top: calc(var(--jump-height) + var(--space-4)); }
+nav.jump ~ .with-aside [id] { scroll-margin-top: calc(var(--jump-height) + var(--space-3)); }
+/* Pill buttons that pick one of a few: the script's parts, the kinds of history */
+.script-tabs, .filters { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+.script-tabs button, .filters button { font-size: 0.85em; padding: 0.2rem var(--space-3); border-radius: var(--radius-pill); }
+.script-tabs button[aria-pressed=true], .filters button[aria-pressed=true] { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+/* The call script: a tab for each part, lines to say set apart from the cues around them */
+.script { display: flex; flex-direction: column; gap: var(--space-3); scroll-margin-top: var(--jump-height); }
+.script-tabs { position: sticky; top: var(--jump-height); z-index: 4; padding: var(--space-2) 0; background: var(--card); border-bottom: 1px solid var(--line); }
+.script .n { display: inline-grid; place-items: center; min-width: 1.5em; height: 1.5em; margin-right: var(--space-2); border-radius: var(--radius-pill);
+             font-size: 0.8em; font-weight: 700; background: var(--line); color: var(--fg); }
+.script-tabs button[aria-pressed=true] .n { background: var(--accent-fg); color: var(--accent); }
+.script-part { display: flex; flex-direction: column; gap: var(--space-2); }
+.script .part-title { display: flex; align-items: center; padding-top: var(--space-3); border-top: 1px solid var(--line); }
+.script.tabbed .part-title { display: none; }
+.script .lines p { white-space: pre-wrap; font-size: 1rem; line-height: 1.6; }
+.script .lines p.gap { height: var(--space-2); }
+.script .lines p.say { font-size: 1.1rem; padding-left: var(--space-3); border-left: 3px solid var(--accent); }
+.script .lines p.cue { color: var(--muted); font-style: italic; }
+.script .lines p.subhead { margin-top: var(--space-2); font-size: 0.8rem; font-weight: 700; letter-spacing: 0.04em; color: var(--muted); }
+mark.unfilled { background: var(--warn-bg); color: var(--warn-fg); }
+/* HubSpot history: each kind its own icon and colour, newest first */
 ol.history { list-style: none; margin: 0; padding: 0; max-height: 32rem; overflow: auto; display: flex; flex-direction: column; gap: var(--space-3); }
-ol.history li { padding-left: var(--space-3); border-left: 2px solid var(--line); display: flex; flex-direction: column; gap: var(--space-1); }
-ol.history li.call { border-left-color: var(--accent); }
+ol.history li { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: var(--space-3); align-items: start; }
+ol.history .kind { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: var(--radius-pill); background: var(--line); color: var(--fg); }
+ol.history .kind .icon { width: 1rem; height: 1rem; }
+ol.history li.call .kind { background: var(--accent); color: var(--accent-fg); }
+ol.history li.note .kind { background: var(--warn-bg); color: var(--warn-fg); }
+ol.history .kind-label { color: var(--fg); }
 details.clipped > summary { list-style: none; display: flex; flex-direction: column; gap: var(--space-1); }
 details.clipped > summary::-webkit-details-marker { display: none; }
 details.clipped > summary span { color: var(--accent); }
@@ -278,6 +322,7 @@ dl.headers dd { margin: 0; overflow-wrap: anywhere; }
   .setting { gap: var(--space-3); }
   .card.split { flex-direction: column; align-items: stretch; gap: var(--space-3); }
   .where { flex-direction: column; align-items: stretch; }
+  .script-tabs { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; } /* one row to swipe, so it stays small while it sticks */
   .where iframe { width: 100%; height: 10rem; }
   .bar { justify-content: stretch; }
   .bar .button, .bar button { width: 100%; text-align: center; }

@@ -1295,8 +1295,12 @@ test("the call page lists today's calls beside it, any a click away", async () =
 
 test('the call page shows the filled-in script first, with its editor', async () => {
   const page = String(await callPage(await pageState(), 'rep@example.com'));
-  assert.match(page, /Hi Ana, this is Anel Canto\. How does Acme handle \{mystery\} today\?/);
-  assert.ok(page.indexOf('Call script') < page.indexOf('<h2>Numbers</h2>'), 'the script comes before the numbers');
+  assert.match(
+    page,
+    /<p class="text">Hi Ana, this is Anel Canto\. How does Acme handle <mark class="unfilled">\{mystery\}<\/mark> today\?<\/p>/,
+    'a placeholder with nothing to fill it stands out'
+  );
+  assert.ok(page.indexOf('Call script') < page.indexOf('Numbers</h2>'), 'the script comes before the numbers');
   assert.match(page, /action="\/calls\/1\/script"/);
   assert.match(page, />Hi \{first_name\}, this is \{my_name\}/, 'the editor holds the raw template');
 });
@@ -1369,6 +1373,82 @@ test('an extension in HubSpot is shown next to the number it belongs to', async 
   assert.match(page, /name="phone_ext" value="204"/);
   assert.match(page, /name="phone_was" value="\(385\) 555-0100 x204"/);
   assert.match(page, /<form id="numbers-form" method="post" action="\/calls\/1\/numbers"/);
+});
+
+test('a script in parts gets a tab for each; lines to say and cues are set apart', async () => {
+  const callScript = [
+    '━━━  1 · OPENER  ━━━',
+    '"Hi {first_name}, this is {my_name}."',
+    '⏸ wait for a yes',
+    '━━━  IF THEY PUSH BACK  ━━━',
+    '• "Just send an email." → "Happy to."',
+  ].join('\n');
+  const page = String(await callPage(await pageState({ callScript }), 'rep@example.com'));
+  assert.match(page, /<div class="script-tabs" role="group" aria-label="Parts of the script" hidden>/);
+  assert.match(page, /<button type="button" aria-pressed="true"><span class="n">1<\/span>OPENER<\/button>/);
+  assert.match(page, /<button type="button" aria-pressed="false">IF THEY PUSH BACK<\/button>/);
+  assert.match(page, /<p class="say">&quot;Hi Ana, this is Anel Canto\.&quot;<\/p>/);
+  assert.match(page, /<p class="cue">⏸ wait for a yes<\/p>/);
+  assert.match(page, /<p class="say">• &quot;Just send an email\.&quot; → &quot;Happy to\.&quot;<\/p>/);
+
+  const plain = String(await callPage(await pageState(), 'rep@example.com'));
+  assert.doesNotMatch(plain, /class="script-tabs"/, 'one part needs no tabs');
+});
+
+test('the call page has a bar of its cards; history and about fold', async () => {
+  const page = String(await callPage(await pageState(), 'rep@example.com'));
+  const bar = page.slice(page.indexOf('<nav class="jump"'), page.indexOf('</nav>', page.indexOf('<nav class="jump"')));
+  assert.deepEqual(
+    [...bar.matchAll(/href="#([a-z]+)"/g)].map((m) => m[1]),
+    ['script', 'numbers', 'history', 'about', 'log']
+  );
+  for (const id of ['history', 'about'])
+    assert.match(page, new RegExp(`<details class="card fold" id="${id}" data-fold open>`));
+  assert.ok(page.indexOf('id="history"') < page.indexOf('id="about"'), 'history before who they are');
+  assert.match(page, /<div id="log">/);
+});
+
+test('history shows each kind with its icon and how long ago, with a filter when there are several kinds', async () => {
+  const context: CallContext = {
+    ...EMPTY_CONTEXT,
+    calls: {
+      items: [
+        {
+          kind: 'call',
+          id: 'c1',
+          at: NOW - 3 * 86_400_000,
+          title: 'Call with Ana',
+          detail: 'No answer',
+          text: '',
+          fullText: null,
+        },
+      ],
+      failed: false,
+      missingScopes: [],
+    },
+    notes: {
+      items: [
+        {
+          kind: 'note',
+          id: 'n1',
+          at: NOW - 86_400_000,
+          title: '',
+          detail: null,
+          text: 'Ask about fleet size',
+          fullText: null,
+        },
+      ],
+      failed: false,
+      missingScopes: [],
+    },
+  };
+  const page = String(await callPage(await pageState({ context }), 'rep@example.com'));
+  assert.match(page, /<li class="note">[\s\S]*?<strong class="kind-label">Note<\/strong> · yesterday/);
+  assert.match(page, /<li class="call">[\s\S]*?<strong class="kind-label">Call<\/strong> · 3 days ago/);
+  assert.ok(page.indexOf('<li class="note">') < page.indexOf('<li class="call">'), 'newest first');
+  assert.match(page, /data-kind="">All 2<\/button>/);
+  assert.match(page, /data-kind="call">Calls 1<\/button>/);
+  assert.doesNotMatch(page, /data-kind="email"/, 'no button for a kind with nothing');
 });
 
 test('the script is escaped, not rendered as HTML', async () => {
@@ -1499,7 +1579,7 @@ test('placeholders stay as written when the contact or company has no name', asy
       'rep@example.com'
     )
   );
-  assert.match(page, /<pre class="script">Hi \{name\} from \{company\}<\/pre>/);
+  assert.match(page, /Hi <mark class="unfilled">\{name\}<\/mark> from <mark class="unfilled">\{company\}<\/mark>/);
 });
 
 test('associatedIds follows the paging cursor to the last page', async () => {

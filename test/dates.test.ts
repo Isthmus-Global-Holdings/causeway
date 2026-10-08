@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   addDays,
+  ago,
   dayBounds,
   formatClock,
   isDate,
@@ -109,6 +110,17 @@ test("a time field's pattern lets through what parseTime reads, and asks for am 
     assert.ok(parseTime(ok), ok);
   }
   for (const bad of ['4', '4:30', 'noon']) assert.ok(!pattern.test(bad), bad);
+});
+
+test("ago counts the rep's calendar days, not 24-hour spans", () => {
+  const tz = 'America/Denver';
+  const now = Date.parse('2026-10-08T15:00:00Z'); // 9:00 AM in Denver
+  assert.equal(ago(Date.parse('2026-10-08T14:00:00Z'), now, tz), 'today');
+  assert.equal(ago(Date.parse('2026-10-08T05:00:00Z'), now, tz), 'yesterday', '11 PM the night before');
+  assert.equal(ago(Date.parse('2026-10-05T18:00:00Z'), now, tz), '3 days ago');
+  assert.equal(ago(Date.parse('2026-09-20T18:00:00Z'), now, tz), '2 weeks ago');
+  assert.equal(ago(Date.parse('2026-05-01T18:00:00Z'), now, tz), '5 months ago');
+  assert.equal(ago(Date.parse('2026-10-09T18:00:00Z'), now, tz), 'today', 'a time ahead reads as today');
 });
 
 const clock = (ms: number, tz: string) => formatClock(ms, tz).replace(/\s/g, ' ');

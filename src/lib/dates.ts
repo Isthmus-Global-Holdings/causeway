@@ -227,3 +227,18 @@ export function saidWhen(eventMs: number, nowMs: number, timeZone: string): stri
     addDays(day, 6) >= today ? { weekday: 'long' as const } : { month: 'short' as const, day: 'numeric' as const };
   return `on ${new Intl.DateTimeFormat('en-US', { timeZone, ...format }).format(new Date(eventMs))}`;
 }
+
+// How long ago `eventMs` was, by the rep's calendar days, for a list of what
+// happened: "today", "yesterday", "3 days ago", "2 weeks ago", "5 months ago".
+export function ago(eventMs: number, nowMs: number, timeZone: string): string {
+  const days = Math.round(
+    (Date.parse(`${localDate(nowMs, timeZone)}T00:00:00Z`) - Date.parse(`${localDate(eventMs, timeZone)}T00:00:00Z`)) /
+      86_400_000
+  );
+  if (days <= 0) return 'today';
+  if (days === 1) return 'yesterday';
+  if (days < 14) return `${days} days ago`;
+  if (days < 60) return `${Math.floor(days / 7)} weeks ago`;
+  if (days < 730) return `${Math.floor(days / 30)} months ago`;
+  return `${Math.floor(days / 365)} years ago`;
+}

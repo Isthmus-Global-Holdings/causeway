@@ -177,7 +177,7 @@ test('the contact page loads in two rounds: the contact with its links, then eve
   assert.equal(record.context.notes.items[0]?.text, 'Runs 30 trucks out of Ogden.');
 
   const page = String(
-    await contactPage({ record, lastEmail: null, portalId: '247260710', timeZone: TZ }, 'rep@example.com')
+    await contactPage({ record, lastEmail: null, portalId: '247260710', timeZone: TZ, now: NOW }, 'rep@example.com')
   );
   assert.match(page, /2150 S 1300 W<br \/>Salt Lake City, UT 84119/);
   assert.match(page, /https:\/\/www\.google\.com\/maps\/search\/\?api=1&amp;query=2150%20S%201300%20W/);
