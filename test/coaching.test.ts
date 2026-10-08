@@ -63,7 +63,7 @@ import {
 import type { HubSpot } from '../src/lib/hubspot.ts';
 import type { Turn } from '../src/lib/transcript.ts';
 import { afterCallSummary, beforeCallSummary, bookingSummary } from '../src/mcp/format.ts';
-import { coachingCard, coachingPage } from '../src/views/coaching.ts';
+import { callTags, coachingCard, coachingPage } from '../src/views/coaching.ts';
 import {
   excludeCall,
   readCall,
@@ -420,6 +420,11 @@ function insight(over: Partial<CallInsight> & Pick<CallInsight, 'call_task_id'>)
     gatekeeper_line: null,
     what_worked: null,
     adjust: null,
+    asked_last_time: null,
+    pitched: null,
+    longest_story_sec: null,
+    fluff_caught: null,
+    commitment: null,
     prospect_talk_share: null,
     rep_questions: null,
     you_focus: null,
@@ -871,10 +876,16 @@ test('after the call, the connector gets the tags, who decided them, and the fol
       lengthSec: 92,
       objection: { kind: 'busy', inTheirWords: read.objection, gotPast: true },
       nextStep: { agreed: true, when: summary.tags.nextStep.when, what: null },
-      talkedAboutTheirWorld: null,
-      openedUp: null,
+      momTest: summary.tags.momTest,
     }
   );
+  assert.deepEqual(summary.tags.momTest, {
+    askedAboutLastTime: false,
+    pitched: false,
+    longestStorySec: read.longest_story_sec,
+    fluffCaught: null,
+    commitment: 'time',
+  });
   assert.match(summary.tags.nextStep.when!, /11:00/);
   assert.deepEqual(summary.sources, { stage: { by: 'rules', p: null } });
   assert.equal(summary.review, null);
@@ -1494,6 +1505,108 @@ test('before calling someone who canceled their interview, the call page says th
     interviews: theirs,
   });
   assert.ok(notes.some((n) => /They canceled the interview/.test(n.text)));
+});
+
+// --- The Mom Test: the rules' first pass, for a review to settle ---
+
+// A call that reached them, with the rep asking about the last time, pitching, and them offering an intro.
+const momTestCall: Turn[] = [
+  { speaker: 'prospect', start: 0, end: 1.5, text: 'hello this is grant' },
+  {
+    speaker: 'rep',
+    start: 2,
+    end: 9,
+    text: 'hey grant this is anel i build software for trucking companies our software lets you quote faster',
+  },
+  { speaker: 'prospect', start: 10, end: 10.5, text: 'okay' },
+  { speaker: 'rep', start: 12, end: 14, text: 'walk me through the last load you quoted' },
+  {
+    speaker: 'prospect',
+    start: 15,
+    end: 70,
+    text: 'well last tuesday a broker called about a reefer load to denver and',
+  },
+  { speaker: 'rep', start: 72, end: 74, text: 'who handles the invoicing' },
+  { speaker: 'prospect', start: 75, end: 80, text: 'talk to my wife she does all of that i can give you her number' },
+];
+
+test('the Mom Test: the rules hear a question about the last time, a pitch, a story and an intro; the rest stays unsure', () => {
+  const read = ruleInsight(
+    facts({ label: 'Grant Ives', firstName: 'Grant', durationSec: 82, transcript: { turns: momTestCall, summary: [] } })
+  );
+  assert.equal(read.reached, 1);
+  assert.deepEqual(
+    [read.asked_last_time, read.pitched, read.longest_story_sec, read.fluff_caught, read.commitment],
+    [1, 1, 55, null, 'intro']
+  );
+  assert.deepEqual(read.marks.lastTimeAt, [3]);
+  assert.deepEqual(read.marks.pitchAt, [1]);
+  assert.deepEqual(
+    read.unsure,
+    ['commitment', 'fluffCaught'],
+    'an intro the rules heard still wants a look; fluff always does'
+  );
+
+  // A set time is a commitment the rules are sure of; the framing line isn't a pitch.
+  const lunch = heard(lunchThenBooked);
+  assert.deepEqual([lunch.asked_last_time, lunch.pitched, lunch.commitment], [0, 0, 'time']);
+  assert.ok(lunch.longest_story_sec! > 0 && lunch.longest_story_sec! < 60);
+  assert.deepEqual(lunch.unsure, ['askedAboutLastTime', 'pitched', 'fluffCaught'], 'not asking isn’t proof');
+  // Their number given is a next step, but what they committed is for a review to say.
+  const lyle = heard(putThrough);
+  assert.equal(lyle.commitment, null);
+  assert.ok(lyle.unsure.includes('commitment'));
+  // Never reached: nothing to judge, nothing unsure.
+  const desk = heard(onHold);
+  assert.deepEqual(
+    [desk.asked_last_time, desk.pitched, desk.longest_story_sec, desk.fluff_caught, desk.commitment, desk.unsure],
+    [null, null, null, null, null, []]
+  );
+  // No transcript: the rules can't hear it, and don't pretend to.
+  const notes = ruleInsight(facts({ notes: 'Talked with Sam, he told me about last week’s quote' }));
+  assert.deepEqual([notes.asked_last_time, notes.commitment], [null, null]);
+  assert.ok(!notes.unsure.includes('fluffCaught'));
+});
+
+test('a review settles the Mom Test over the rules', () => {
+  const row = insight({
+    call_task_id: 'm1',
+    asked_last_time: 0,
+    pitched: 0,
+    longest_story_sec: 14,
+    fluff_caught: null,
+    commitment: 'time',
+    unsure: JSON.stringify(['askedAboutLastTime', 'pitched', 'fluffCaught']),
+  });
+  const reviewed = withReviews(row, [
+    {
+      reviewer: 'claude',
+      corrections: { askedAboutLastTime: true, longestStorySec: 95, fluffCaught: false, commitment: 'intro' },
+      what_worked: null,
+      adjust: 'When he says “we usually”, ask when it last happened.',
+      reviewed_at: '2026-10-08T17:00:00Z',
+    },
+  ]);
+  assert.deepEqual(
+    [
+      reviewed.asked_last_time,
+      reviewed.pitched,
+      reviewed.longest_story_sec,
+      reviewed.fluff_caught,
+      reviewed.commitment,
+    ],
+    [1, 0, 95, 0, 'intro']
+  );
+  assert.deepEqual(parseUnsure(reviewed.unsure), ['pitched'], 'the review said nothing about pitching');
+  const by = parseSources(reviewed.sources);
+  assert.deepEqual(
+    [by.askedAboutLastTime?.by, by.longestStorySec?.by, by.fluffCaught?.by, by.commitment?.by, by.pitched],
+    ['claude', 'claude', 'claude', 'claude', undefined]
+  );
+  const tags = String(callTags(reviewed, parseUnsure(reviewed.unsure)));
+  assert.match(tags, /Asked about the last time · Story 1:35 · They gave an intro/);
+  assert.doesNotMatch(tags, /Pitched|Caught the fluff/);
+  assert.match(tags, /Not sure of whether you pitched/);
 });
 
 // --- Reviews: Claude's or the rep's, laid over the rules' reading ---

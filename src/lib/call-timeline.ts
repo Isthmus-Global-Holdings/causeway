@@ -11,7 +11,7 @@ import type { CallFacts, RuleReading } from './call-insight';
 import { turnEnd, turnSpan, type Turn } from './transcript';
 
 export type PhaseKind = 'menu' | 'desk' | 'hold' | 'them' | 'voicemail' | 'call';
-export type MarkKind = 'opening' | 'objection' | 'next_step';
+export type MarkKind = 'opening' | 'objection' | 'next_step' | 'last_time' | 'pitch';
 
 export interface Phase {
   kind: PhaseKind;
@@ -118,6 +118,9 @@ export function callTimeline(facts: CallFacts, reading: Reading): Timeline | nul
   mark('opening', m.openingAt, m.openingAt !== null ? turns[m.openingAt].text : null);
   mark('objection', m.objectionAt, reading.objection);
   mark('next_step', m.nextStepAt, reading.next_step_text);
+  // The Mom Test, where the rules heard it: a question about the last time, a pitch.
+  for (const i of m.lastTimeAt) mark('last_time', i, turns[i]?.text ?? null);
+  for (const i of m.pitchAt) mark('pitch', i, turns[i]?.text ?? null);
 
   return { totalSec, phases, turns: ticks, marks, longestStorySec };
 }
@@ -174,7 +177,10 @@ export function timelineText(t: Timeline, outcome: string | null = null): string
   for (const m of t.marks) {
     if (m.kind === 'objection') parts.push(`Objection at ${clock(Math.round(m.at))}`);
     if (m.kind === 'next_step') parts.push(`Next step at ${clock(Math.round(m.at))}`);
+    if (m.kind === 'pitch') parts.push(`You pitched at ${clock(Math.round(m.at))}`);
   }
+  const asked = t.marks.filter((m) => m.kind === 'last_time');
+  if (asked.length) parts.push(`Asked about the last time at ${asked.map((m) => clock(Math.round(m.at))).join(', ')}`);
   if (t.longestStorySec !== null && t.longestStorySec >= STORY_SEC) {
     parts.push(`Their longest story ${clock(t.longestStorySec)}`);
   }
