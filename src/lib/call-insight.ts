@@ -637,10 +637,11 @@ const SWITCHBOARD = [MENU, TRANSFER, KEYPAD];
 // A voicemail greeting's opening, which reads like a person on its own.
 const GREETING =
   /\b(you(['’]ve| have) reached|(can['’]?t|cannot|unable to|not able to) (take|answer|get to|come to) (your|the|my) (call|phone)|sorry (i|we) missed your call|leave (me )?(a|your) (message|name))/i;
-// What makes the words before a greeting, in its turn, an exchange with
-// someone rather than the greeting's own introduction ("Hello, this is Ruth
-// from Acme Logistics."): a question, or being put on hold or through.
-const EXCHANGE = /\?|\b(voice ?mail|put you through|transfer)\b/i;
+// What makes the words before a greeting, in its turn, a front desk's
+// rather than the greeting's own introduction ("Hello, this is Ruth from
+// Acme Logistics.", "Did you know you can schedule online?"): being put on
+// hold, through, or to voicemail.
+const EXCHANGE = /\b(voice ?mail|put you through|transfer)\b/i;
 
 const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+/);
 const switchboard = (sentence: string) => SWITCHBOARD.some((re) => re.test(sentence));

@@ -264,6 +264,7 @@ test('talked with someone: before the rep speaks, a voicemail greeting in their 
   for (const greeting of [
     'Hey, it’s Ruth. Leave me a message.',
     'Hello, this is Ruth from Acme Logistics Incorporated. I cannot take your call right now.',
+    'Did you know you can schedule online? You’ve reached Ruth. Please leave a message after the beep.',
   ]) {
     assert.equal(talkedWithSomeone([turn('prospect', 0, greeting), message]), false, greeting);
   }
