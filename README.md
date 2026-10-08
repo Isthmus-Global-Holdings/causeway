@@ -1084,6 +1084,14 @@ npm run format     # apply Prettier
 npm run db:log     # last 20 audit rows (who changed what in HubSpot)
 ```
 
+A PR merges into `main` only when two checks pass: `check` (the same
+`npm run check`, plus `npm audit` on what ships) and `codex-review`, which
+waits until Codex has reviewed the PR's latest commit, so "merge when ready"
+waits for Codex too. It never holds a merge for long: if Codex is out of
+usage, or hasn't answered in 15 minutes, it passes with a warning, and the
+`skip-codex` label passes it at once. Codex's comments don't block: once it
+has reviewed, what to do with them is up to you.
+
 - **Lint** is only the type-aware promise rules (`no-floating-promises` and
   friends). On Workers, an un-awaited promise is work that silently never
   finishes. Prettier owns formatting.
