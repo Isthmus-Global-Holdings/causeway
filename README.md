@@ -316,7 +316,8 @@ timeline like one made in HubSpot.
     labelled You or Prospect, and a small Llama model writes a 3–4 line
     summary. A call that only reached a phone menu, a transfer or a
     voicemail greeting gets no summary (one would be made up), just its
-    transcript; a voicemail left for you always gets one.
+    transcript; a voicemail left for you always gets one, and so does a
+    recording Nova returns as one channel (who said what unknown).
   - The call page shows "Transcribing…" and swaps in the summary, an audio
     player and the transcript when they're ready, without reloading the page
     (notes you're typing stay put). A failure shows why, with **Transcribe
