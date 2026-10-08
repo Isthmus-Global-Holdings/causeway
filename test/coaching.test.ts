@@ -1698,6 +1698,39 @@ test('a review that says the rules heard wrong takes the pitch and last-time mar
   );
   assert.equal(t.longestStorySec, 40, 'the review’s figure');
   assert.equal(t.turns[0].story, undefined, 'under a minute now: no story tick');
+  // An explicit null clears the story; taking back that they were reached clears the lot.
+  const noStory = withReviews(row, [
+    { reviewer: 'claude', corrections: { longestStorySec: null }, what_worked: null, adjust: null, reviewed_at: '' },
+  ]);
+  assert.equal(noStory.longest_story_sec, null);
+  assert.equal(parseTimeline(noStory.timeline_json)?.longestStorySec, null, 'the drawing says none too');
+  const desk = withReviews(row, [
+    {
+      reviewer: 'rep',
+      corrections: { whoAnswered: 'gatekeeper', reachedThem: false },
+      what_worked: null,
+      adjust: null,
+      reviewed_at: '',
+    },
+  ]);
+  assert.deepEqual(
+    [desk.asked_last_time, desk.pitched, desk.longest_story_sec, desk.fluff_caught, desk.commitment],
+    [null, null, null, null, null],
+    'never reached: nothing to judge'
+  );
+  assert.deepEqual(
+    parseUnsure(desk.unsure).filter(
+      (u) => u !== 'whoAnswered' && u !== 'reachedThem' && u !== 'stage' && u !== 'frontDeskResult'
+    ),
+    [],
+    'and nothing unsure about it'
+  );
+  const deskDrawing = parseTimeline(desk.timeline_json)!;
+  assert.deepEqual(
+    deskDrawing.marks.map((m) => m.kind),
+    ['opening']
+  );
+  assert.equal(deskDrawing.longestStorySec, null);
   assert.equal(
     withReviews(insight({ call_task_id: 'n', timeline_json: null }), [
       { reviewer: 'rep', corrections: { pitched: false }, what_worked: null, adjust: null, reviewed_at: '' },

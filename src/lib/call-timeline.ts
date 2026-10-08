@@ -128,20 +128,21 @@ export function callTimeline(facts: CallFacts, reading: Reading): Timeline | nul
 
 export const timelineJson = (t: Timeline | null): string | null => (t ? JSON.stringify(t) : null);
 
-// A drawing with the reviewed Mom Test over it: a pitch or a last-time
-// question the review says didn't happen loses its marks (the rules heard
-// wrong), and the longest story is the review's. A question the rules
-// missed can't be placed, so it gains no mark: the tag line says it.
+// A drawing with the reading's Mom Test over it, as it stands after any
+// reviews: a pitch or a last-time question that stands at anything but yes
+// (the review said no, or took back that they were reached) loses its
+// marks, and the longest story is the reading's, null included. A question
+// the rules missed can't be placed, so it gains no mark: the tag line says it.
 export function withReviewedTags(
   t: Timeline,
   tags: { pitched: number | null; asked_last_time: number | null; longest_story_sec: number | null }
 ): Timeline {
   const marks = t.marks.filter(
-    (m) => !((m.kind === 'pitch' && tags.pitched === 0) || (m.kind === 'last_time' && tags.asked_last_time === 0))
+    (m) => !((m.kind === 'pitch' && tags.pitched !== 1) || (m.kind === 'last_time' && tags.asked_last_time !== 1))
   );
-  const longestStorySec = tags.longest_story_sec ?? t.longestStorySec;
+  const longestStorySec = tags.longest_story_sec;
   const turns =
-    longestStorySec !== null && longestStorySec < STORY_SEC
+    longestStorySec === null || longestStorySec < STORY_SEC
       ? t.turns.map(({ story: _story, ...tick }) => tick)
       : t.turns;
   return { ...t, marks, turns, longestStorySec };
