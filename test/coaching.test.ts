@@ -243,6 +243,21 @@ test('talked with someone, on one channel (all “call”): words past the menu 
     true,
     'the front desk before the voicemail'
   );
+  assert.equal(
+    talkedWithSomeone([
+      call(
+        0,
+        'Good morning, Acme, this is Dana. Ruth is out, let me send you to her voicemail. Hi, you’ve reached Ruth. Please leave a message after the beep. Hi Ruth, this is Anel.'
+      ),
+    ]),
+    true,
+    'the front desk and the greeting in one turn'
+  );
+  assert.equal(
+    talkedWithSomeone([call(0, 'Hey, it’s Ruth. Leave me a message. Hi Ruth, this is Anel, call me back.')]),
+    false,
+    'a greeting’s own opening, then the rep’s message'
+  );
 });
 
 test('talked with someone: a person in the same turn as the menu, on their channel', () => {
@@ -253,6 +268,14 @@ test('talked with someone: a person in the same turn as the menu, on their chann
       turn('rep', 22, 'Hey Grant, this is Anel.'),
     ]),
     true
+  );
+  assert.equal(
+    talkedWithSomeone([
+      turn('prospect', 0, 'Hey, it’s Grant. Leave me a message and I’ll call you back.'),
+      turn('rep', 6, 'Hi Grant, this is Anel, I’ll try you again tomorrow.'),
+    ]),
+    false,
+    'a short greeting that doesn’t say “after the tone”'
   );
 });
 

@@ -634,18 +634,30 @@ export function phoneTree(turns: Turn[], firstName: string | null): PhoneTree | 
 const KEYPAD =
   /\b((please )?dial (\d|one|two|three|four|five|six|seven|eight|nine|zero|star|pound)\b|dial by name|directory|for the operator|(extension|mailbox|party|\d+) is (unavailable|not available|busy))/i;
 const SWITCHBOARD = [MENU, TRANSFER, KEYPAD];
+// A voicemail greeting's opening, which reads like a person on its own.
+const GREETING =
+  /\b(you(['’]ve| have) reached|(can['’]?t|cannot|unable to|not able to) (take|answer|get to|come to) (your|the|my) (call|phone)|sorry (i|we) missed your call|leave (me )?(a|your) (message|name))/i;
+// Fewer words than this before a greeting, in its turn, are its opening
+// ("Hey, it's Ruth."), not someone who answered.
+const BEFORE_GREETING_WORDS = 6;
 
-// The words a person said in a turn. One turn can run a menu's or a
-// transfer notice's line into a person's, when they came on within seconds
-// of it, so those are dropped sentence by sentence. A voicemail greeting
-// takes the whole turn: sentence by sentence it reads like a person ("Hi,
-// you've reached Ruth."), and nobody comes on after one.
-function personWords(text: string): number {
-  if (VOICEMAIL.test(text)) return 0;
-  return text
-    .split(/(?<=[.!?])\s+/)
+const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+/);
+const greets = (sentence: string) => VOICEMAIL.test(sentence) || GREETING.test(sentence);
+
+// The words a person said in a turn, and whether a voicemail greeting
+// started in it. One turn can run a menu's or a transfer notice's line into
+// a person's, when they came on within seconds of it, so those are dropped
+// sentence by sentence. A greeting ends what counts: what follows is the
+// greeting or the rep's message, and what came before counts only if it's
+// more than the greeting's own opening.
+function personWords(text: string): { words: number; greeting: boolean } {
+  const sentences = sentencesOf(text);
+  const at = sentences.findIndex(greets);
+  const said = (at < 0 ? sentences : sentences.slice(0, at))
     .filter((sentence) => !SWITCHBOARD.some((re) => re.test(sentence)))
     .reduce((n, sentence) => n + words(sentence), 0);
+  if (at < 0) return { words: said, greeting: false };
+  return { words: said >= BEFORE_GREETING_WORDS ? said : 0, greeting: true };
 }
 
 // The rep talked with someone: the rep said something, and a person said a
@@ -656,14 +668,16 @@ function personWords(text: string): number {
 // voicemail greeting (after one, it's the rep's own message).
 export function talkedWithSomeone(turns: Turn[]): boolean {
   if (turns.every((t) => t.speaker === 'call')) {
-    const greeting = turns.findIndex((t) => VOICEMAIL.test(t.text));
-    return (
-      (greeting < 0 ? turns : turns.slice(0, greeting)).reduce((n, t) => n + personWords(t.text), 0) >=
-      ONE_CHANNEL_WORDS
-    );
+    let said = 0;
+    for (const t of turns) {
+      const person = personWords(t.text);
+      said += person.words;
+      if (person.greeting) break;
+    }
+    return said >= ONE_CHANNEL_WORDS;
   }
   const repWords = turns.filter((t) => t.speaker === 'rep').reduce((n, t) => n + words(t.text), 0);
-  return repWords >= 2 && turns.some((t) => far(t) && personWords(t.text) >= 2);
+  return repWords >= 2 && turns.some((t) => far(t) && personWords(t.text).words >= 2);
 }
 // More than a keyed-in "one zero" or a stray word between the machine's lines.
 const ONE_CHANNEL_WORDS = 5;
