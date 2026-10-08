@@ -3,12 +3,14 @@
 // writes the audit row; the caller only parses its input and answers.
 
 import type { Context } from 'hono';
-import { googleCalendar, loadAppSettings, type AppSettings } from '../lib/app-settings';
+import { googleCalendar, insightDeps, loadAppSettings, type AppSettings } from '../lib/app-settings';
+import { afterResponse } from '../lib/background';
 import { localDate, parseHubSpotTime } from '../lib/dates';
 import { d1DialStore, d1MeetingLogStore, insertAudit, type Dial } from '../lib/db';
 import { createHubSpot, HubSpotApiError, type HubSpot } from '../lib/hubspot';
 import { dialTranscript } from '../lib/transcript';
 import type { AppEnv, Env } from '../types';
+import { readInterview } from '../workflows/call-insight';
 import { dialState, isLive } from '../workflows/dial';
 import { parseMeetingLogForm, runMeetingLogged, type MeetingLoggedResult } from '../workflows/meeting-logged';
 import type { MeetingOutcome } from '../lib/hubspot';
@@ -93,6 +95,11 @@ export async function logMeeting(
       outcome: 'success',
       detail: result,
     });
+    // Coaching reads the interview (its recording, or these notes) in the
+    // background, as it does a logged call.
+    afterResponse(c, 'reading the interview for coaching', () =>
+      readInterview(insightDeps(c.env), meetingId, Date.now())
+    );
     return result;
   } catch (err) {
     await insertAudit(c.env.DB, {

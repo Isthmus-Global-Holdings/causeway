@@ -576,7 +576,12 @@ what to adjust. The rules take a first pass at the Mom Test from the words
 intro agreed) and mark the rest unsure; whether you caught the fluff only a
 review can say. A call reviewed before the review rules could answer a tag
 (`REVIEW_RULES_VERSION`, bumped when `review_call` gains one) comes back to
-`calls_to_review` for it. On your Claude plan, so it costs nothing extra. A review is kept in
+`calls_to_review` for it. Your recorded interviews are read and reviewed the same way
+(`calls_to_review` lists them as `kind: interview`; the id is the meeting's):
+the call made from the interview's page, once it ended, with how you logged
+the interview (its outcome, and your notes when there's no recording). They
+sit apart from the cold calls in coaching's counts, and the interview's page
+shows the same Coaching card for its call. On your Claude plan, so it costs nothing extra. A review is kept in
 `call_reviews` (one per reviewer, replaced whole) and laid over the rules'
 reading every time the call is read, so the sweep never undoes it; yours
 (`reviewer: 'rep'`, when you tell Claude what happened) wins over Claude's.
@@ -603,7 +608,11 @@ page, under the script:
   interview if it was canceled (by them: the line is open, offer another
   time), rushed connects piling up lately, and what your longest connect did.
 
-**Coaching** in the navbar has the patterns across every call:
+**Coaching** in the navbar has the patterns across every call, in two halves,
+with the tables that need more calls parked under them:
+
+**Earning the conversation**: getting past the menu and the front desk to the
+person, and leaving with a next step.
 
 - How far your calls get, as bars: calls, someone picked up, reached them, a
   next step agreed, an interview booked on one of those calls (counted by
@@ -619,24 +628,60 @@ page, under the script:
   Interviews (`meeting_logs`); one set straight in HubSpot isn't seen.
 - The front desk as its own category: how often it put you through, what it
   did otherwise (as bars), by name, and what you said when it put you through.
-- Rushed connects: under 1:30 of talk with no next step, listed.
+- Objections, most common first, in their words, with the openings that got
+  past them.
+- Your last twenty calls drawn to scale, one above the other on one scale
+  (the longest is the full width), each linking its page: where each call
+  went and where it ended, at a glance.
+
+**The conversation**: once you reach them, the Mom Test.
+
+- The Mom Test, call by call: on every call and interview that reached them,
+  newest first, whether you asked about a specific last time, whether you
+  pitched, their longest story (a minute or more is a story), whether you
+  caught the fluff, and what they gave up at the end (their time, an intro,
+  money), with the counts above the table and the longest story named. A
+  dash is nothing said yet, not a no: the rules hear some of it on a
+  transcript, a review settles the rest.
+- Who did the talking: on each recorded call that reached them, their share
+  of the words against half (on an interview they should do most of it).
 - Long connects (5 minutes or more of talk): what worked, the opening, what
   was agreed, and how you talked on recorded ones against short ones (their
   share of the talking, your questions, "you" over "we"), from their part of
   the call.
-- Who did the talking: on each recorded call that reached them, their share
-  of the words against half (on an interview they should do most of it).
-- Objections, most common first, in their words, with the openings that got
-  past them.
-- Reached rate by hour of their day (in the contact's time zone, from their
-  state or their company's; unknown counts in yours), with groups under three
-  calls marked as too few. Until an hour has about 30 calls it says it's too
-  early to pick one, and no best hour is named, here or before a call: a
-  difference between hours means nothing on fewer.
-- Follow-up timing: by the gap since the last call, how often the next call
-  reached them, after a connect (a second connect) and before one.
-- Where each call ended, and your last calls with their tags and what to
-  adjust on each.
+- Rushed connects: under 1:30 of talk with no next step, listed.
+- What to adjust, call by call: your last calls with their tags and the
+  notes on each.
+
+**When there are enough calls** (folded away until then): reached rate by
+hour of their day (in the contact's time zone, from their state or their
+company's; unknown counts in yours), with groups under three calls marked as
+too few; until two hours have about 30 calls each it says it's too early to
+pick one, and no best hour is named, here or before a call. And follow-up
+timing: by the gap since the last call, how often the next call reached
+them, after a connect (a second connect) and before one.
+
+**What you've heard**, Coaching's second tab, is the point of the calls: what
+they've told you, across every call and interview that reached them, read by
+rules from their part of each recording and from your notes on the call or
+the interview.
+
+- The software they use: named tools of the trade (McLeod, TMW, Truckstop,
+  DAT, Samsara, Motive, QuickBooks, spreadsheets and the rest) and the ways
+  of working that stand in for one (a load board, a TMS, an ELD, something
+  in-house, paper, phone and text), each with how many calls named it and
+  the newest quotes.
+- What they said about their work, by theme: quoting and rates, dispatch and
+  loads, invoicing and getting paid, drivers and people, compliance and
+  safety, the software they use. Each with how many calls touched it, how
+  many of those hurt (a line that names a problem, time lost, a mess), and
+  the quotes, the ones that hurt first. Your notes count when they report
+  what they said or do ("He said they use QuickBooks"), not your own plans.
+- Call by call, newest first.
+
+Counts of calls, never rates, and every quote links its call. The synthesis
+(what keeps coming up, what to ask next, whether to narrow the segment) is
+yours to do with Claude: `what_you_heard` hands it the same.
 
 On **Calls**, each logged call shows its strip and its tags too, with **Leave
 out of coaching** for a test call (and **Put back in coaching**).
@@ -686,8 +731,9 @@ as the pages.
   (the call script filled in, history, coaching), `call_coaching` (the
   patterns across every call), `calls_to_review` and `get_call_review` (a
   logged call to review, with its transcript and the review rules),
-  `get_meeting` (prep and the interview questions), `recent_inbound_calls`
-  and `unfinished`.
+  `what_you_heard` (the software they use and what they said about their
+  work, by theme, with every quote), `get_meeting` (prep and the interview
+  questions), `recent_inbound_calls` and `unfinished`.
 - **Writes:** `save_draft`, `mark_email_sent`, `drop_email_task`, `log_call`,
   `snooze_call`, `review_call` (a call's review for coaching, in the app
   only), `book_interview` (never with a calendar invite: send one from

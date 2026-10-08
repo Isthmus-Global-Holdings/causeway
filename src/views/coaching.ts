@@ -1,5 +1,5 @@
 import { html } from 'hono/html';
-import type { CallCoaching, CoachingOverview } from '../actions/coaching';
+import type { CallCoaching, CoachingOverview, Strip } from '../actions/coaching';
 import { clock } from '../lib/call-history';
 import {
   adjustNotes,
@@ -21,22 +21,25 @@ import {
   heldRate,
   HOUR_SAMPLE,
   hourLabel,
+  insightPath,
   MIN_SAMPLE,
   pct,
   rateOf,
+  STRIPS,
   type BookingReport,
   type BookingSplit,
   type CoachingReport,
   type Funnel,
+  type MomTestReport,
   type Quote,
   type Rate,
   type Style,
 } from '../lib/coaching';
-import { STORY_SEC } from '../lib/call-timeline';
+import { STORY_SEC, timelineText, type Timeline } from '../lib/call-timeline';
 import { formatLocal } from '../lib/dates';
 import type { CallInsight } from '../lib/db';
 import { CALL_OUTCOMES } from '../workflows/call-logged';
-import { layout, type Html } from './layout';
+import { coachingTabs, layout, type Html } from './layout';
 import { timelineStrip } from './timeline';
 
 const outcomeLabel = (outcome: string) => CALL_OUTCOMES.find((o) => o.value === outcome)?.label ?? outcome;
@@ -132,7 +135,7 @@ function callLink(call: CallInsight, timeZone: string): Html {
     <span class="muted">· ${formatLocal(call.at_sec * 1000, timeZone)}${call.duration_sec !== null ? ` · ${clock(call.duration_sec)}` : ''}</span>`;
 }
 
-interface Bar {
+export interface Bar {
   label: Html | string;
   value: number;
   of: number; // the bar's full width
@@ -143,7 +146,7 @@ interface Bar {
 
 // A bar chart: each row's bar as wide as its share, its count beside it. The
 // count is the text: the bar is only a picture of it.
-function bars(name: string, rows: Bar[]): Html {
+export function bars(name: string, rows: Bar[]): Html {
   return html`<dl class="bars" aria-label="${name}">
     ${rows.map((r) => {
       const width = r.of ? Math.round((Math.min(r.value, r.of) / r.of) * 100) : 0;
@@ -192,7 +195,7 @@ function talkCard({ talk, theyLed }: Pick<CoachingReport, 'talk' | 'theyLed'>, t
   return html`<section class="card">
     <h2>Who did the talking</h2>
     <p>
-      They talked more than you on ${theyLed.calls} of the ${theyLed.of} recorded call${theyLed.of === 1 ? '' : 's'} that reached them.
+      They talked more than you on ${theyLed.calls} of the ${theyLed.of} recorded call${theyLed.of === 1 ? '' : 's'} and interviews that reached them.
       On an interview they should do most of it: their world, what they did the last time, not your idea.
     </p>
     ${bars(
@@ -200,7 +203,7 @@ function talkCard({ talk, theyLed }: Pick<CoachingReport, 'talk' | 'theyLed'>, t
       talk.map((c) => {
         const share = c.prospect_talk_share ?? 0;
         return {
-          label: html`<a href="/calls/${c.call_task_id}" title="${formatLocal(c.at_sec * 1000, timeZone)}">${c.label}</a>`,
+          label: html`<a href="${insightPath(c)}" title="${formatLocal(c.at_sec * 1000, timeZone)}">${c.label}</a>${c.subject === 'meeting' ? html` <span class="tag">Interview</span>` : ''}`,
           value: Math.round(share * 100),
           of: 100,
           shown: pct(share),
@@ -289,7 +292,99 @@ function bookingsCard(bookings: BookingReport, timeZone: string): Html {
   </section>`;
 }
 
-export function coachingPage({ settings, report, bookings, funnel, unread }: CoachingOverview, actor: string): Html {
+// The latest calls drawn to scale, newest first, on one scale (the longest
+// call is the full width), each linking its page. The strip is a picture;
+// the words are there for whoever can't see it.
+function stripsCard(strips: Strip[], timeZone: string): Html {
+  const drawn = strips.filter((s): s is Strip & { timeline: Timeline } => s.timeline !== null);
+  if (!drawn.length) {
+    return html`<section class="card">
+      <h2>Your last calls, to scale</h2>
+      <p class="muted">
+        Each call is drawn here once it’s read: the phone menu, the front desk, a hold and them; who spoke when; where the
+        objection and the next step came. Nothing drawn yet.
+      </p>
+    </section>`;
+  }
+  const scale = Math.max(...drawn.map((s) => s.timeline.totalSec));
+  return html`<section class="card">
+    <h2>Your last ${drawn.length === 1 ? 'call' : `${drawn.length} calls`}, to scale</h2>
+    <p class="muted">
+      Light grey is the phone menu, darker grey the front desk, the dashed stretch a hold, the tinted one them. Your turns tick
+      above the middle, theirs below (taller: a story of a minute or more). Dots: your opening, their objection (amber), a next
+      step or a question about the last time (teal), a pitch (amber).
+    </p>
+    <dl class="strips">
+      ${drawn.map(
+        ({ call, timeline }) =>
+          html`<dt><a href="/calls/${call.call_task_id}" title="${formatLocal(call.at_sec * 1000, timeZone)}">${call.label}</a></dt>
+            <dd>
+              ${timelineStrip(timeline, { scaleSec: scale, text: false })}<span class="sr-only">${timelineText(timeline, outcomeLabel(call.outcome))}</span>
+            </dd>
+            <dd class="n">${clock(Math.round(timeline.totalSec))}</dd>`
+      )}
+    </dl>
+  </section>`;
+}
+
+// What the rules and the reviews have said, or not yet.
+const said = (value: number | null): string => (value === null ? '–' : value ? 'yes' : 'no');
+
+// The Mom Test on every call and interview that reached them, newest first:
+// counts, then the table. A dash is nothing said yet, not a no.
+function momTestCard(m: MomTestReport, timeZone: string): Html {
+  const n = m.rows.length;
+  if (!n) {
+    return html`<section class="card">
+      <h2>The Mom Test, call by call</h2>
+      <p class="muted">
+        Once a call reaches them it shows here: whether you asked about a specific last time, whether you pitched, whether they
+        told a story of a minute or more, whether you caught the fluff, and what they gave up at the end.
+      </p>
+    </section>`;
+  }
+  const interviews = m.rows.filter((r) => r.kind === 'interview').length;
+  const c = m.commitments;
+  return html`<section class="card">
+    <h2>The Mom Test, call by call</h2>
+    <p>
+      On the ${n} call${n === 1 ? '' : 's'} that reached them${interviews ? ` (${interviews} of them interview${interviews === 1 ? '' : 's'})` : ''}:
+      you asked about the last time on ${m.asked}, pitched on ${m.pitched}, they told a story of a minute or more on
+      ${m.stories}, you caught the fluff on ${m.fluffCaught}. They gave their time on ${c.time}, an intro on ${c.intro}, money on
+      ${c.money}.
+      ${m.longest ? html`Longest story: <a href="${insightPath(m.longest.call)}">${m.longest.call.label}</a>, ${clock(m.longest.call.longest_story_sec ?? 0)}.` : ''}
+    </p>
+    <table class="stacked">
+      <thead>
+        <tr><th>Call</th><th>Asked about the last time</th><th>Pitched</th><th>Their longest story</th><th>Caught the fluff</th><th>They gave</th></tr>
+      </thead>
+      <tbody>
+        ${m.rows.slice(0, STRIPS).map(
+          ({ call, kind }) => html`<tr>
+            <td>
+              <a href="${insightPath(call)}">${call.label}</a>${kind === 'interview' ? html` <span class="tag">Interview</span>` : ''}
+              <span class="muted">· ${formatLocal(call.at_sec * 1000, timeZone)}</span>
+            </td>
+            <td data-label="Asked about the last time">${said(call.asked_last_time)}</td>
+            <td data-label="Pitched">${said(call.pitched)}</td>
+            <td data-label="Their longest story">${call.longest_story_sec === null ? '–' : clock(call.longest_story_sec)}</td>
+            <td data-label="Caught the fluff">${said(call.fluff_caught)}</td>
+            <td data-label="They gave">${call.commitment ? COMMITMENT_LABELS[call.commitment] : '–'}</td>
+          </tr>`
+        )}
+      </tbody>
+    </table>
+    <p class="muted">
+      A dash is nothing said yet, not a no: the rules hear some of it on a transcript; a review (ask Claude to review your
+      calls) settles the rest.
+    </p>
+  </section>`;
+}
+
+export function coachingPage(
+  { settings, report, bookings, funnel, momTest, talk, strips, unread }: CoachingOverview,
+  actor: string
+): Html {
   const tz = settings.timeZone;
   const { gatekeeper, fastNoNextStep } = report;
   const best = bestHour(report.byHour);
@@ -298,13 +393,18 @@ export function coachingPage({ settings, report, bookings, funnel, unread }: Coa
     : '';
 
   if (!report.calls) {
+    // No cold call read yet: what there is (interviews booked straight in
+    // HubSpot and recorded from here, say) still shows.
     return layout(
       'Coaching',
       actor,
       html`<h1>Coaching</h1>
+        ${coachingTabs('patterns')}
         ${reading}
         <p class="muted">No calls read yet. Each call you log is read here: who answered, how far it got, the objection, and whether a next step was agreed.</p>
-        ${bookings.booked ? bookingsCard(bookings, tz) : ''}`,
+        ${bookings.booked ? bookingsCard(bookings, tz) : ''}
+        ${momTest.rows.length ? momTestCard(momTest, tz) : ''}
+        ${talk.talk.length ? talkCard(talk, tz) : ''}`,
       'coaching'
     );
   }
@@ -315,6 +415,7 @@ export function coachingPage({ settings, report, bookings, funnel, unread }: Coa
     html`
       <div class="tight">
         <h1>Coaching</h1>
+        ${coachingTabs('patterns')}
         <p class="muted">
           From ${report.calls} logged call${report.calls === 1 ? '' : 's'}: someone picked up ${pct(report.answered / report.calls)},
           you reached the person ${pct(report.reached / report.calls)}${best ? html`, most often at ${hourLabel(best.hour)} their time` : ''}.
@@ -323,116 +424,152 @@ export function coachingPage({ settings, report, bookings, funnel, unread }: Coa
       </div>
       ${reading}
 
-      ${funnelCard(funnel)}
+      <section class="half">
+        <h2>Earning the conversation</h2>
+        <p class="muted">Getting past the menu and the front desk to the person, and leaving with a next step.</p>
 
-      ${bookingsCard(bookings, tz)}
+        ${funnelCard(funnel)}
 
-      <section class="card">
-        <h2>The front desk</h2>
-        ${
-          gatekeeper.calls
-            ? html`<p>
-                  A front desk answered ${gatekeeper.calls} call${gatekeeper.calls === 1 ? '' : 's'} and put you through on
-                  ${gatekeeper.putThrough} (${pct(gatekeeper.putThrough / gatekeeper.calls)}).
-                </p>
-                ${
-                  gatekeeper.results.length
-                    ? bars(
-                        'What the front desk did',
-                        gatekeeper.results.map((r) => ({
-                          label: r.label,
-                          value: r.count,
-                          of: gatekeeper.calls,
-                          tone: r.result === 'put_through' ? undefined : 'quiet',
-                        }))
-                      )
-                    : ''
-                }
-                ${
-                  gatekeeper.names.length
-                    ? html`<p class="muted">By name: ${gatekeeper.names.map((n, i) => `${i ? '; ' : ''}${n.name} (${n.label}): ${n.calls} call${n.calls === 1 ? '' : 's'}, put through ${n.putThrough}`)}.</p>`
-                    : ''
-                }
-                <h3>What you said when they put you through</h3>
-                ${
-                  gatekeeper.linesThatWorked.length
-                    ? quoteList(gatekeeper.linesThatWorked)
-                    : html`<p class="muted">Nothing recorded has got through yet. Try asking for them by first name as if they expect you, and when they’re out, ask when to catch them or for their direct line.</p>`
-                }`
-            : html`<p class="muted">No calls stopped at a front desk yet.</p>`
-        }
-      </section>
+        ${bookingsCard(bookings, tz)}
 
-      <section class="card">
-        <h2>Rushed connects with no next step</h2>
-        <p>
-          ${fastNoNextStep.calls.length} of ${fastNoNextStep.connects} connect${fastNoNextStep.connects === 1 ? '' : 's'} ended under
-          ${clock(FAST_CALL_SEC)} without a callback time or another next step. These are the ones that evaporate: when they’re rushed,
-          leave with a time.
-        </p>
-        ${
-          fastNoNextStep.calls.length
-            ? html`<ul class="coach">
-                ${fastNoNextStep.calls.slice(0, 10).map((c) => html`<li class="flag">${callLink(c, tz)}${c.objection ? html` · “${c.objection}”` : ''}</li>`)}
-              </ul>`
-            : ''
-        }
-      </section>
-
-      <section class="card">
-        <h2>Long connects: what they did differently</h2>
-        ${
-          report.longConnects.length
-            ? html`<ul class="coach">
-                ${report.longConnects.slice(0, 5).map(
-                  (c) => html`<li class="bright">
-                    ${callLink(c, tz)}
-                    ${c.what_worked ? html`<br />${c.what_worked}` : ''}
-                    ${c.opening ? html`<br /><span class="muted">Opening:</span> “${c.opening}”` : ''}
-                    ${c.next_step_text ? html`<br /><span class="muted">Agreed:</span> ${c.next_step_text}` : ''}
-                  </li>`
-                )}
-              </ul>`
-            : html`<p class="muted">No connect has run past ${clock(LONG_CONNECT_SEC)} yet.</p>`
-        }
-        ${
-          report.style.long.calls && report.style.short.calls
-            ? html`<table class="stacked">
-                <thead><tr><th>Recorded connects</th><th>With a transcript</th><th>They talked</th><th>Your questions</th><th>“You” over “we”</th></tr></thead>
-                <tbody>${styleRow(`Long (${clock(LONG_CONNECT_SEC)}+)`, report.style.long)}${styleRow('Short (under 2:00)', report.style.short)}</tbody>
-              </table>
-              <p class="muted">The pitch lands when the call is about their world: the more they talk and the more you say “you” rather than “we”, the longer it runs.</p>`
-            : ''
-        }
-      </section>
-
-      ${talkCard(report, tz)}
-
-      <section class="card">
-        <h2>Objections, and the openings that got past them</h2>
-        ${
-          report.objections.length
-            ? html`<table class="stacked">
-                <thead><tr><th>Objection</th><th>Times</th><th>Got past</th><th>In their words</th><th>Openings that got past it</th></tr></thead>
-                <tbody>
-                  ${report.objections.map(
-                    (o) => html`<tr>
-                      <td>${o.label}</td>
-                      <td data-label="Times">${o.count}</td>
-                      <td data-label="Got past">${o.gotPast}</td>
-                      <td data-label="In their words">${quoteList(o.examples) || html`<span class="muted">–</span>`}</td>
-                      <td data-label="Openings">${quoteList(o.openings) || html`<span class="muted">None recorded yet</span>`}</td>
-                    </tr>`
-                  )}
-                </tbody>
-              </table>`
-            : html`<p class="muted">No objections read from your calls yet.</p>`
-        }
-      </section>
-
-      <div class="grid-2">
         <section class="card">
-          <h2>Reached, by hour of their day</h2>
+          <h2>The front desk</h2>
+          ${
+            gatekeeper.calls
+              ? html`<p>
+                    A front desk answered ${gatekeeper.calls} call${gatekeeper.calls === 1 ? '' : 's'} and put you through on
+                    ${gatekeeper.putThrough} (${pct(gatekeeper.putThrough / gatekeeper.calls)}).
+                  </p>
+                  ${
+                    gatekeeper.results.length
+                      ? bars(
+                          'What the front desk did',
+                          gatekeeper.results.map((r) => ({
+                            label: r.label,
+                            value: r.count,
+                            of: gatekeeper.calls,
+                            tone: r.result === 'put_through' ? undefined : 'quiet',
+                          }))
+                        )
+                      : ''
+                  }
+                  ${
+                    gatekeeper.names.length
+                      ? html`<p class="muted">By name: ${gatekeeper.names.map((n, i) => `${i ? '; ' : ''}${n.name} (${n.label}): ${n.calls} call${n.calls === 1 ? '' : 's'}, put through ${n.putThrough}`)}.</p>`
+                      : ''
+                  }
+                  <h3>What you said when they put you through</h3>
+                  ${
+                    gatekeeper.linesThatWorked.length
+                      ? quoteList(gatekeeper.linesThatWorked)
+                      : html`<p class="muted">Nothing recorded has got through yet. Try asking for them by first name as if they expect you, and when they’re out, ask when to catch them or for their direct line.</p>`
+                  }`
+              : html`<p class="muted">No calls stopped at a front desk yet.</p>`
+          }
+        </section>
+
+        <section class="card">
+          <h2>Objections, and the openings that got past them</h2>
+          ${
+            report.objections.length
+              ? html`<table class="stacked">
+                  <thead><tr><th>Objection</th><th>Times</th><th>Got past</th><th>In their words</th><th>Openings that got past it</th></tr></thead>
+                  <tbody>
+                    ${report.objections.map(
+                      (o) => html`<tr>
+                        <td>${o.label}</td>
+                        <td data-label="Times">${o.count}</td>
+                        <td data-label="Got past">${o.gotPast}</td>
+                        <td data-label="In their words">${quoteList(o.examples) || html`<span class="muted">–</span>`}</td>
+                        <td data-label="Openings">${quoteList(o.openings) || html`<span class="muted">None recorded yet</span>`}</td>
+                      </tr>`
+                    )}
+                  </tbody>
+                </table>`
+              : html`<p class="muted">No objections read from your calls yet.</p>`
+          }
+        </section>
+
+        ${stripsCard(strips, tz)}
+      </section>
+
+      <section class="half">
+        <h2>The conversation</h2>
+        <p class="muted">
+          Once you reach them, the Mom Test: did they talk about their work and what they did the last time, or did you pitch?
+          Did you leave with a commitment?
+        </p>
+
+        ${momTestCard(momTest, tz)}
+
+        ${talkCard(talk, tz)}
+
+        <section class="card">
+          <h2>Long connects: what they did differently</h2>
+          ${
+            report.longConnects.length
+              ? html`<ul class="coach">
+                  ${report.longConnects.slice(0, 5).map(
+                    (c) => html`<li class="bright">
+                      ${callLink(c, tz)}
+                      ${c.what_worked ? html`<br />${c.what_worked}` : ''}
+                      ${c.opening ? html`<br /><span class="muted">Opening:</span> “${c.opening}”` : ''}
+                      ${c.next_step_text ? html`<br /><span class="muted">Agreed:</span> ${c.next_step_text}` : ''}
+                    </li>`
+                  )}
+                </ul>`
+              : html`<p class="muted">No connect has run past ${clock(LONG_CONNECT_SEC)} yet.</p>`
+          }
+          ${
+            report.style.long.calls && report.style.short.calls
+              ? html`<table class="stacked">
+                  <thead><tr><th>Recorded connects</th><th>With a transcript</th><th>They talked</th><th>Your questions</th><th>“You” over “we”</th></tr></thead>
+                  <tbody>${styleRow(`Long (${clock(LONG_CONNECT_SEC)}+)`, report.style.long)}${styleRow('Short (under 2:00)', report.style.short)}</tbody>
+                </table>
+                <p class="muted">The pitch lands when the call is about their world: the more they talk and the more you say “you” rather than “we”, the longer it runs.</p>`
+              : ''
+          }
+        </section>
+
+        <section class="card">
+          <h2>Rushed connects with no next step</h2>
+          <p>
+            ${fastNoNextStep.calls.length} of ${fastNoNextStep.connects} connect${fastNoNextStep.connects === 1 ? '' : 's'} ended under
+            ${clock(FAST_CALL_SEC)} without a callback time or another next step. These are the ones that evaporate: when they’re rushed,
+            leave with a time.
+          </p>
+          ${
+            fastNoNextStep.calls.length
+              ? html`<ul class="coach">
+                  ${fastNoNextStep.calls.slice(0, 10).map((c) => html`<li class="flag">${callLink(c, tz)}${c.objection ? html` · “${c.objection}”` : ''}</li>`)}
+                </ul>`
+              : ''
+          }
+        </section>
+
+        <section class="card">
+          <h2>What to adjust, call by call</h2>
+          <ol class="calls">
+            ${report.recent.map((c) => {
+              const notes = adjustNotes(c);
+              return html`<li class="tight">
+                <div>${callLink(c, tz)}</div>
+                ${callTags(c, parseUnsure(c.unsure))}
+                ${notes.length ? noteList(notes) : ''}
+              </li>`;
+            })}
+          </ol>
+        </section>
+      </section>
+
+      <details class="card">
+        <summary>When there are enough calls: by hour of their day, and follow-up timing</summary>
+        <p class="muted">
+          A rate needs about ${HOUR_SAMPLE} calls in each group before a difference between groups means anything. These wait
+          here until then.
+        </p>
+        <section>
+          <h3>Reached, by hour of their day</h3>
           <table class="stacked">
             <thead><tr><th>Hour</th><th>Calls</th><th>Reached</th><th>Rate</th></tr></thead>
             <tbody>${report.byHour.map((h) => html`<tr><td>${hourLabel(h.hour)}</td>${rateCells(h)}</tr>`)}</tbody>
@@ -443,48 +580,26 @@ export function coachingPage({ settings, report, bookings, funnel, unread }: Coa
               : ''
           }
         </section>
-        <section class="card">
-          <h2>Where each call ended</h2>
-          <table class="stacked">
-            <thead><tr><th>Got as far as</th><th>Calls</th></tr></thead>
-            <tbody>${report.stages.map((s) => html`<tr><td>${s.label}</td><td data-label="Calls">${s.count}</td></tr>`)}</tbody>
-          </table>
+        <section>
+          <h3>Which follow-up timing led to another connect</h3>
+          ${
+            report.followUps.length
+              ? html`<table class="stacked">
+                  <thead><tr><th>Gap since the last call</th><th>After reaching them: reached again</th><th>Not reached yet: reached</th></tr></thead>
+                  <tbody>
+                    ${report.followUps.map(
+                      (f) => html`<tr>
+                        <td>${f.label}</td>
+                        <td data-label="After reaching them">${f.afterConnect.calls ? `${f.afterConnect.reached} of ${f.afterConnect.calls} (${pct(rateOf(f.afterConnect))})` : '–'}</td>
+                        <td data-label="Not reached yet">${f.beforeConnect.calls ? `${f.beforeConnect.reached} of ${f.beforeConnect.calls} (${pct(rateOf(f.beforeConnect))})` : '–'}</td>
+                      </tr>`
+                    )}
+                  </tbody>
+                </table>`
+              : html`<p class="muted">No one has been called twice yet.</p>`
+          }
         </section>
-      </div>
-
-      <section class="card">
-        <h2>Which follow-up timing led to another connect</h2>
-        ${
-          report.followUps.length
-            ? html`<table class="stacked">
-                <thead><tr><th>Gap since the last call</th><th>After reaching them: reached again</th><th>Not reached yet: reached</th></tr></thead>
-                <tbody>
-                  ${report.followUps.map(
-                    (f) => html`<tr>
-                      <td>${f.label}</td>
-                      <td data-label="After reaching them">${f.afterConnect.calls ? `${f.afterConnect.reached} of ${f.afterConnect.calls} (${pct(rateOf(f.afterConnect))})` : '–'}</td>
-                      <td data-label="Not reached yet">${f.beforeConnect.calls ? `${f.beforeConnect.reached} of ${f.beforeConnect.calls} (${pct(rateOf(f.beforeConnect))})` : '–'}</td>
-                    </tr>`
-                  )}
-                </tbody>
-              </table>`
-            : html`<p class="muted">No one has been called twice yet.</p>`
-        }
-      </section>
-
-      <section class="card">
-        <h2>Your last calls</h2>
-        <ol class="calls">
-          ${report.recent.map((c) => {
-            const notes = adjustNotes(c);
-            return html`<li class="tight">
-              <div>${callLink(c, tz)}</div>
-              ${callTags(c, parseUnsure(c.unsure))}
-              ${notes.length ? noteList(notes) : ''}
-            </li>`;
-          })}
-        </ol>
-      </section>
+      </details>
     `,
     'coaching'
   );

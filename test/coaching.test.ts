@@ -35,6 +35,8 @@ import {
   callFunnel,
   coachingReport,
   describeCall,
+  momTestReport,
+  talkReport,
   HOUR_SAMPLE,
   hourLabel,
   lastInterviewNote,
@@ -46,6 +48,7 @@ import {
   allCallInsights,
   callsToReview,
   callInsightsFor,
+  heardSources,
   callInsightsNear,
   d1CallInsightStore,
   d1CallReviewStore,
@@ -68,6 +71,7 @@ import {
   excludeCall,
   readCall,
   readDialCall,
+  readInterview,
   readUnreadCalls,
   reviewCall,
   type InsightDeps,
@@ -395,6 +399,7 @@ test('the front desk’s flag says what to do about what it did', () => {
 function insight(over: Partial<CallInsight> & Pick<CallInsight, 'call_task_id'>): CallInsight {
   return {
     subject: 'task',
+    meeting_log_id: null,
     contact_id: `c-${over.call_task_id}`,
     company_id: null,
     dial_id: null,
@@ -777,7 +782,29 @@ test('the funnel counts each step to an interview held, and names the step that 
 });
 
 test('the Coaching page and the call page’s card', async () => {
-  const report = coachingReport(sample(), TZ);
+  const rows = sample();
+  const report = coachingReport(rows, TZ);
+  const lyleFacts = facts({
+    label: putThrough.label,
+    firstName: 'Lyle',
+    durationSec: 543,
+    transcript: { turns: putThrough.turns, summary: [] },
+  });
+  const interview = insight({
+    call_task_id: 'm1',
+    subject: 'meeting',
+    at_sec: T0 + 2 * DAY,
+    duration_sec: 900,
+    reached: 1,
+    stage: 'conversation',
+    label: 'Grant Ives',
+    asked_last_time: 1,
+    pitched: 0,
+    longest_story_sec: 95,
+    commitment: 'intro',
+    prospect_talk_share: 0.7,
+    source: 'transcript',
+  });
   const page = String(
     await coachingPage(
       {
@@ -785,6 +812,13 @@ test('the Coaching page and the call page’s card', async () => {
         report,
         bookings: bookingReport([], 0),
         funnel: callFunnel(report, [], 0),
+        interviews: [interview],
+        momTest: momTestReport(rows, [interview]),
+        talk: talkReport([...rows, interview].sort((a, b) => b.at_sec - a.at_sec)),
+        strips: [
+          { call: rows.find((r) => r.call_task_id === '5')!, timeline: callTimeline(lyleFacts, heard(putThrough)) },
+          { call: rows[0], timeline: null },
+        ],
         unread: 2,
       },
       'rep@example.com'
@@ -801,7 +835,58 @@ test('the Coaching page and the call page’s card', async () => {
   assert.match(page, /<dl class="bars" aria-label="What the front desk did">/);
   assert.match(page, /style="--w: \d+%"/);
   assert.match(page, /Too few calls to pick an hour by yet/);
-  assert.doesNotMatch(page, /by their time zone|Average length/);
+  assert.doesNotMatch(page, /by their time zone|Average length|Where each call ended/);
+  // Two halves, the tables that need more calls parked under them.
+  assert.match(page, /<h2>Earning the conversation<\/h2>/);
+  assert.match(page, /<h2>The conversation<\/h2>/);
+  assert.ok(page.indexOf('Earning the conversation') < page.indexOf('The conversation'));
+  assert.match(page, /<details class="card">\s*<summary>When there are enough calls/);
+  assert.ok(page.indexOf('<details') < page.indexOf('Reached, by hour of their day'), 'the hours table is parked');
+  assert.ok(page.indexOf('<details') < page.indexOf('Which follow-up timing'));
+  // The last calls drawn to scale: one with a drawing, one not yet.
+  assert.match(page, /<h2>Your last call, to scale<\/h2>/);
+  assert.match(page, /<dl class="strips">\s*<dt><a href="\/calls\/5"/);
+  assert.match(page, /<div class="strip" aria-hidden="true" style="--w: 100%">/);
+  assert.match(page, /<span class="sr-only">Phone menu 0:14 · Front desk \(Rex\)/);
+  // The Mom Test table: a call and an interview, a dash where nothing has said.
+  assert.match(page, /<h2>The Mom Test, call by call<\/h2>/);
+  assert.match(page, /\(1 of them interview\)/);
+  assert.match(page, /you asked about the last time on 1, pitched on 0/);
+  assert.match(page, /Longest story: <a href="\/meetings\/m1">Grant Ives<\/a>, 1:35/);
+  assert.match(page, /<a href="\/meetings\/m1">Grant Ives<\/a> <span class="tag">Interview<\/span>/);
+  assert.match(page, /<td data-label="They gave">an intro<\/td>/);
+  assert.match(page, /<td data-label="Asked about the last time">–<\/td>/, 'a call nothing has judged');
+  assert.match(page, /<h2>What to adjust, call by call<\/h2>/);
+  // Who did the talking counts the interview too.
+  const talked = talkReport([...rows, interview].sort((a, b) => b.at_sec - a.at_sec));
+  assert.ok(talked.theyLed.of > 1 && talked.talk.some((c) => c.subject === 'meeting'), 'the interview is counted');
+  assert.match(
+    page,
+    new RegExp(
+      `They talked more than you on ${talked.theyLed.calls} of the ${talked.theyLed.of} recorded calls and interviews`
+    )
+  );
+  assert.match(page, /<a href="\/meetings\/m1" title="[^"]*">Grant Ives<\/a> <span class="tag">Interview<\/span>/);
+  // No cold call read yet, but an interview: the page still shows it.
+  const onlyInterviews = String(
+    await coachingPage(
+      {
+        settings: { timeZone: TZ } as never,
+        report: coachingReport([], TZ),
+        bookings: bookingReport([], 0),
+        funnel: callFunnel(coachingReport([], TZ), [], 0),
+        interviews: [interview],
+        momTest: momTestReport([], [interview]),
+        talk: talkReport([interview]),
+        strips: [],
+        unread: 0,
+      },
+      'rep@example.com'
+    )
+  );
+  assert.match(onlyInterviews, /No calls read yet/);
+  assert.match(onlyInterviews, /<h2>The Mom Test, call by call<\/h2>/);
+  assert.match(onlyInterviews, /<h2>Who did the talking<\/h2>/);
 
   const empty = String(await coachingCard({ before: [], brief: null, after: null }));
   assert.equal(empty, '');
@@ -936,6 +1021,7 @@ function deps(calls = { place: 0 }): InsightDeps {
   return {
     callLogs: d1CallLogStore(db),
     dials: d1DialStore(db),
+    meetingLogs: d1MeetingLogStore(db),
     insights: d1CallInsightStore(db),
     reviews: d1CallReviewStore(db),
     place: async () => {
@@ -988,7 +1074,7 @@ test('newer rules read every call again, even from the same source', async () =>
   await logCall('t1');
   const store = d1CallInsightStore(db);
   await store.save(insight({ call_task_id: 't1', contact_id: 'c1', rules_version: 1, gate: 'owner', reached: 1 }));
-  assert.deepEqual(await store.needing(10, RULES_VERSION), ['t1']);
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [{ id: 't1', subject: 'task' }]);
   assert.equal(await readUnreadCalls(deps(), 10, Date.now()), 1);
   const row = await store.get('t1');
   assert.equal(row?.rules_version, RULES_VERSION);
@@ -1025,7 +1111,7 @@ test('a transcript that lands after the call was read gets it read again', async
   await dials.setRecording('d1', { sid: 'RE1', durationSec: 543, channels: 2 });
   await dials.beginTranscript('d1', T0, 300);
   await dials.saveTranscript('d1', JSON.stringify(putThrough.turns), '- Lyle says the software is great');
-  assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), ['t1']);
+  assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), [{ id: 't1', subject: 'task' }]);
   const second = await readDialCall(deps(calls), 'd1', Date.now());
   assert.equal(second?.source, 'transcript');
   assert.equal(second?.gatekeeper_name, 'Rex');
@@ -1094,7 +1180,7 @@ test('a test call is left out of coaching, read again or not, and can be put bac
 
   // Older rules don't bring it back.
   await db.prepare('UPDATE call_insights SET rules_version = 1').run();
-  assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), ['real']);
+  assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), [{ id: 'real', subject: 'task' }]);
   await readCall(deps(), 'test', Date.now());
   assert.equal((await d1CallInsightStore(db).get('test'))?.excluded, 1, 'reading it again keeps it out');
   assert.equal((await callInsightsFor(db, ['test', 'real', 'none'])).size, 2, 'the Calls page still sees it');
@@ -1108,7 +1194,7 @@ test('unread calls are read newest first, a few at a time', async () => {
   await logCall('new', {}, '2026-09-29 16:00:00');
   await logCall('mid', {}, '2026-09-25 16:00:00');
   assert.equal(await readUnreadCalls(deps(), 2, Date.now()), 2);
-  assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), ['old']);
+  assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), [{ id: 'old', subject: 'task' }]);
   assert.deepEqual(
     (await allCallInsights(db)).map((r) => r.call_task_id),
     ['mid', 'new'],
@@ -1387,6 +1473,10 @@ test('bookings followed to how they turned out, by lead time, invite and the boo
         report: coachingReport(sample(), TZ),
         bookings: report,
         funnel: callFunnel(coachingReport(sample(), TZ), [], 0),
+        interviews: [],
+        momTest: momTestReport([], []),
+        talk: talkReport([]),
+        strips: [],
         unread: 0,
       },
       'rep@example.com'
@@ -1413,6 +1503,10 @@ test('bookings followed to how they turned out, by lead time, invite and the boo
         report: coachingReport([], TZ),
         bookings: report,
         funnel: callFunnel(coachingReport([], TZ), [], 0),
+        interviews: [],
+        momTest: momTestReport([], []),
+        talk: talkReport([]),
+        strips: [],
         unread: 1,
       },
       'rep@example.com'
@@ -1470,6 +1564,10 @@ test('the rep’s own cancel is counted, but left out of the held rate', async (
         report: coachingReport(sample(), TZ),
         bookings: report,
         funnel: callFunnel(coachingReport(sample(), TZ), [], 0),
+        interviews: [],
+        momTest: momTestReport([], []),
+        talk: talkReport([]),
+        strips: [],
         unread: 0,
       },
       'rep@example.com'
@@ -1566,6 +1664,41 @@ test('the Mom Test: the rules hear a question about the last time, a pitch, a st
   const notes = ruleInsight(facts({ notes: 'Talked with Sam, he told me about last week’s quote' }));
   assert.deepEqual([notes.asked_last_time, notes.commitment], [null, null]);
   assert.ok(!notes.unsure.includes('fluffCaught'));
+});
+
+test('the Mom Test across calls and interviews: counts of what has been said, the longest story', () => {
+  const calls = [
+    insight({
+      call_task_id: 'a',
+      at_sec: T0,
+      asked_last_time: 1,
+      pitched: 1,
+      longest_story_sec: 20,
+      commitment: 'time',
+    }),
+    insight({ call_task_id: 'b', at_sec: T0 + 60, asked_last_time: 0, longest_story_sec: 75, fluff_caught: 1 }),
+    insight({ call_task_id: 'c', at_sec: T0 + 120, reached: 0, gate: 'gatekeeper', stage: 'gatekeeper' }),
+    insight({ call_task_id: 'w', at_sec: T0 + 180, gate: 'wrong_number', commitment: 'money' }),
+  ];
+  const interviews = [
+    insight({ call_task_id: 'm', subject: 'meeting', at_sec: T0 + 30, longest_story_sec: 130, commitment: 'intro' }),
+  ];
+  const m = momTestReport(calls, interviews);
+  assert.deepEqual(
+    m.rows.map((r) => [r.call.call_task_id, r.kind]),
+    [
+      ['b', 'call'],
+      ['m', 'interview'],
+      ['a', 'call'],
+    ],
+    'reached only, newest first; a wrong number isn’t a call'
+  );
+  assert.deepEqual(
+    [m.asked, m.pitched, m.stories, m.fluffCaught, m.commitments],
+    [1, 1, 2, 1, { time: 1, intro: 1, money: 0 }]
+  );
+  assert.equal(m.longest?.call.call_task_id, 'm');
+  assert.deepEqual(momTestReport([], []).rows, []);
 });
 
 test('a review that says the rules heard wrong takes the pitch and last-time marks off the drawing', () => {
@@ -1667,8 +1800,17 @@ test('the review’s transcript stamps each turn start–end, so a story’s len
   await logCall('t1', { outcome: 'connected', duration_sec: 543, notes: putThrough.notes });
   const log = (await d1CallLogStore(db).get('t1'))!;
   const notes = (await callNotes(db, 't1'))!;
+  const call = {
+    id: 't1',
+    kind: 'call' as const,
+    channel: log.channel,
+    outcome: log.outcome,
+    durationSec: log.duration_sec,
+    notes: log.notes,
+    nextDue: log.next_due,
+  };
   const summary = callReviewSummary(
-    { settings: { timeZone: TZ } as never, log, turns: putThrough.turns, summary: [], notes, reviews: [] },
+    { settings: { timeZone: TZ } as never, call, turns: putThrough.turns, summary: [], notes, reviews: [] },
     ORIGIN
   );
   assert.match(
@@ -1719,6 +1861,303 @@ test('a review settles the Mom Test over the rules', () => {
   assert.match(tags, /Asked about the last time · Story 1:35 · They gave an intro/);
   assert.doesNotMatch(tags, /Pitched|Caught the fluff/);
   assert.match(tags, /Not sure of whether you pitched/);
+});
+
+// --- Interviews: the call made from an interview's page, read like a cold call ---
+
+test('an interview’s call is read once it ended, keyed by the meeting, with how the rep logged it', async () => {
+  const dials = d1DialStore(db);
+  await dials.begin(
+    dial({ id: 'dm', task_id: 'm1', subject: 'meeting', contact_label: putThrough.label, started_sec: T0 + 3 * DAY }),
+    120
+  );
+  await dials.setProspectResult('dm', { sid: 'CA9', status: 'completed', durationSec: 543 });
+  await dials.setRecording('dm', { sid: 'RE9', durationSec: 543, channels: 2 });
+  await dials.beginTranscript('dm', T0, 300);
+  await dials.saveTranscript('dm', JSON.stringify(putThrough.turns), null);
+  const calls = { place: 0 };
+
+  assert.deepEqual(
+    await d1CallInsightStore(db).needing(10, RULES_VERSION),
+    [{ id: 'm1', subject: 'meeting' }],
+    'the ended call wants reading'
+  );
+  assert.equal(await readUnreadCalls(deps(calls), 10, Date.now()), 1);
+  const row = await d1CallInsightStore(db).get('m1');
+  assert.equal(row?.subject, 'meeting');
+  assert.equal(row?.source, 'transcript');
+  assert.equal(row?.outcome, 'connected', 'not logged yet: the call itself answered');
+  assert.equal(row?.at_sec, T0 + 3 * DAY);
+  assert.equal(row?.reached, 1);
+  assert.equal(row?.label, putThrough.label);
+  assert.ok(row?.timeline_json, 'drawn like any call');
+  assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), []);
+  assert.deepEqual(await allCallInsights(db), [], 'not a cold call: the report doesn’t count it');
+  assert.equal((await allCallInsights(db, 'meeting')).length, 1);
+  assert.deepEqual(
+    (await callsToReview(db, 10)).map((c) => [c.call_task_id, c.subject]),
+    [['m1', 'meeting']],
+    'reviewed from the connector like a call'
+  );
+
+  // Logged as a no-show afterwards: the outcome is the log's.
+  await logMeeting('m1', 'NO_SHOW', '2026-10-02 17:00:00');
+  const logged = await readInterview(deps(calls), 'm1', Date.now(), { reread: true });
+  assert.equal(logged?.outcome, 'no_answer');
+  assert.equal(logged?.reached, 0);
+  assert.equal(calls.place, 1, 'their time zone kept from the first read');
+
+  // Its transcript landing reads it; a test interview can be left out; a review lands on it.
+  assert.equal((await readDialCall(deps(), 'dm', Date.now()))?.call_task_id, 'm1');
+  const reviewed = await reviewCall(
+    deps(),
+    'm1',
+    {
+      reviewer: 'rep',
+      corrections: { reachedThem: true },
+      what_worked: null,
+      adjust: null,
+      reviewed_at: '2026-10-03T00:00:00Z',
+    },
+    Date.now()
+  );
+  assert.equal(reviewed?.reached, 1);
+  assert.equal(await excludeCall(deps(), 'm1', true, Date.now()), true);
+  assert.deepEqual(await callsToReview(db, 10), []);
+  assert.equal(await readInterview(deps(), 'none', Date.now()), null);
+  const nothing = { reviewer: 'rep' as const, corrections: {}, what_worked: null, adjust: null, reviewed_at: '' };
+  assert.equal(await reviewCall(deps(), 'none', nothing, Date.now()), null, 'nothing to review');
+});
+
+test('an interview read once is read again after a redial, a later log, or when its dial timed out', async () => {
+  const dials = d1DialStore(db);
+  const store = d1CallInsightStore(db);
+  await dials.begin(dial({ id: 'first', task_id: 'm1', subject: 'meeting', started_sec: T0 }), 120);
+  await dials.setProspectResult('first', { sid: 'CA1', status: 'no-answer', durationSec: null });
+  assert.equal((await readInterview(deps(), 'm1', Date.now()))?.dial_id, 'first');
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [], 'read');
+
+  // A redial from the page: the row is of the earlier call, so it's read again.
+  await dials.begin(dial({ id: 'second', task_id: 'm1', subject: 'meeting', started_sec: T0 + 1800 }), 120);
+  await dials.setProspectResult('second', { sid: 'CA2', status: 'completed', durationSec: 600 });
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [{ id: 'm1', subject: 'meeting' }], 'a newer dial');
+  const again = await readInterview(deps(), 'm1', Date.now());
+  assert.deepEqual([again?.dial_id, again?.outcome], ['second', 'connected']);
+  assert.deepEqual(await store.needing(10, RULES_VERSION), []);
+
+  // Logged as a no-show after the read, in the same second as the read even:
+  // a log the reading wasn't made with, so it's read again.
+  const readAt = (await store.get('m1'))!.extracted_at;
+  await logMeeting('m1', 'NO_SHOW', readAt.slice(0, 19).replace('T', ' '));
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [{ id: 'm1', subject: 'meeting' }], 'logged since');
+  const logged = await readInterview(deps(), 'm1', Date.now());
+  assert.deepEqual(
+    [logged?.outcome, logged?.meeting_log_id],
+    ['no_answer', `m1@${readAt.slice(0, 19).replace('T', ' ')}`]
+  );
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [], 'read with the log');
+
+  // A dial whose final statuses never came: ended once it's older than the timeout, for the sweep too.
+  await dials.begin(dial({ id: 'lost', task_id: 'm2', subject: 'meeting', started_sec: T0 }), 120);
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [], 'no status, no cutoff given: not yet');
+  assert.deepEqual(
+    await store.needing(10, RULES_VERSION, T0 + 1),
+    [{ id: 'm2', subject: 'meeting' }],
+    'past the cutoff'
+  );
+  assert.equal(await readUnreadCalls(deps(), 10, Date.now()), 1, 'the sweep reads it');
+});
+
+test('an interview dialled again is a new call: its reading replaces the first’s, and the first’s review isn’t its', async () => {
+  const dials = d1DialStore(db);
+  const store = d1CallInsightStore(db);
+  // First attempt, recorded and reviewed.
+  await dials.begin(
+    dial({ id: 'first', task_id: 'm1', subject: 'meeting', contact_label: putThrough.label, started_sec: T0 }),
+    120
+  );
+  await dials.setProspectResult('first', { sid: 'CA1', status: 'completed', durationSec: 543 });
+  await dials.setRecording('first', { sid: 'RE1', durationSec: 543, channels: 2 });
+  await dials.beginTranscript('first', T0, 300);
+  await dials.saveTranscript('first', JSON.stringify(putThrough.turns), null);
+  const first = await reviewCall(
+    deps(),
+    'm1',
+    {
+      reviewer: 'claude',
+      corrections: { stage: 'next_step' },
+      what_worked: 'Asked about dispatch.',
+      adjust: null,
+      reviewed_at: '2026-10-01T00:00:00Z',
+    },
+    Date.now()
+  );
+  assert.deepEqual([first?.dial_id, first?.source, first?.stage], ['first', 'transcript', 'next_step']);
+  assert.equal((await d1CallReviewStore(db).list('m1'))[0].dial_id, 'first', 'the review is of that call');
+  assert.deepEqual(await callsToReview(db, 10), [], 'reviewed');
+
+  // Dialled again a week later, not recorded: a new call, read on its own.
+  await dials.begin(
+    dial({
+      id: 'second',
+      task_id: 'm1',
+      subject: 'meeting',
+      contact_label: putThrough.label,
+      started_sec: T0 + 7 * DAY,
+    }),
+    120
+  );
+  await dials.setProspectResult('second', { sid: 'CA2', status: 'completed', durationSec: 300 });
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [{ id: 'm1', subject: 'meeting' }]);
+  const second = await readInterview(deps(), 'm1', Date.now());
+  assert.deepEqual([second?.dial_id, second?.source], ['second', 'outcome'], 'replaced, though read from less');
+  assert.deepEqual(
+    [second?.stage, second?.what_worked],
+    ['conversation', null],
+    'five minutes by length; the first call’s review isn’t laid over it'
+  );
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [], 'and it stays read');
+  assert.deepEqual(
+    (await callsToReview(db, 10)).map((c) => c.call_task_id),
+    ['m1'],
+    'the new call wants its own review'
+  );
+  assert.deepEqual(await d1CallReviewStore(db).list('m1', 'second'), [], 'none of it yet');
+  assert.equal((await d1CallReviewStore(db).list('m1', 'first')).length, 1, 'the first call’s still stands for it');
+
+  // Left out as a test call, then dialled again: the new call starts in.
+  assert.equal(await excludeCall(deps(), 'm1', true, Date.now()), true);
+  assert.deepEqual(await allCallInsights(db, 'meeting'), []);
+  await dials.begin(
+    dial({
+      id: 'third',
+      task_id: 'm1',
+      subject: 'meeting',
+      contact_label: putThrough.label,
+      started_sec: T0 + 8 * DAY,
+    }),
+    120
+  );
+  await dials.setProspectResult('third', { sid: 'CA3', status: 'completed', durationSec: 200 });
+  assert.deepEqual(
+    await store.needing(10, RULES_VERSION),
+    [{ id: 'm1', subject: 'meeting' }],
+    'a left-out call’s redial is read'
+  );
+  const third = await readInterview(deps(), 'm1', Date.now());
+  assert.deepEqual([third?.dial_id, third?.excluded], ['third', 0]);
+  assert.equal((await store.get('m1'))?.excluded, 0, 'in coaching again');
+  assert.equal((await allCallInsights(db, 'meeting')).length, 1);
+  // A reread of that same call keeps the rep's choice.
+  assert.equal(await excludeCall(deps(), 'm1', true, Date.now()), true);
+  await readInterview(deps(), 'm1', Date.now(), { reread: true });
+  assert.equal((await store.get('m1'))?.excluded, 1, 'left out stays left out through a reread');
+});
+
+test('an interview moved and dialled again: the earlier occurrence’s log isn’t this call’s, and the page shows this call', async () => {
+  const dials = d1DialStore(db);
+  const store = d1CallInsightStore(db);
+  // Dialled at the first time, logged as moved with a note; dialled again a week later.
+  await dials.begin(dial({ id: 'first', task_id: 'm1', subject: 'meeting', started_sec: T0 }), 120);
+  await dials.setProspectResult('first', { sid: 'CA1', status: 'completed', durationSec: 60 });
+  await logMeeting('m1', 'RESCHEDULED', '2026-09-29 16:10:00', '2026-10-06T16:00:00Z');
+  await db
+    .prepare(
+      `UPDATE meeting_logs SET notes = 'Front desk said he is out, moved it to next week.' WHERE meeting_id = 'm1'`
+    )
+    .run();
+  assert.equal(await readUnreadCalls(deps(), 10, Date.now()), 1);
+  const moved = await store.get('m1');
+  assert.equal(moved?.meeting_log_id, 'm1@2026-09-29 16:10:00', 'the first call, with its log');
+
+  await dials.begin(dial({ id: 'second', task_id: 'm1', subject: 'meeting', started_sec: T0 + 7 * DAY }), 120);
+  await dials.setProspectResult('second', { sid: 'CA2', status: 'completed', durationSec: 900 });
+  // Before the background read: the call page reads the new call now, not the row of the first.
+  const notes = (await callNotes(db, 'm1'))!;
+  assert.deepEqual([notes.read.reached, notes.read.duration_sec], [1, 900], 'the new call’s facts');
+  assert.equal(notes.read.gatekeeper_name, null, 'the moved-it note isn’t read as this call’s');
+  // The sweep reads it with no log: the earlier occurrence's doesn't count.
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [{ id: 'm1', subject: 'meeting' }]);
+  await readUnreadCalls(deps(), 10, Date.now());
+  const second = await store.get('m1');
+  assert.deepEqual(
+    [second?.dial_id, second?.meeting_log_id, second?.outcome, second?.source],
+    ['second', null, 'connected', 'outcome']
+  );
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [], 'current');
+  // Logged after this call: its log.
+  await logMeeting('m1', 'COMPLETED', '2026-10-06 16:20:00');
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [{ id: 'm1', subject: 'meeting' }]);
+  await readUnreadCalls(deps(), 10, Date.now());
+  assert.equal((await store.get('m1'))?.meeting_log_id, 'm1@2026-10-06 16:20:00');
+});
+
+test('two interview dials in the same second: the sweep picks the one latestForTask does', async () => {
+  const dials = d1DialStore(db);
+  await dials.begin(dial({ id: 'z-first', task_id: 'm1', subject: 'meeting', started_sec: T0 }), 120);
+  await dials.setProspectResult('z-first', { sid: 'CA1', status: 'canceled', durationSec: null });
+  await dials.setRepStatus('z-first', 'completed', T0 + 5);
+  assert.ok(await dials.begin(dial({ id: 'a-second', task_id: 'm1', subject: 'meeting', started_sec: T0 }), 120));
+  await dials.setProspectResult('a-second', { sid: 'CA2', status: 'completed', durationSec: 120 });
+  assert.equal((await dials.latestForTask('m1'))?.id, 'a-second', 'the later row, not the greater id');
+  assert.equal(await readUnreadCalls(deps(), 10, Date.now()), 1);
+  assert.equal((await d1CallInsightStore(db).get('m1'))?.dial_id, 'a-second');
+  assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), [], 'and the sweep agrees it’s read');
+});
+
+test('an interview’s call still going isn’t read; one not recorded reads the rep’s notes on it', async () => {
+  const dials = d1DialStore(db);
+  const nowSec = Math.floor(Date.now() / 1000);
+  await dials.begin(dial({ id: 'live', task_id: 'm2', subject: 'meeting', started_sec: nowSec - 30 }), 120);
+  await dials.setRepCallSid('live', 'CA2');
+  assert.equal(await readInterview(deps(), 'm2', Date.now()), null, 'still ringing');
+  assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), []);
+
+  await dials.begin(dial({ id: 'plain', task_id: 'm3', subject: 'meeting', started_sec: T0 }), 120);
+  await dials.setProspectResult('plain', { sid: 'CA3', status: 'completed', durationSec: 900 });
+  await logMeeting('m3', 'COMPLETED', '2026-09-29 17:00:00');
+  await db
+    .prepare(`UPDATE meeting_logs SET notes = ? WHERE meeting_id = 'm3'`)
+    .bind('Talked with Hank. He said their problem is drivers, not software. Call back next month.')
+    .run();
+  const row = await readInterview(deps(), 'm3', Date.now());
+  assert.equal(row?.source, 'notes');
+  assert.equal(row?.outcome, 'connected');
+  assert.equal(row?.duration_sec, 900);
+  assert.ok(row?.objection_kind, 'the objection, from the notes');
+});
+
+// --- What they've told the rep: the sources ---
+
+test('what you’ve heard reads every reached call and interview with its transcript and the rep’s notes', async () => {
+  const dials = d1DialStore(db);
+  await dials.begin(dial({ contact_label: putThrough.label }), 120);
+  await dials.setProspectResult('d1', { sid: 'CA1', status: 'completed', durationSec: 543 });
+  await dials.setRecording('d1', { sid: 'RE1', durationSec: 543, channels: 2 });
+  await dials.beginTranscript('d1', T0, 300);
+  await dials.saveTranscript('d1', JSON.stringify(putThrough.turns), null);
+  await logCall('t1', { dial_id: 'd1', outcome: 'connected', duration_sec: null, notes: putThrough.notes });
+  await logCall('t2', { outcome: 'busy', notes: 'Front desk, not available' }, '2026-09-28 16:00:00');
+  await dials.begin(
+    dial({ id: 'dm', task_id: 'm1', subject: 'meeting', contact_label: 'Grant Ives', started_sec: T0 + DAY }),
+    120
+  );
+  await dials.setProspectResult('dm', { sid: 'CA9', status: 'completed', durationSec: 900 });
+  await logMeeting('m1', 'COMPLETED', '2026-09-30 17:00:00');
+  await db
+    .prepare(`UPDATE meeting_logs SET notes = 'He said they run everything on spreadsheets.' WHERE meeting_id = 'm1'`)
+    .run();
+  await readUnreadCalls(deps(), 10, Date.now());
+
+  const rows = await heardSources(db);
+  assert.deepEqual(
+    rows.map((r) => [r.call_task_id, r.subject, r.transcript_json !== null, r.notes]),
+    [
+      ['m1', 'meeting', false, 'He said they run everything on spreadsheets.'],
+      ['t1', 'task', true, putThrough.notes],
+    ],
+    'newest first; the front desk call never reached them'
+  );
 });
 
 // --- Reviews: Claude's or the rep's, laid over the rules' reading ---
@@ -1954,6 +2393,10 @@ test('the hours note stays until two hours have enough calls to compare', async 
       report,
       bookings: bookingReport([], 0),
       funnel: callFunnel(report, [], 0),
+      interviews: [],
+      momTest: momTestReport([], []),
+      talk: talkReport([]),
+      strips: [],
       unread: 0,
     };
     return String(await coachingPage(overview, 'rep@example.com'));
@@ -2040,7 +2483,11 @@ test('a review whose read failed shows at once, and the sweep reads the call aga
   assert.equal(notes?.read.stage, 'conversation', 'shown with the review');
   assert.equal(notes?.read.what_worked, 'Asked about their last load.');
 
-  assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), ['t1'], 'reviewed since its read');
+  assert.deepEqual(
+    await d1CallInsightStore(db).needing(10, RULES_VERSION),
+    [{ id: 't1', subject: 'task' }],
+    'reviewed since its read'
+  );
   assert.equal(await readUnreadCalls(deps(), 10, Date.parse('2026-10-07T17:10:00Z')), 1);
   assert.equal((await d1CallInsightStore(db).get('t1'))?.stage, 'conversation', 'stored with it');
   assert.deepEqual(await d1CallInsightStore(db).needing(10, RULES_VERSION), [], 'and not read again after');

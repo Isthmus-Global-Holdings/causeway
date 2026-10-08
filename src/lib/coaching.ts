@@ -20,15 +20,22 @@ import {
   OBJECTIONS,
   objectionFor,
   STAGE_LABELS,
+  COMMITMENTS,
   type CoachNote,
+  type Commitment,
   type GatekeeperResult,
   type ObjectionKind,
 } from './call-insight';
+import { STORY_SEC } from './call-timeline';
 import { formatLocal, timeOfDay } from './dates';
 import type { BookedInterview, CallInsight } from './db';
 
 // Fewer calls than this in a group is too few to call it a pattern.
 export const MIN_SAMPLE = 3;
+
+// The page a read call lives on: its call task's, or the interview's.
+export const insightPath = (row: Pick<CallInsight, 'subject' | 'call_task_id'>): string =>
+  row.subject === 'meeting' ? `/meetings/${row.call_task_id}` : `/calls/${row.call_task_id}`;
 
 // Comparing reached rates between hours takes far more: about this many calls
 // in each hour before a difference between them means anything.
@@ -149,6 +156,17 @@ function styleOf(calls: CallInsight[]): Style {
   };
 }
 
+// Who did the talking: every call with a transcript that reached them, and
+// how often they talked more than half. `rows` newest first; the Coaching
+// page passes the interviews' calls with the cold calls.
+export function talkReport(rows: CallInsight[]): Pick<CoachingReport, 'talk' | 'theyLed'> {
+  const talked = rows.filter((c) => c.reached && c.gate !== 'wrong_number' && c.prospect_talk_share !== null);
+  return {
+    talk: talked.slice(0, RECENT),
+    theyLed: { calls: talked.filter((c) => (c.prospect_talk_share ?? 0) > 0.5).length, of: talked.length },
+  };
+}
+
 // `rows` oldest first, as allCallInsights reads them.
 export function coachingReport(rows: CallInsight[], repTimeZone: string): CoachingReport {
   const calls = rows.filter((r) => r.gate !== 'wrong_number');
@@ -253,7 +271,7 @@ export function coachingReport(rows: CallInsight[], repTimeZone: string): Coachi
 
   const connects = calls.filter((c) => c.reached);
   const long = connects.filter(isLongConnect);
-  const talked = newest.filter((c) => c.reached && c.prospect_talk_share !== null);
+  const { talk, theyLed } = talkReport(newest);
   return {
     calls: calls.length,
     reached: connects.length,
@@ -272,8 +290,8 @@ export function coachingReport(rows: CallInsight[], repTimeZone: string): Coachi
     fastNoNextStep: { connects: connects.length, calls: newest.filter(fastNoNextStep) },
     longConnects: [...long].sort((a, b) => (b.talk_sec ?? b.duration_sec ?? 0) - (a.talk_sec ?? a.duration_sec ?? 0)),
     style: { long: styleOf(long), short: styleOf(connects.filter((c) => (c.talk_sec ?? c.duration_sec ?? 0) < 120)) },
-    talk: talked.slice(0, RECENT),
-    theyLed: { calls: talked.filter((c) => (c.prospect_talk_share ?? 0) > 0.5).length, of: talked.length },
+    talk,
+    theyLed,
     recent: newest.slice(0, RECENT),
     nextStepCalls: new Set(calls.filter((c) => c.stage === 'next_step').map((c) => c.call_task_id)),
   };
@@ -339,6 +357,54 @@ export function callFunnel(report: CoachingReport, booked: BookedInterview[], no
     leak = { from, to, advice: LEAK_ADVICE[to.key] };
   }
   return { steps, upcoming: calls(['upcoming', 'to_log']), leak };
+}
+
+// --- The Mom Test, call by call ---
+
+// How many of the latest calls the Coaching page draws to scale.
+export const STRIPS = 20;
+
+export interface MomTestRow {
+  call: CallInsight;
+  kind: 'call' | 'interview';
+}
+
+// Every call and interview that reached them, newest first, with what the
+// rules and the reviews have said about each: counts, not rates, and a dash
+// where nothing has said yet. The longest story across them.
+export interface MomTestReport {
+  rows: MomTestRow[];
+  asked: number; // asked about a specific last time
+  pitched: number;
+  stories: number; // a prospect turn of STORY_SEC or more
+  fluffCaught: number;
+  commitments: Record<Commitment, number>;
+  longest: MomTestRow | null;
+}
+
+export function momTestReport(calls: CallInsight[], interviews: CallInsight[]): MomTestReport {
+  const rows: MomTestRow[] = [
+    ...calls.filter((c) => c.reached && c.gate !== 'wrong_number').map((call) => ({ call, kind: 'call' as const })),
+    ...interviews.filter((c) => c.reached).map((call) => ({ call, kind: 'interview' as const })),
+  ].sort((a, b) => b.call.at_sec - a.call.at_sec);
+  const count = (test: (c: CallInsight) => boolean) => rows.filter((r) => test(r.call)).length;
+  const commitments = Object.fromEntries(
+    COMMITMENTS.map((kind) => [kind, count((c) => c.commitment === kind)])
+  ) as Record<Commitment, number>;
+  let longest: MomTestRow | null = null;
+  for (const row of rows) {
+    const sec = row.call.longest_story_sec;
+    if (sec !== null && sec >= STORY_SEC && sec > (longest?.call.longest_story_sec ?? 0)) longest = row;
+  }
+  return {
+    rows,
+    asked: count((c) => c.asked_last_time === 1),
+    pitched: count((c) => c.pitched === 1),
+    stories: count((c) => c.longest_story_sec !== null && c.longest_story_sec >= STORY_SEC),
+    fluffCaught: count((c) => c.fluff_caught === 1),
+    commitments,
+    longest,
+  };
 }
 
 // The hour with the best rate, among those with enough calls to beat

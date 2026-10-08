@@ -10,7 +10,14 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { bookInterview, callsOverview, logCall, snoozeCallTask } from '../actions/calls';
-import { callCoaching, callForReview, callsForReview, coachingOverview, saveCallReview } from '../actions/coaching';
+import {
+  callCoaching,
+  callForReview,
+  callsForReview,
+  coachingOverview,
+  heardOverview,
+  saveCallReview,
+} from '../actions/coaching';
 import { dropEmailTask, markEmailSent, saveEmailDraft } from '../actions/emails';
 import { latestMeetingDial, logMeeting, meetingsOverview } from '../actions/meetings';
 import { openContactTask, saveNumbers } from '../actions/records';
@@ -62,6 +69,7 @@ import {
   afterCallSummary,
   callInsightSummary,
   callReviewSummary,
+  heardSummary,
   beforeCallSummary,
   bookingSummary,
   coachingSummary,
@@ -447,17 +455,33 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Call coaching',
       description:
-        "Patterns across every call the rep logged (test calls left out), each read from its transcript or notes: the phone menu, who answered (them, the front desk, voicemail), how far calls get, reached rate by hour of the contact's day and by time zone, average length by outcome, the front desk (by name, and the lines that got the rep put through), objections and the openings that got past them, which follow-up gaps led to another connect, rushed connects (under 1:30) that left with no next step, and what the long connects did. bookedInterviews: the interviews those calls booked, followed to how each turned out (held, no-show, canceled by them or by the rep, still ahead, or past with nothing logged: toLog, each in toLogInterviews with the url to log it on), by how far ahead it was booked, calendar invite or not, and how long they talked on the call that booked it; one they canceled is a reply (they told the rep), a no-show isn't, and the rep's own cancels are left out of the groups. Groups smaller than minCallsForAPattern are too small to call a pattern.",
+        "Patterns across every call the rep logged (test calls left out), each read from its transcript or notes: the phone menu, who answered (them, the front desk, voicemail), how far calls get, momTest (on the calls and interviews that reached them: how many asked about a specific last time, pitched, got a story of a minute or more, caught the fluff, and what they committed: counts of what the rules and reviews have said), reached rate by hour of the contact's day and by time zone, average length by outcome, the front desk (by name, and the lines that got the rep put through), objections and the openings that got past them, which follow-up gaps led to another connect, rushed connects (under 1:30) that left with no next step, and what the long connects did. bookedInterviews: the interviews those calls booked, followed to how each turned out (held, no-show, canceled by them or by the rep, still ahead, or past with nothing logged: toLog, each in toLogInterviews with the url to log it on), by how far ahead it was booked, calendar invite or not, and how long they talked on the call that booked it; one they canceled is a reply (they told the rep), a no-show isn't, and the rep's own cancels are left out of the groups. Groups smaller than minCallsForAPattern are too small to call a pattern.",
       annotations: READ,
     },
     () =>
       run(async () => {
-        const { settings, report, bookings, unread } = await coachingOverview(c);
+        const { settings, report, bookings, momTest, unread } = await coachingOverview(c);
         return {
-          ...coachingSummary(report, settings.timeZone, origin),
+          ...coachingSummary(report, settings.timeZone, origin, momTest),
           bookedInterviews: bookingSummary(bookings, settings.timeZone, origin),
           callsNotReadYet: unread > 0,
         };
+      })
+  );
+
+  server.registerTool(
+    'what_you_heard',
+    {
+      title: 'What you’ve heard',
+      description:
+        "What prospects have told the rep across every call and interview that reached them, read by rules from their part of each transcript and from the rep's notes: the software they use (named tools, or a load board, a TMS, spreadsheets, paper, phone and text), with how many calls named each and the newest quotes; what they said about their work by theme (quoting and rates, dispatch and loads, invoicing and getting paid, drivers and people, compliance, the software they use), with how many calls touched each, how many of those hurt, and the quotes; and call by call. Counts of calls, never rates. This is the record: the synthesis (what keeps coming up, what to ask next, which segment to narrow to) is yours to do with the rep from it.",
+      inputSchema: {},
+      annotations: READ,
+    },
+    () =>
+      run(async () => {
+        const { settings, report } = await heardOverview(c);
+        return heardSummary(report, settings.timeZone, origin);
       })
   );
 
@@ -466,7 +490,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Calls to review',
       description:
-        'Logged calls worth a review, newest first: someone picked up (them or the front desk), and neither the rep nor Claude has reviewed it yet. Each with its tags as the rules read them and which they were unsure of. Review each with get_call_review, then review_call.',
+        'Logged calls and recorded interviews worth a review, newest first: someone picked up (them or the front desk), and neither the rep nor Claude has reviewed it yet. Each with its kind (call or interview), its tags as the rules read them and which they were unsure of. Review each with get_call_review, then review_call.',
       inputSchema: { limit: z.number().int().min(1).max(25).default(10) },
       annotations: READ,
     },
@@ -488,7 +512,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Call to review',
       description:
-        "One logged call, to review it for coaching: the call (who, outcome, length, the rep's notes), its transcript turn by turn with times, the tags as read so far (reading: rules, with any reviews laid over them; unsure lists what nothing was sure of), the reviews so far, and the rules for reviewing it. Then save the review with review_call.",
+        "One logged call or recorded interview (task_id: the CALL task id, or the interview's meeting id from calls_to_review), to review it for coaching: the call (who, outcome, length, the rep's notes), its transcript turn by turn with times, the tags as read so far (reading: rules, with any reviews laid over them; unsure lists what nothing was sure of), the reviews so far, and the rules for reviewing it. Then save the review with review_call.",
       inputSchema: { task_id: id },
       annotations: READ,
     },
@@ -842,7 +866,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Review a call',
       description:
-        "Save a review of one logged call for coaching, after reading it with get_call_review and following its rules: corrections for only the tags that were wrong or unsure (the rest keep the rules' reading), the Mom Test on it (asked about the last time, pitched, their longest story, fluff caught, what they committed), what worked, and what to adjust next time. Saved in the app only (not HubSpot); reviewing again replaces this reviewer's earlier review. reviewer 'rep' when the rep says what happened; the rep's review wins over Claude's. leave_out: true for a test call, to leave it out of coaching (false puts it back).",
+        "Save a review of one logged call or recorded interview (task_id as in calls_to_review) for coaching, after reading it with get_call_review and following its rules: corrections for only the tags that were wrong or unsure (the rest keep the rules' reading), the Mom Test on it (asked about the last time, pitched, their longest story, fluff caught, what they committed), what worked, and what to adjust next time. Saved in the app only (not HubSpot); reviewing again replaces this reviewer's earlier review. reviewer 'rep' when the rep says what happened; the rep's review wins over Claude's. leave_out: true for a test call, to leave it out of coaching (false puts it back).",
       inputSchema: {
         task_id: id,
         reviewer: z.enum(REVIEWERS).default('claude'),
@@ -894,12 +918,19 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
           leave_out,
         });
         const log = await d1CallLogStore(env.DB).get(task_id);
+        // An interview's follow-up is on its latest log.
+        const nextDue = log
+          ? log.next_due
+          : await (async () => {
+              const dial = await d1DialStore(env.DB).latestForTask(task_id);
+              return (await d1MeetingLogStore(env.DB).latest(task_id, dial?.started_sec ?? null))?.next_due ?? null;
+            })();
         const { timeZone } = await loadAppSettings(env);
         return {
           saved: true,
           leftOut: leave_out ?? null,
-          reading: afterCallSummary(notes, log?.next_due ?? null, timeZone),
-          url: pageUrl(origin, `/calls/${task_id}`),
+          reading: afterCallSummary(notes, nextDue, timeZone),
+          url: pageUrl(origin, log ? `/calls/${task_id}` : `/meetings/${task_id}`),
         };
       })
   );

@@ -5,11 +5,12 @@
 
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
-import { d1CallLogStore, setSetting } from '../src/lib/db.ts';
+import { d1CallLogStore, d1DialStore, d1MeetingLogStore, setSetting } from '../src/lib/db.ts';
 import { mcpApp } from '../src/mcp/app.ts';
 import type { AppEnv } from '../src/types.ts';
 import { callLogDone } from '../src/workflows/call-logged.ts';
 import { loadCallQueue, planCalls } from '../src/workflows/call-queue.ts';
+import { putThrough } from './call-fixtures.ts';
 import { FakeHubSpot, hubspotApi } from './fakes.ts';
 import { sqliteD1 } from './sqlite-d1.ts';
 
@@ -115,6 +116,7 @@ test('it introduces itself and lists its tools, marked read-only or safe to repe
     'get_call_task',
     'drafting_rules',
     'call_coaching',
+    'what_you_heard',
     'calls_to_review',
     'get_call_review',
   ]) {
@@ -224,13 +226,41 @@ test('calls are reviewed from here: the ones to review, one with its rules, and 
     next_date: TOMORROW,
   });
   assert.equal(logged.isError, false, logged.text);
+  // A recorded interview, its call over an hour ago, is reviewed from here too.
+  const dials = d1DialStore(db);
+  const nowSec = Math.floor(Date.now() / 1000);
+  await dials.begin(
+    {
+      id: 'dm',
+      task_id: 'm1',
+      subject: 'meeting',
+      contact_id: '10',
+      contact_label: putThrough.label,
+      to_number: '+13855550100',
+      to_extension: null,
+      from_number: '+13852557051',
+      rep_number: '+18085550199',
+      mode: 'phone',
+      started_sec: nowSec - 3600,
+      record: 1,
+    },
+    120
+  );
+  await dials.setRepStatus('dm', 'completed', nowSec - 3000);
+  await dials.setProspectResult('dm', { sid: 'CA9', status: 'completed', durationSec: 543 });
+  await dials.setRecording('dm', { sid: 'RE9', durationSec: 543, channels: 2 });
+  await dials.beginTranscript('dm', nowSec - 3000, 300);
+  await dials.saveTranscript('dm', JSON.stringify(putThrough.turns), null);
   // Opening coaching reads the calls not read yet, after it answers.
   await callTool('call_coaching');
 
   const list = await callTool('calls_to_review');
   assert.deepEqual(
-    list.data.calls.map((call: { taskId: string }) => call.taskId),
-    ['1']
+    list.data.calls.map((call: { taskId: string; kind: string }) => [call.taskId, call.kind]),
+    [
+      ['1', 'call'],
+      ['m1', 'interview'],
+    ]
   );
 
   const call = await callTool('get_call_review', { task_id: '1' });
@@ -279,7 +309,51 @@ test('calls are reviewed from here: the ones to review, one with its rules, and 
   assert.equal(reviewed.data.reading.review.adjust, 'Leave with a time, not “tomorrow”.');
   assert.ok(!reviewed.data.reading.unsure.includes('stage'));
 
-  assert.deepEqual((await callTool('calls_to_review')).data.calls, [], 'reviewed: off the list');
+  const interview = await callTool('get_call_review', { task_id: 'm1' });
+  assert.equal(interview.isError, false, interview.text);
+  assert.equal(interview.data.call.kind, 'interview');
+  assert.match(interview.data.call.url, /\/meetings\/m1$/);
+  assert.ok(interview.data.transcript.length > 10, 'turn by turn, with stamps');
+  assert.equal(interview.data.reading.tags.reachedThem, true);
+  // The interview logged with a follow-up: the review's answer keeps its time.
+  await d1MeetingLogStore(db).create({
+    log_id: 'm1@log',
+    meeting_id: 'm1',
+    contact_id: '10',
+    company_id: '20',
+    owner_id: null,
+    outcome: 'COMPLETED',
+    canceled_by: null,
+    notes: '',
+    internal_notes_html: '',
+    new_start: null,
+    new_end: null,
+    next_type: 'CALL',
+    next_subject: null,
+    next_due: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+    next_body: null,
+    calendar_event_id: null,
+  });
+  const saved = await callTool('review_call', {
+    task_id: 'm1',
+    corrections: { commitment: 'time' },
+    adjust: 'Ask about the last load before anything else.',
+  });
+  assert.equal(saved.isError, false, saved.text);
+  assert.equal(saved.data.reading.tags.momTest.commitment, 'time');
+  assert.ok(saved.data.reading.tags.nextStep.when, 'the follow-up’s time, from the interview’s log');
+  assert.match(saved.data.url, /\/meetings\/m1$/);
+
+  assert.deepEqual((await callTool('calls_to_review')).data.calls, [], 'both reviewed: off the list');
+
+  const heard = await callTool('what_you_heard');
+  assert.equal(heard.isError, false, heard.text);
+  assert.equal(heard.data.ofCallsThatReachedThem, 2, 'the call and the interview');
+  assert.ok(
+    heard.data.byTheme.some((t: { theme: string }) => t.theme === 'software'),
+    'Lyle on software, twice over'
+  );
+  assert.match(heard.data.callByCall[0].url, /\/meetings\/m1$/);
   const again = await callTool('get_call_review', { task_id: '1' });
   assert.equal(again.data.reviews[0].by, 'claude');
 

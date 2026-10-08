@@ -1644,6 +1644,10 @@ export interface MeetingLogStore {
   unfinished(meetingId: string): Promise<MeetingLog | null>;
   // The calendar invite the app sent when it booked this meeting, if any.
   calendarEventFor(meetingId: string): Promise<string | null>;
+  // The meeting's latest log (how the interview went, as of now), if any;
+  // with `sinceSec`, only one made at or after then (the log of the call
+  // started then, not of an earlier occurrence, moved since).
+  latest(meetingId: string, sinceSec?: number | null): Promise<MeetingLog | null>;
   // No-op if the row already exists: the first submission's values stick.
   create(row: NewMeetingLog): Promise<void>;
   acquireLock(logId: string, nowSec: number, ttlSec: number): Promise<boolean>;
@@ -1664,6 +1668,17 @@ export function d1MeetingLogStore(db: D1Database): MeetingLogStore {
       return db
         .prepare(`SELECT ${MEETING_LOG_COLUMNS} FROM meeting_logs WHERE log_id = ?`)
         .bind(logId)
+        .first<MeetingLog>();
+    },
+
+    async latest(meetingId, sinceSec = null) {
+      return db
+        .prepare(
+          `SELECT ${MEETING_LOG_COLUMNS} FROM meeting_logs
+           WHERE meeting_id = ?1 AND (?2 IS NULL OR CAST(strftime('%s', created_at) AS INTEGER) >= ?2)
+           ORDER BY created_at DESC, rowid DESC LIMIT 1`
+        )
+        .bind(meetingId, sinceSec)
         .first<MeetingLog>();
     },
 
@@ -1859,6 +1874,7 @@ export function d1MeetingBookingStore(db: D1Database): MeetingBookingStore {
 export interface CallInsight extends InsightFields {
   call_task_id: string; // the CALL task, or the meeting for an interview (see subject)
   subject: InsightSubject;
+  meeting_log_id: string | null; // an interview's: the log it was read with (none yet: null)
   contact_id: string;
   company_id: string | null;
   dial_id: string | null;
@@ -1890,6 +1906,7 @@ export type InsightSubject = 'task' | 'meeting';
 const INSIGHT_COLUMNS = [
   'call_task_id',
   'subject',
+  'meeting_log_id',
   'contact_id',
   'company_id',
   'dial_id',
@@ -1948,18 +1965,27 @@ const MAX_INSIGHTS = 5_000;
 
 export interface CallInsightStore {
   get(callTaskId: string): Promise<CallInsight | null>;
-  // Writes the call's reading, replacing an earlier one by older rules, or by
+  // Writes the call's reading, replacing an earlier one by older rules, by
   // the same rules from the same or a worse source (the transcript, then the
-  // notes, then the outcome). Leaves `excluded` as it was.
+  // notes, then the outcome), or of another dial (an interview dialled
+  // again). Leaves `excluded` as it was, unless the dial changed: a new
+  // call starts in.
   save(row: CallInsight): Promise<void>;
   // When the call was logged (epoch seconds): when it was made, for a call
   // not dialled from the app.
   loggedAt(callTaskId: string): Promise<number | null>;
-  // Logged calls to read: never read, read by rules older than
+  // Calls to read: logged calls (by CALL task) and interviews' calls (by
+  // meeting, once the call ended) never read, read by rules older than
   // `rulesVersion`, read from the notes before their transcript arrived, or
   // reviewed since they were read.
   // Newest first; WhatsApp messages aren't calls, and left-out calls stay out.
-  needing(limit: number, rulesVersion: number): Promise<string[]>;
+  // `dialsEndedBySec`: an interview's dial started before this with no final
+  // status counts as ended (its webhooks were lost: dialState's timeout).
+  needing(
+    limit: number,
+    rulesVersion: number,
+    dialsEndedBySec?: number
+  ): Promise<{ id: string; subject: InsightSubject }[]>;
   // Leaves the call out of coaching, or puts it back. False when it hasn't
   // been read yet (read it, then try again).
   setExcluded(callTaskId: string, excluded: boolean): Promise<boolean>;
@@ -1976,12 +2002,19 @@ export function d1CallInsightStore(db: D1Database): CallInsightStore {
 
     async save(row) {
       const updates = WRITTEN_COLUMNS.filter((c) => c !== 'call_task_id').map((c) => `${c} = excluded.${c}`);
+      // Whether the call is left out is the rep's, and stays through a reread
+      // of the same call; a new call (an interview dialled again) starts in.
+      updates.push(
+        'excluded = CASE WHEN excluded.dial_id IS NOT call_insights.dial_id THEN 0 ELSE call_insights.excluded END'
+      );
       await db
         .prepare(
           `INSERT INTO call_insights (${WRITTEN_COLUMNS.join(', ')})
            VALUES (${WRITTEN_COLUMNS.map(() => '?').join(', ')})
            ON CONFLICT(call_task_id) DO UPDATE SET ${updates.join(', ')}
            WHERE excluded.rules_version > call_insights.rules_version
+              -- An interview dialled again: a new call, whatever it was read from.
+              OR excluded.dial_id IS NOT call_insights.dial_id
               OR (excluded.rules_version = call_insights.rules_version
                   AND ${sourceRank('excluded.source')} >= ${sourceRank('call_insights.source')})`
         )
@@ -1998,26 +2031,49 @@ export function d1CallInsightStore(db: D1Database): CallInsightStore {
       return ms === null ? null : Math.floor(ms / 1000);
     },
 
-    async needing(limit, rulesVersion) {
+    async needing(limit, rulesVersion, dialsEndedBySec = 0) {
+      // Why a read row wants reading again, for either kind.
+      const stale = (id: string) => `
+             (i.excluded = 0 AND i.rules_version < ?1)
+             -- A review saved after its last read (a read that failed after review_call).
+             OR (i.excluded = 0 AND EXISTS (SELECT 1 FROM call_reviews r
+                 WHERE r.call_task_id = ${id} AND r.reviewed_at > i.extracted_at
+                   AND (r.dial_id IS NULL OR r.dial_id IS i.dial_id)))
+             -- A silent recording's transcript is done with no turns: nothing to read again.
+             OR (i.excluded = 0 AND i.source != 'transcript' AND d.transcript_status = 'done'
+                 AND json_array_length(d.transcript_json) > 0)`;
       const { results } = await db
         .prepare(
-          `SELECT l.call_task_id FROM call_logs l
-           LEFT JOIN call_insights i ON i.call_task_id = l.call_task_id
-           LEFT JOIN dials d ON d.id = l.dial_id
-           WHERE l.channel != 'whatsapp_message'
-             AND (i.call_task_id IS NULL
-                  OR (i.excluded = 0 AND i.rules_version < ?1)
-                  -- A review saved after its last read (a read that failed after review_call).
-                  OR (i.excluded = 0 AND EXISTS (SELECT 1 FROM call_reviews r
-                      WHERE r.call_task_id = l.call_task_id AND r.reviewed_at > i.extracted_at))
-                  -- A silent recording's transcript is done with no turns: nothing to read again.
-                  OR (i.excluded = 0 AND i.source != 'transcript' AND d.transcript_status = 'done'
-                      AND json_array_length(d.transcript_json) > 0))
-           ORDER BY l.created_at DESC LIMIT ?2`
+          `SELECT id, subject FROM (
+             SELECT l.call_task_id AS id, 'task' AS subject, CAST(strftime('%s', l.created_at) AS INTEGER) AS at
+             FROM call_logs l
+             LEFT JOIN call_insights i ON i.call_task_id = l.call_task_id AND i.subject = 'task'
+             LEFT JOIN dials d ON d.id = l.dial_id
+             WHERE l.channel != 'whatsapp_message' AND (i.call_task_id IS NULL OR ${stale('l.call_task_id')})
+             UNION ALL
+             -- An interview's latest call from its page, once it ended.
+             SELECT d.task_id AS id, 'meeting' AS subject, d.started_sec AS at
+             FROM dials d
+             LEFT JOIN call_insights i ON i.call_task_id = d.task_id AND i.subject = 'meeting'
+             WHERE d.subject = 'meeting'
+               AND (d.rep_status IS NOT NULL OR d.prospect_status IS NOT NULL OR d.started_sec < ?3)
+               -- The latest dial, as latestForTask picks it.
+               AND d.id = (SELECT d2.id FROM dials d2 WHERE d2.task_id = d.task_id AND d2.subject = 'meeting'
+                           ORDER BY d2.started_sec DESC, d2.rowid DESC LIMIT 1)
+               -- Read of an earlier dial, or with an earlier log (or none) of this call: read again.
+               -- A log from before the dial is an earlier occurrence's (moved since), not this call's.
+               AND (i.call_task_id IS NULL OR i.dial_id IS NOT d.id
+                    OR (i.excluded = 0 AND i.meeting_log_id IS NOT
+                        (SELECT m.log_id FROM meeting_logs m WHERE m.meeting_id = d.task_id
+                           AND CAST(strftime('%s', m.created_at) AS INTEGER) >= d.started_sec
+                         ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1))
+                    OR ${stale('d.task_id')})
+           )
+           ORDER BY at DESC LIMIT ?2`
         )
-        .bind(rulesVersion, limit)
-        .all<{ call_task_id: string }>();
-      return results.map((r) => r.call_task_id);
+        .bind(rulesVersion, limit, dialsEndedBySec)
+        .all<{ id: string; subject: InsightSubject }>();
+      return results.map((r) => ({ id: r.id, subject: r.subject }));
     },
 
     async setExcluded(callTaskId, excluded) {
@@ -2031,15 +2087,16 @@ export function d1CallInsightStore(db: D1Database): CallInsightStore {
 }
 
 // Every read call coaching counts, oldest first, for the coaching report
-// (without the timelines: callInsightsFor has them).
-export async function allCallInsights(db: D1Database): Promise<CallInsight[]> {
+// (without the timelines: callInsightsFor has them): the calls from CALL
+// tasks, or the interviews' calls.
+export async function allCallInsights(db: D1Database, subject: InsightSubject = 'task'): Promise<CallInsight[]> {
   const { results } = await db
     .prepare(
-      `SELECT * FROM (SELECT ${LIGHT_COLUMNS.join(', ')} FROM call_insights WHERE excluded = 0
-                      ORDER BY at_sec DESC LIMIT ?)
+      `SELECT * FROM (SELECT ${LIGHT_COLUMNS.join(', ')} FROM call_insights WHERE excluded = 0 AND subject = ?1
+                      ORDER BY at_sec DESC LIMIT ?2)
        ORDER BY at_sec`
     )
-    .bind(MAX_INSIGHTS)
+    .bind(subject, MAX_INSIGHTS)
     .all<CallInsight>();
   return results;
 }
@@ -2054,7 +2111,7 @@ export async function callInsightsNear(
   const { results } = await db
     .prepare(
       `SELECT ${LIGHT_COLUMNS.join(', ')} FROM call_insights
-       WHERE excluded = 0 AND (contact_id = ?1 OR (?2 IS NOT NULL AND company_id = ?2))
+       WHERE excluded = 0 AND subject = 'task' AND (contact_id = ?1 OR (?2 IS NOT NULL AND company_id = ?2))
        ORDER BY at_sec DESC LIMIT 50`
     )
     .bind(contactId, companyId)
@@ -2078,8 +2135,9 @@ export async function callInsightsFor(db: D1Database, callTaskIds: string[]): Pr
 // --- Reviews of a call (call_reviews): the rep's, or Claude's through the connector ---
 
 export interface CallReviewStore {
-  // The call's reviews, at most one per reviewer.
-  list(callTaskId: string): Promise<CallReview[]>;
+  // The call's reviews, at most one per reviewer: those of this dial (an
+  // interview dialled again is a new call), and those of no dial in particular.
+  list(callTaskId: string, dialId?: string | null): Promise<CallReview[]>;
   // Writes the reviewer's review of the call under the current review rules
   // (REVIEW_RULES_VERSION). It replaces their earlier one whole, unless that
   // one was under older rules: a reviewer asked again only for what's new
@@ -2089,39 +2147,44 @@ export interface CallReviewStore {
 
 export function d1CallReviewStore(db: D1Database): CallReviewStore {
   return {
-    async list(callTaskId) {
+    async list(callTaskId, dialId) {
       const { results } = await db
         .prepare(
-          `SELECT reviewer, corrections, what_worked, adjust, reviewed_at FROM call_reviews
-           WHERE call_task_id = ? ORDER BY reviewer`
+          `SELECT reviewer, corrections, what_worked, adjust, reviewed_at, dial_id FROM call_reviews
+           WHERE call_task_id = ?1 AND (?2 IS NULL OR dial_id IS NULL OR dial_id = ?2) ORDER BY reviewer`
         )
-        .bind(callTaskId)
+        .bind(callTaskId, dialId ?? null)
         .all<{
           reviewer: Reviewer;
           corrections: string;
           what_worked: string | null;
           adjust: string | null;
           reviewed_at: string;
+          dial_id: string | null;
         }>();
       return results.map((r) => ({ ...r, corrections: parseCorrections(r.corrections) }));
     },
 
     async save(callTaskId, review) {
+      const dialId = review.dial_id ?? null;
       const earlier = await db
-        .prepare(`SELECT corrections, rules_version FROM call_reviews WHERE call_task_id = ? AND reviewer = ?`)
+        .prepare(`SELECT corrections, rules_version, dial_id FROM call_reviews WHERE call_task_id = ? AND reviewer = ?`)
         .bind(callTaskId, review.reviewer)
-        .first<{ corrections: string; rules_version: number }>();
+        .first<{ corrections: string; rules_version: number; dial_id: string | null }>();
+      // An earlier review under older rules, of this same call, is added to.
       const corrections =
-        earlier && earlier.rules_version < REVIEW_RULES_VERSION
+        earlier &&
+        earlier.rules_version < REVIEW_RULES_VERSION &&
+        (earlier.dial_id === null || earlier.dial_id === dialId)
           ? { ...parseCorrections(earlier.corrections), ...review.corrections }
           : review.corrections;
       await db
         .prepare(
-          `INSERT INTO call_reviews (call_task_id, reviewer, corrections, what_worked, adjust, reviewed_at, rules_version)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO call_reviews (call_task_id, reviewer, corrections, what_worked, adjust, reviewed_at, rules_version, dial_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(call_task_id, reviewer) DO UPDATE SET corrections = excluded.corrections,
              what_worked = excluded.what_worked, adjust = excluded.adjust, reviewed_at = excluded.reviewed_at,
-             rules_version = excluded.rules_version`
+             rules_version = excluded.rules_version, dial_id = excluded.dial_id`
         )
         .bind(
           callTaskId,
@@ -2130,7 +2193,8 @@ export function d1CallReviewStore(db: D1Database): CallReviewStore {
           review.what_worked,
           review.adjust,
           review.reviewed_at,
-          REVIEW_RULES_VERSION
+          REVIEW_RULES_VERSION,
+          dialId
         )
         .run();
     },
@@ -2146,11 +2210,44 @@ export async function callsToReview(db: D1Database, limit: number): Promise<Call
       `SELECT ${INSIGHT_COLUMNS.map((c) => `i.${c}`).join(', ')} FROM call_insights i
        WHERE i.excluded = 0 AND i.gate IN ('owner', 'gatekeeper')
          AND NOT EXISTS (SELECT 1 FROM call_reviews r
-                         WHERE r.call_task_id = i.call_task_id AND r.rules_version >= ?1)
+                         WHERE r.call_task_id = i.call_task_id AND r.rules_version >= ?1
+                           AND (r.dial_id IS NULL OR r.dial_id IS i.dial_id))
        ORDER BY i.at_sec DESC LIMIT ?2`
     )
     .bind(REVIEW_RULES_VERSION, limit)
     .all<CallInsight>();
+  return results;
+}
+
+// --- What they've told the rep (coaching's What you've heard) ---
+
+export interface HeardRow {
+  call_task_id: string;
+  subject: InsightSubject;
+  label: string;
+  at_sec: number;
+  transcript_json: string | null; // the dial's finished transcript, if any
+  notes: string; // the rep's notes on the call, or the interview's latest log
+}
+
+// Every call and interview that reached them, newest first, with its
+// transcript and the rep's notes: what there is to hear them in.
+export async function heardSources(db: D1Database, limit = 500): Promise<HeardRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT i.call_task_id, i.subject, i.label, i.at_sec,
+              CASE WHEN d.transcript_status = 'done' THEN d.transcript_json END AS transcript_json,
+              COALESCE(CASE WHEN i.subject = 'task' THEN l.notes
+                            ELSE (SELECT m.notes FROM meeting_logs m WHERE m.meeting_id = i.call_task_id
+                                  ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1) END, '') AS notes
+       FROM call_insights i
+       LEFT JOIN dials d ON d.id = i.dial_id
+       LEFT JOIN call_logs l ON i.subject = 'task' AND l.call_task_id = i.call_task_id
+       WHERE i.excluded = 0 AND i.reached = 1
+       ORDER BY i.at_sec DESC LIMIT ?`
+    )
+    .bind(limit)
+    .all<HeardRow>();
   return results;
 }
 

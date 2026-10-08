@@ -3,6 +3,7 @@
 // each record's page (where the rep calls and sends). No I/O.
 
 import type { CallCoaching, CallForReview, CallNotes } from '../actions/coaching';
+import type { HeardReport, Said } from '../lib/heard';
 import { formatAddress, zoneLabel } from '../lib/address';
 import { clock } from '../lib/call-history';
 import {
@@ -15,6 +16,8 @@ import {
 } from '../lib/call-insight';
 import {
   BOOKING_STATUS_LABELS,
+  insightPath,
+  type MomTestReport,
   heldRate,
   hourLabel,
   MIN_SAMPLE,
@@ -225,6 +228,7 @@ export function inboundCallSummary(call: InboundCall, timeZone: string, origin: 
 export function callInsightSummary(call: CallInsight, timeZone: string, origin: string) {
   return {
     taskId: call.call_task_id,
+    kind: call.subject === 'meeting' ? 'interview' : 'call',
     with: call.label,
     at: localTime(call.at_sec * 1000, timeZone),
     length: call.duration_sec !== null ? clock(call.duration_sec) : null,
@@ -241,7 +245,7 @@ export function callInsightSummary(call: CallInsight, timeZone: string, origin: 
     opening: call.opening,
     momTest: momTest(call),
     adjust: adjustNotes(call).map((n) => n.text),
-    url: pageUrl(origin, `/calls/${call.call_task_id}`),
+    url: pageUrl(origin, insightPath(call)),
   };
 }
 
@@ -364,24 +368,25 @@ export function callReviewSummary(r: CallForReview, origin: string) {
   return {
     timeZone: tz,
     call: {
-      taskId: r.log.call_task_id,
+      taskId: r.call.id,
+      kind: r.call.kind,
       with: r.notes.label,
-      channel: r.log.channel,
-      outcome: r.log.outcome,
-      lengthSec: r.log.duration_sec ?? r.notes.read.duration_sec,
-      repNotes: r.log.notes || null,
-      url: pageUrl(origin, `/calls/${r.log.call_task_id}`),
+      channel: r.call.channel,
+      outcome: r.call.outcome,
+      lengthSec: r.call.durationSec ?? r.notes.read.duration_sec,
+      repNotes: r.call.notes || null,
+      url: pageUrl(origin, r.call.kind === 'interview' ? `/meetings/${r.call.id}` : `/calls/${r.call.id}`),
     },
     // Each turn stamped start–end (the end: their last word, not the next turn),
     // so a turn's length reads off the line and silence between turns doesn't count.
     transcript: r.turns.length
       ? r.turns.map((t, i) => {
-          const { from, to } = turnSpan(r.turns, i, r.log.duration_sec ?? r.notes.read.duration_sec);
+          const { from, to } = turnSpan(r.turns, i, r.call.durationSec ?? r.notes.read.duration_sec);
           return `[${clock(Math.round(from))}–${clock(Math.round(to))}] ${SPEAKER_LABELS[t.speaker]}: ${t.text}`;
         })
       : null,
     autoSummary: r.summary.length ? r.summary : null,
-    reading: afterCallSummary(r.notes, r.log.next_due, tz),
+    reading: afterCallSummary(r.notes, r.call.nextDue, tz),
     reviews: r.reviews.map((v) => ({
       by: v.reviewer,
       corrections: v.corrections,
@@ -390,6 +395,40 @@ export function callReviewSummary(r: CallForReview, origin: string) {
       at: localTime(Date.parse(v.reviewed_at), tz),
     })),
     rules: CALL_REVIEW_RULES,
+  };
+}
+
+// What they've told the rep (what_you_heard): the tools named and what they
+// said about their work, by theme, each quote with the call it's from.
+export function heardSummary(report: HeardReport, timeZone: string, origin: string) {
+  const quote = (q: Said) => ({
+    said: q.text,
+    from: q.from === 'them' ? 'them, on the recording' : 'the rep’s notes',
+    pain: q.pain,
+    call: { id: q.id, kind: q.kind, with: q.label, at: localTime(q.atSec * 1000, timeZone) },
+    url: pageUrl(origin, q.kind === 'interview' ? `/meetings/${q.id}` : `/calls/${q.id}`),
+  });
+  return {
+    timeZone,
+    heardFrom: report.heardFrom,
+    ofCallsThatReachedThem: report.of,
+    softwareTheyUse: report.tools.map((t) => ({ name: t.name, calls: t.calls, quotes: t.quotes.map(quote) })),
+    byTheme: report.themes.map((t) => ({
+      theme: t.theme,
+      label: t.label,
+      calls: t.calls,
+      callsWithAPain: t.pains,
+      quotes: t.quotes.map(quote),
+    })),
+    callByCall: report.calls.map((c) => ({
+      id: c.id,
+      kind: c.kind,
+      with: c.label,
+      at: localTime(c.atSec * 1000, timeZone),
+      tools: c.tools,
+      said: c.said.map((q) => ({ said: q.text, from: q.from, pain: q.pain })),
+      url: pageUrl(origin, c.kind === 'interview' ? `/meetings/${c.id}` : `/calls/${c.id}`),
+    })),
   };
 }
 
@@ -438,7 +477,7 @@ export function bookingSummary(bookings: BookingReport, timeZone: string, origin
 
 // The coaching report, with rates as percentages and every group's size, so
 // a pattern from a handful of calls reads as one.
-export function coachingSummary(report: CoachingReport, timeZone: string, origin: string) {
+export function coachingSummary(report: CoachingReport, timeZone: string, origin: string, momTest?: MomTestReport) {
   const rate = (r: Rate) => ({ calls: r.calls, reached: r.reached, rate: pct(rateOf(r)) });
   return {
     timeZone,
@@ -446,6 +485,25 @@ export function coachingSummary(report: CoachingReport, timeZone: string, origin
     calls: report.calls,
     reached: report.reached,
     answered: report.answered,
+    // The Mom Test on every call and interview that reached them: counts of
+    // what the rules and the reviews have said; the rest is unsaid, not no.
+    momTest: momTest
+      ? {
+          reached: momTest.rows.length,
+          interviews: momTest.rows.filter((r) => r.kind === 'interview').length,
+          askedAboutLastTime: momTest.asked,
+          pitched: momTest.pitched,
+          storiesOfAMinute: momTest.stories,
+          fluffCaught: momTest.fluffCaught,
+          commitments: momTest.commitments,
+          longestStory: momTest.longest
+            ? {
+                ...callInsightSummary(momTest.longest.call, timeZone, origin),
+                sec: momTest.longest.call.longest_story_sec,
+              }
+            : null,
+        }
+      : null,
     reachedByHourTheirTime: report.byHour.map((h) => ({ hour: hourLabel(h.hour), ...rate(h) })),
     reachedByTimeZone: report.byZone.map((z) => ({ zone: z.label, ...rate(z) })),
     averageLengthByOutcome: report.lengthByOutcome.map((l) => ({
