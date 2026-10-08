@@ -248,6 +248,14 @@ test('talked with someone: a person in the same turn as the menu, on their chann
     true,
     'a live reply that sounds like a greeting, after the rep spoke'
   );
+  assert.equal(
+    talkedWithSomeone([
+      turn('rep', 0, 'Hi Ruth?'),
+      turn('prospect', 1, 'You’ve reached Ruth; please leave a message after the beep.'),
+    ]),
+    false,
+    'a real greeting the rep spoke over'
+  );
 });
 
 test('talked with someone: before the rep speaks, a voicemail greeting in their turn ends what counts', () => {

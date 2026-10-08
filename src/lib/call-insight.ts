@@ -648,14 +648,15 @@ const greets = (sentence: string) => VOICEMAIL.test(sentence) || GREETING.test(s
 
 // The words a person said in a turn on their side. One turn can run a
 // menu's or a transfer notice's line into a person's, when they came on
-// within seconds of it, so those are dropped sentence by sentence. Before
-// the rep has said anything, a voicemail greeting ends what counts, and what
-// came before it counts only if it was an exchange (EXCHANGE, HOLD), not the
-// greeting introducing itself. After, they're answering the rep: "Sorry, I
-// can't take your call right now" is a live reply, not a recording.
+// within seconds of it, so those are dropped sentence by sentence. A
+// voicemail greeting ends what counts, and what came before it counts only
+// if it was an exchange (EXCHANGE, HOLD), not the greeting introducing
+// itself. Once the rep has said something, only a greeting's unmistakable
+// words (VOICEMAIL: "after the beep") mark one: they're answering the rep,
+// and "Sorry, I can't take your call right now" is a live reply.
 function personWords(text: string, answering: boolean): number {
   const sentences = sentencesOf(text);
-  const at = answering ? -1 : sentences.findIndex(greets);
+  const at = sentences.findIndex(answering ? (s: string) => VOICEMAIL.test(s) : greets);
   const before = (at < 0 ? sentences : sentences.slice(0, at)).filter((s) => !switchboard(s));
   const said = before.reduce((n, sentence) => n + words(sentence), 0);
   if (at < 0) return said;
