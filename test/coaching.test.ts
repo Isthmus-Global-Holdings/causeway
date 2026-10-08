@@ -231,6 +231,18 @@ test('talked with someone, on one channel (all “call”): words past the menu 
     false,
     'a menu in its own words: dial, not press'
   );
+  const greeting = call(0, 'Hi, you’ve reached Ruth. Please leave a message after the beep.');
+  const message = call(9, 'Hi Ruth, this is Anel calling about quoting, I’ll try you again tomorrow.');
+  assert.equal(talkedWithSomeone([greeting, message]), false, 'the rep’s message after a voicemail greeting');
+  assert.equal(
+    talkedWithSomeone([
+      call(0, 'Good morning, Acme, this is Dana. Hi Dana, is Ruth in? Let me put you through.'),
+      call(14, 'Hi, you’ve reached Ruth. Please leave a message after the beep.'),
+      call(20, 'Hi Ruth, this is Anel, I’ll try you again tomorrow.'),
+    ]),
+    true,
+    'the front desk before the voicemail'
+  );
 });
 
 test('talked with someone: a person in the same turn as the menu, on their channel', () => {

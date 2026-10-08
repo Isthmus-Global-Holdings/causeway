@@ -652,10 +652,15 @@ function personWords(text: string): number {
 // line that isn't a phone menu, a transfer notice or a voicemail greeting. A
 // call that only reached those didn't, and a summary of it would be made up.
 // A recording Nova gave back as one channel (all 'call') can't tell the rep
-// from them: there, a few words no machine said are enough.
+// from them: there, a few words no machine said are enough, before any
+// voicemail greeting (after one, it's the rep's own message).
 export function talkedWithSomeone(turns: Turn[]): boolean {
   if (turns.every((t) => t.speaker === 'call')) {
-    return turns.reduce((n, t) => n + personWords(t.text), 0) >= ONE_CHANNEL_WORDS;
+    const greeting = turns.findIndex((t) => VOICEMAIL.test(t.text));
+    return (
+      (greeting < 0 ? turns : turns.slice(0, greeting)).reduce((n, t) => n + personWords(t.text), 0) >=
+      ONE_CHANNEL_WORDS
+    );
   }
   const repWords = turns.filter((t) => t.speaker === 'rep').reduce((n, t) => n + words(t.text), 0);
   return repWords >= 2 && turns.some((t) => far(t) && personWords(t.text) >= 2);
