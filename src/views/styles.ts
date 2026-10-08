@@ -59,6 +59,38 @@ section { display: flex; flex-direction: column; gap: var(--space-2); margin-top
 .phone-edit { display: grid; grid-template-columns: minmax(0, 1fr) 6rem; gap: var(--space-2); align-items: end; }
 .with-aside { display: grid; grid-template-columns: minmax(0, 1fr) 20rem; gap: var(--space-4); align-items: start; }
 .with-aside > :last-child { position: sticky; top: var(--space-4); }
+/* A call page: today's calls down the left, the call beside them. The list
+   stays put going from call to call (its own view transition), so the call
+   changing beside it reads as a new one. */
+main:has(> .with-rail) { max-width: 78rem; }
+.with-rail { display: grid; grid-template-columns: 15rem minmax(0, 1fr); gap: var(--space-4); align-items: start; }
+.rail { position: sticky; top: var(--space-4); max-height: calc(100vh - 2 * var(--space-4)); overflow-y: auto;
+        gap: var(--space-2); padding: var(--space-3); view-transition-name: rail; }
+.rail-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.rail-list a { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: 0 var(--space-2);
+               padding: var(--space-1) var(--space-2); border-radius: var(--radius-md); color: var(--fg); text-decoration: none; }
+.rail-list a:hover { background: var(--bg); }
+.rail-list a .muted { grid-column: 1 / -1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-who { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-list .current a { background: var(--bg); box-shadow: inset 3px 0 0 var(--accent); font-weight: 600; }
+.rail-list .done a { color: var(--muted); }
+/* After logging a call: what was logged, then the next call, which flashes in */
+.handoff { display: flex; flex-direction: column; gap: var(--space-1); background: var(--ok-bg); color: var(--ok-fg);
+           border-left: 4px solid currentColor; border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); }
+.handoff a { color: inherit; font-weight: 600; }
+.handoff .muted { color: inherit; opacity: 0.85; }
+.kicker { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--accent); }
+.arrived { border-radius: var(--radius-md); animation: arrived 1.8s ease-out; }
+@keyframes arrived {
+  from { background: var(--ok-bg); box-shadow: 0 0 0 var(--space-2) var(--ok-bg); }
+  to { background: transparent; box-shadow: 0 0 0 var(--space-2) transparent; }
+}
+@media (prefers-reduced-motion: reduce) { .arrived { animation: none; } }
+/* Narrower: the list goes above the call, short, scrolling */
+@media (max-width: 1100px) {
+  .with-rail { grid-template-columns: minmax(0, 1fr); }
+  .rail { position: static; max-height: 13rem; }
+}
 .setting { display: grid; grid-template-columns: 17.5rem minmax(0, 1fr); gap: var(--space-6); padding-top: var(--space-6); border-top: 1px solid var(--line); }
 .steps strong { color: var(--fg); }
 .bar { display: flex; justify-content: flex-end; align-items: center; flex-wrap: wrap; gap: var(--space-3); padding-top: var(--space-4); border-top: 1px solid var(--line); }

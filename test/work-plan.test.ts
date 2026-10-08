@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { nextInPlan, parsePlan, withoutItem, withSetTimeCall, type WorkPlan } from '../src/lib/work-plan.ts';
+import {
+  keepingDone,
+  nextInPlan,
+  parsePlan,
+  planProgress,
+  withoutItem,
+  withSetTimeCall,
+  type WorkPlan,
+} from '../src/lib/work-plan.ts';
 
 const plan: WorkPlan = {
   date: '2026-09-25',
@@ -82,4 +90,82 @@ test('a stored plan is read back, and anything else is no plan', () => {
 
 test('an item taken out of the plan is never next', () => {
   assert.equal(nextInPlan(withoutItem(plan, 'b'), '2026-09-25', 'a', new Set())?.id, 'c');
+});
+
+test('the call page lists today’s plan: done, this one, the next, the rest', () => {
+  const calls: WorkPlan = {
+    date: '2026-09-25',
+    items: [
+      { id: 'a', drafted: false, company: 'Acme', contact: 'Ann' },
+      { id: 'b', drafted: false, company: 'Bolt', contact: 'Bo' },
+      { id: 'c', drafted: false, contact: 'Cy' },
+      { id: 'd', drafted: false },
+    ],
+  };
+  const progress = planProgress(calls, '2026-09-25', 'b', new Set(['a']));
+  assert.deepEqual(
+    progress?.items.map((i) => [i.id, i.state]),
+    [
+      ['a', 'done'],
+      ['b', 'current'],
+      ['c', 'next'],
+      ['d', 'open'],
+    ]
+  );
+  assert.equal(progress?.left, 3);
+  assert.equal(progress?.done, 1);
+  assert.equal(planProgress(calls, '2026-09-26', 'b', new Set()), null, "another day's plan is no list");
+  assert.deepEqual(
+    planProgress(calls, '2026-09-25', 'elsewhere', new Set())?.items.map((i) => i.state),
+    ['next', 'open', 'open', 'open'],
+    'a call not in the plan: only the list'
+  );
+  const viewingDone = planProgress(calls, '2026-09-25', 'a', new Set(['a']));
+  assert.equal(viewingDone?.items[0]?.state, 'current');
+  assert.equal(viewingDone?.items[0]?.done, true, 'a done call is still done while it is open');
+  assert.equal(viewingDone?.done, 1);
+  assert.equal(viewingDone?.left, 3);
+  assert.deepEqual(parsePlan(JSON.stringify(calls)), calls, 'who each is is kept');
+});
+
+test('a set-time call keeps who it is: its own entry, or the call its follow-up came from', () => {
+  const calls: WorkPlan = {
+    date: '2026-09-25',
+    items: [{ id: 'a', drafted: false, company: 'Acme', contact: 'Ann' }],
+  };
+  const moved = withSetTimeCall(calls, '2026-09-25', 'a', 1_000);
+  assert.deepEqual(moved?.items, [{ id: 'a', drafted: false, at: 1_000, company: 'Acme', contact: 'Ann' }]);
+  const followUp = withSetTimeCall(calls, '2026-09-25', 'f', 2_000, 'a');
+  assert.deepEqual(
+    followUp?.items.find((i) => i.id === 'f'),
+    { id: 'f', drafted: false, at: 2_000, company: 'Acme', contact: 'Ann' }
+  );
+  assert.deepEqual(
+    withSetTimeCall(calls, '2026-09-25', 'g', 2_000)?.items.find((i) => i.id === 'g'),
+    { id: 'g', drafted: false, at: 2_000 }
+  );
+});
+
+test("rebuilding today's order keeps the calls done today, first", () => {
+  const before: WorkPlan = {
+    date: '2026-09-25',
+    items: [
+      { id: 'a', drafted: false, contact: 'Ann' },
+      { id: 'b', drafted: false },
+      { id: 'c', drafted: false, contact: 'Cy' },
+      { id: 'd', drafted: false },
+    ],
+  };
+  const rebuilt = [
+    { id: 'd', drafted: false },
+    { id: 'e', drafted: false },
+  ];
+  const done = new Set(['a', 'c', 'x']);
+  assert.deepEqual(
+    keepingDone(before, rebuilt, '2026-09-25', done).map((i) => i.id),
+    ['a', 'c', 'd', 'e'],
+    'b, not done and no longer due, drops out'
+  );
+  assert.equal(keepingDone(before, rebuilt, '2026-09-26', done), rebuilt, "another day's plan keeps nothing");
+  assert.equal(keepingDone(null, rebuilt, '2026-09-25', done), rebuilt);
 });
