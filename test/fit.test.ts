@@ -149,3 +149,12 @@ test("the call script's lines never rate a company", () => {
   assert.equal(parseFitLabel('Family carrier. Pedestal: you are a good fit for this, NOT A FIT for that.'), 'UNKNOWN');
   assert.equal(parseFitLabel('World: how carriers quote. Fit: POOR - enterprise TMS.'), 'DROP');
 });
+
+test('every line of a label goes, even two sentences in a row', () => {
+  const description = 'Fit: STRONG - x. Pedestal: benign. Pedestal: rates probably drop. World: a. World: b.';
+  assert.equal(parseFitLabel(description), 'STRONG');
+  assert.equal(
+    withCallLines(description, { theirWorld: WORLD, pedestal: PEDESTAL }),
+    `Fit: STRONG - x.\nWorld: ${WORLD}.\nPedestal: ${PEDESTAL}.`
+  );
+});

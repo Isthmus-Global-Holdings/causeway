@@ -126,10 +126,15 @@ export function checkCallLine(kind: keyof CallLines, raw: string): { value: stri
 // The description without its World and Pedestal lines. A line of its own
 // goes with its newline; a sentence leaves the period that ended the one
 // before it.
+// Repeated until nothing changes: a match takes the period that ends it,
+// which the next sentence of the same label needs in front of it.
 function withoutCallLines(description: string): string {
   let rest = description;
-  for (const label of ['world', 'pedestal']) {
-    rest = rest.replace(lineOf(label, 'gi'), (_m, before: string) => (before === '\n' ? '' : before));
+  for (let was = ''; was !== rest;) {
+    was = rest;
+    for (const label of ['world', 'pedestal']) {
+      rest = rest.replace(lineOf(label, 'gi'), (_m, before: string) => (before === '\n' ? '' : before));
+    }
   }
   return rest.trim();
 }
