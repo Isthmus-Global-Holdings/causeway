@@ -1632,3 +1632,25 @@ test('a review over a call whose stored reading is from a better source is saved
   );
   assert.deepEqual({ ...stored }, reviewed, 'what was saved is what came back');
 });
+
+test('the hours note stays until two hours have enough calls to compare', async () => {
+  const at = (hour: number, n: number) =>
+    Array.from({ length: n }, (_, i) => insight({ call_task_id: `p${hour}-${i}`, at_sec: T0 + (hour - 10) * HOUR }));
+  const page = async (rows: CallInsight[]) => {
+    const report = coachingReport(rows, TZ);
+    const overview = {
+      settings: { timeZone: TZ } as never,
+      report,
+      bookings: bookingReport([], 0),
+      funnel: callFunnel(report, [], 0),
+      unread: 0,
+    };
+    return String(await coachingPage(overview, 'rep@example.com'));
+  };
+  assert.match(
+    await page([...at(10, HOUR_SAMPLE), ...at(14, 5)]),
+    /Too few calls to pick an hour by yet/,
+    'one busy hour'
+  );
+  assert.doesNotMatch(await page([...at(10, HOUR_SAMPLE), ...at(14, HOUR_SAMPLE)]), /Too few calls to pick an hour/);
+});

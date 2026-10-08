@@ -408,8 +408,8 @@ export function coachingPage({ settings, report, bookings, funnel, unread }: Coa
             <tbody>${report.byHour.map((h) => html`<tr><td>${hourLabel(h.hour)}</td>${rateCells(h)}</tr>`)}</tbody>
           </table>
           ${
-            Math.max(0, ...report.byHour.map((h) => h.calls)) < HOUR_SAMPLE
-              ? html`<p class="muted">Too few calls to pick an hour by yet: it takes about ${HOUR_SAMPLE} calls in each hour before one beats another. Until then, spread your calls across the day.</p>`
+            report.byHour.filter((h) => h.calls >= HOUR_SAMPLE).length < 2
+              ? html`<p class="muted">Too few calls to pick an hour by yet: it takes about ${HOUR_SAMPLE} calls in each of two hours or more before one beats another. Until then, spread your calls across the day.</p>`
               : ''
           }
         </section>
