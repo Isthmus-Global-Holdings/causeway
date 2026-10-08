@@ -835,6 +835,41 @@ test('a recording Nova gave back as one channel keeps its summary: who said what
   assert.equal(dial.summary, '- Wants a quote\n- Call back Monday');
 });
 
+test('a one-channel recording of only a phone menu and a voicemail greeting gets no summary either', async () => {
+  class Automated extends FakeAi {
+    summarized = 0;
+    override async transcribe() {
+      const word = (w: string, start: number) => ({ word: w, start, end: start + 3 });
+      return {
+        results: {
+          channels: [
+            {
+              alternatives: [
+                {
+                  words: [
+                    word('If you know your party’s extension, please dial it now.', 0),
+                    word('Your call is being transferred.', 10),
+                    word('Extension 109 is unavailable. Please leave a message after the tone.', 20),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      };
+    }
+    override async summarize() {
+      this.summarized += 1;
+      return '- They confirmed interest';
+    }
+  }
+  const ai = new Automated();
+  const { deps } = await recordedCall(ai);
+  assert.equal(await runTranscription(deps, DIAL_ID, { now: NOW, baseUrl: BASE }), 'done');
+  assert.equal((await dials.get(DIAL_ID))!.summary, null);
+  assert.equal(ai.summarized, 0);
+});
+
 test('a failed transcription can be retried; a failed summary keeps the transcript', async () => {
   const ai = new FakeAi();
   const { deps } = await recordedCall(ai);

@@ -194,6 +194,27 @@ test('talked with someone: a person past the menu, not a menu, transfer or voice
   );
 });
 
+test('talked with someone, on one channel (all “call”): words past the menu no machine said', () => {
+  const call = (start: number, text: string) => ({ speaker: 'call' as const, start, text });
+  const menu = call(0, 'If you know your party’s extension, please dial it now. For customer service, press 1.');
+  assert.equal(talkedWithSomeone([menu]), false, 'only the menu');
+  assert.equal(
+    talkedWithSomeone([
+      menu,
+      call(15, 'Your call is being transferred.'),
+      call(34, 'One zero.'),
+      call(36, 'Extension 109 is unavailable. Please leave a message after the tone.'),
+    ]),
+    false,
+    'a transfer, two keyed-in words and a voicemail greeting'
+  );
+  assert.equal(
+    talkedWithSomeone([menu, call(18, 'Good morning, this is Dana. Hi Dana, is Ana in? She’s in a meeting.')]),
+    true,
+    'people talking'
+  );
+});
+
 test('the front desk put them on hold and they never came on (Hugo)', () => {
   const read = heard(onHold);
   assert.equal(read.gate, 'gatekeeper');

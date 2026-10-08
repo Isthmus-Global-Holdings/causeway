@@ -632,18 +632,22 @@ export function phoneTree(turns: Turn[], firstName: string | null): PhoneTree | 
 // The rep talked with someone: past any phone menu, the rep said something
 // and a person said a line that isn't the menu, a transfer notice or a
 // voicemail greeting. A call that only reached those didn't, and a summary
-// of it would be made up.
+// of it would be made up. A recording Nova gave back as one channel (all
+// 'call') can't tell the rep from them: there, a few words past the menu
+// that no machine said are enough.
 export function talkedWithSomeone(turns: Turn[]): boolean {
   const plain = plainTurns(turns);
   const after = plain.slice(phoneTree(plain, null)?.end ?? 0);
+  const person = (t: Turn) =>
+    words(t.text) >= 2 && !MENU.test(t.text) && !TRANSFER.test(t.text) && !VOICEMAIL.test(t.text);
+  if (after.every((t) => t.speaker === 'call')) {
+    return after.filter(person).reduce((n, t) => n + words(t.text), 0) >= ONE_CHANNEL_WORDS;
+  }
   const repWords = after.filter((t) => t.speaker === 'rep').reduce((n, t) => n + words(t.text), 0);
-  return (
-    repWords >= 2 &&
-    after.some(
-      (t) => far(t) && words(t.text) >= 2 && !MENU.test(t.text) && !TRANSFER.test(t.text) && !VOICEMAIL.test(t.text)
-    )
-  );
+  return repWords >= 2 && after.some((t) => far(t) && person(t));
 }
+// More than a keyed-in "one zero" or a stray word between the machine's lines.
+const ONE_CHANNEL_WORDS = 5;
 
 // Who answered and what happened, from the transcript alone. Null when no
 // person answered on it (only a menu, or nothing on their side).
