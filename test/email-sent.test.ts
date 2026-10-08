@@ -72,6 +72,55 @@ test('reuses a CALL task that was created but never recorded in D1', async () =>
   assert.equal(hs.created.length, 0);
 });
 
+test('a contact with an open CALL task keeps that one, moved to the follow-up time', async () => {
+  hs.put('tasks', '556', {
+    hs_task_type: 'CALL',
+    hs_task_status: 'NOT_STARTED',
+    hs_task_subject: 'Call: Acme (Ana Díaz)',
+    hs_timestamp: '2026-09-24T13:00:00Z', // due this morning
+  });
+  hs.link('contacts', '10', 'tasks', '556');
+
+  const result = await runEmailSent(hs, store, '1', opts);
+  assert.deepEqual(result, { callTaskId: '556', completedNow: true, callTaskCreated: false });
+  assert.equal(hs.created.length, 0);
+  const call = hs.objects.get('tasks/556')!.properties;
+  assert.equal(call.hs_timestamp, '2026-09-25T19:30:00.000Z', 'tomorrow, like a new follow-up');
+  assert.equal(call.hs_task_subject, 'Call: Acme (Ana Díaz)', 'its subject is kept');
+});
+
+test('an open CALL task at a set time, or due later, stays put', async () => {
+  hs.put('tasks', '557', {
+    hs_task_type: 'CALL',
+    hs_task_status: 'NOT_STARTED',
+    hs_timestamp: '2026-09-24T21:00:00Z',
+    hs_task_reminders: String(Date.parse('2026-09-24T20:55:00Z')),
+  });
+  hs.link('contacts', '10', 'tasks', '557');
+  await runEmailSent(hs, store, '1', opts);
+  assert.equal(hs.objects.get('tasks/557')!.properties.hs_timestamp, '2026-09-24T21:00:00Z');
+
+  hs.put('tasks', '4', { hs_task_type: 'EMAIL', hs_task_status: 'NOT_STARTED' });
+  hs.put('contacts', '12', { firstname: 'Bo' });
+  hs.put('tasks', '558', { hs_task_type: 'CALL', hs_task_status: 'NOT_STARTED', hs_timestamp: '2026-10-01T15:00:00Z' });
+  hs.link('tasks', '4', 'contacts', '12');
+  hs.link('contacts', '12', 'tasks', '558');
+  assert.equal((await runEmailSent(hs, store, '4', opts)).callTaskId, '558');
+  assert.equal(hs.objects.get('tasks/558')!.properties.hs_timestamp, '2026-10-01T15:00:00Z');
+  assert.equal(hs.created.length, 0);
+});
+
+test('a completed or dropped CALL task is not reused', async () => {
+  hs.put('tasks', '559', { hs_task_type: 'CALL', hs_task_status: 'COMPLETED', hs_task_subject: 'Call: Acme' });
+  hs.put('tasks', '560', { hs_task_type: 'CALL', hs_task_status: 'DEFERRED', hs_task_subject: 'Call: Acme' });
+  hs.link('contacts', '10', 'tasks', '559');
+  hs.link('contacts', '10', 'tasks', '560');
+
+  const result = await runEmailSent(hs, store, '1', opts);
+  assert.equal(result.callTaskCreated, true);
+  assert.equal(hs.created.length, 1);
+});
+
 test('a concurrent run holding the lock is refused', async () => {
   await store.create({ emailTaskId: '1', contactId: '10', companyId: '20' });
   await store.acquireLock('1', Math.floor(NOW / 1000), 60);

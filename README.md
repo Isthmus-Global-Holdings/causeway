@@ -82,6 +82,11 @@ HubSpot exposes no send event for one-to-one email, so a rep confirms it by hand
      task (09:00 in your time zone if it has none: picked on /settings, else
      the `TZ` var)
    - subject `Call: {Company} ({Name}) — follow up on email`
+   - unless the contact already has an open `CALL` task (made from their
+     page, by hand, or left by a logged call): that one is the follow-up
+     instead, so nobody is in Calls to make twice. It moves to the
+     follow-up's time if it was due sooner, and stays put if it's at a set
+     time or already due later.
 3. You land straight on the next email in the queue's order: its draft
    page, or its send page once it's drafted (one still to draft comes
    first). The queue page saves that order each time it shows, and with no

@@ -7,18 +7,19 @@
 //   1. mark the EMAIL task COMPLETED
 //   2. create a CALL task for the next calendar day on the same Contact + Company,
 //      due at the same local time of day as the email task (the
-//      hubspot-email-sent-followup skill's rule), else 09:00
+//      hubspot-email-sent-followup skill's rule), else 09:00. A contact who
+//      already has an open CALL task keeps that one instead (openCallTask).
 // Ranking the remaining queue (step 3) is read-only and lives in email-queue.ts.
 
 import { nextCalendarDayAt, parseHubSpotTime, timeOfDay, type TimeOfDay } from '../lib/dates';
 import type { Confirmation, ConfirmationStore } from '../lib/db';
 import type { HubSpot, HubSpotObject } from '../lib/hubspot';
+import { hasReminder } from '../lib/set-time';
 import {
   COMPANY_PROPS,
   CONTACT_PROPS,
   companyName,
   contactName,
-  findOpenTask,
   loadTask,
   ownerOf,
   WorkflowError,
@@ -151,15 +152,19 @@ export async function finishEmailSent(
     const callTime = emailDue === null ? DEFAULT_CALL_TIME : timeOfDay(emailDue, opts.timeZone);
 
     const subject = followUpSubject(companyName(company), contactName(contact));
-    const existing = await findOpenTask(hs, contact.id, 'CALL', subject, knownTaskIds);
+    const followUpAt = nextCalendarDayAt(opts.now, opts.timeZone, callTime);
+    const existing = await openCallTask(hs, contact.id, subject, knownTaskIds);
+    if (existing && laterCall(existing, followUpAt)) {
+      await hs.updateObject('tasks', existing.id, { hs_timestamp: new Date(followUpAt).toISOString() });
+    }
     const callTaskId =
-      existing ??
+      existing?.id ??
       (await hs.createTask(
         {
           hs_task_type: 'CALL',
           hs_task_status: 'NOT_STARTED',
           hs_task_subject: subject,
-          hs_timestamp: new Date(nextCalendarDayAt(opts.now, opts.timeZone, callTime)).toISOString(),
+          hs_timestamp: new Date(followUpAt).toISOString(),
           ...ownerOf(emailTask),
         },
         { contactId: contact.id, companyId: company?.id ?? null }
@@ -176,6 +181,43 @@ export async function finishEmailSent(
   } finally {
     await store.releaseLock(emailTaskId);
   }
+}
+
+// The contact's CALL task to use as the follow-up, so a send never leaves
+// them with two: the one an earlier run of this send created but D1 never
+// heard about (by its subject), else any call already waiting on them (made
+// from their page, by hand in HubSpot, or left by a logged call).
+async function openCallTask(
+  hs: HubSpot,
+  contactId: string,
+  subject: string,
+  knownTaskIds?: string[]
+): Promise<HubSpotObject | null> {
+  const taskIds = knownTaskIds ?? (await hs.associatedIds('contacts', contactId, 'tasks'));
+  if (taskIds.length === 0) return null;
+  const calls = (
+    await hs.batchRead('tasks', taskIds, [
+      'hs_task_subject',
+      'hs_task_type',
+      'hs_task_status',
+      'hs_timestamp',
+      'hs_task_reminders',
+    ])
+  ).filter((t) => t.properties.hs_task_type === 'CALL');
+  return (
+    calls.find((t) => t.properties.hs_task_status !== 'COMPLETED' && t.properties.hs_task_subject === subject) ??
+    calls.find((t) => t.properties.hs_task_status === 'NOT_STARTED') ??
+    null
+  );
+}
+
+// A call already waiting moves to the follow-up's time when it was due
+// sooner: calling a few hours after the email would beat it there. One at a
+// set time (the contact asked for it) or already due later stays put.
+function laterCall(task: HubSpotObject, followUpAt: number): boolean {
+  if (hasReminder(task.properties.hs_task_reminders)) return false;
+  const due = parseHubSpotTime(task.properties.hs_timestamp);
+  return due === null || due < followUpAt;
 }
 
 // Frees the lock prepareEmailSent took when something before finishEmailSent
