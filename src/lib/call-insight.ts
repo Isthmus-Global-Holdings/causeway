@@ -642,66 +642,39 @@ const GREETING =
 // from Acme Logistics."): a question, or being put on hold or through.
 const EXCHANGE = /\?|\b(voice ?mail|put you through|transfer)\b/i;
 
-// A business's welcome, which a phone menu opens with and a front desk
-// answers with alike. From one to the switchboard's next line in its turn
-// ("Thank you for calling Acme. Your call is important to us. If you know
-// your party's extension…") is the menu's, unless someone in it says who
-// they are or asks something: a front desk.
-const WELCOME = /\b(thanks?( you)? for calling|welcome to)\b/i;
-
 const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+/);
 const switchboard = (sentence: string) => SWITCHBOARD.some((re) => re.test(sentence));
-
-// The sentences without a menu's welcome and what it says before the menu.
-function machineIntro(sentences: string[]): string[] {
-  const kept: string[] = [];
-  for (let i = 0; i < sentences.length; i++) {
-    const menuAt = WELCOME.test(sentences[i]) ? sentences.findIndex((s, j) => j > i && switchboard(s)) : -1;
-    const intro = menuAt < 0 ? [] : sentences.slice(i, menuAt);
-    if (intro.length && !intro.some((s) => s.includes('?') || SAID_NAME.test(s))) i = menuAt - 1;
-    else kept.push(sentences[i]);
-  }
-  return kept;
-}
 const greets = (sentence: string) => VOICEMAIL.test(sentence) || GREETING.test(sentence);
 
-// The words a person said in a turn, and whether a voicemail greeting
-// started in it. One turn can run a menu's or a transfer notice's line into
-// a person's, when they came on within seconds of it, so those are dropped
-// sentence by sentence. A greeting ends what counts: what follows is the
-// greeting or the rep's message, and what came before counts only if it was
-// an exchange (EXCHANGE, HOLD), not the greeting introducing itself.
-function personWords(text: string): { words: number; greeting: boolean } {
+// The words a person said in a turn on their side. One turn can run a
+// menu's or a transfer notice's line into a person's, when they came on
+// within seconds of it, so those are dropped sentence by sentence. A
+// voicemail greeting ends what counts, and what came before it counts only
+// if it was an exchange (EXCHANGE, HOLD), not the greeting introducing itself.
+function personWords(text: string): number {
   const sentences = sentencesOf(text);
   const at = sentences.findIndex(greets);
-  const before = machineIntro(at < 0 ? sentences : sentences.slice(0, at)).filter((s) => !switchboard(s));
+  const before = (at < 0 ? sentences : sentences.slice(0, at)).filter((s) => !switchboard(s));
   const said = before.reduce((n, sentence) => n + words(sentence), 0);
-  if (at < 0) return { words: said, greeting: false };
-  const exchange = before.some((sentence) => EXCHANGE.test(sentence) || HOLD.test(sentence));
-  return { words: exchange ? said : 0, greeting: true };
+  if (at < 0) return said;
+  return before.some((sentence) => EXCHANGE.test(sentence) || HOLD.test(sentence)) ? said : 0;
 }
 
-// The rep talked with someone: the rep said something, and a person said a
-// line that isn't a phone menu, a transfer notice or a voicemail greeting. A
+// The rep talked with someone: one side spoke and the other answered, the
+// rep with a line (not a keyed-in "one zero") and their side with words
+// that aren't a phone menu, a transfer notice or a voicemail greeting. A
 // call that only reached those didn't, and a summary of it would be made up.
 // A recording Nova gave back as one channel (all 'call') can't tell the rep
-// from them: there, a few words no machine said are enough, before any
-// voicemail greeting (after one, it's the rep's own message).
+// from a machine's lines, and they read like a person's often enough that
+// it never counts: its transcript is kept, with no summary.
 export function talkedWithSomeone(turns: Turn[]): boolean {
-  if (turns.every((t) => t.speaker === 'call')) {
-    let said = 0;
-    for (const t of turns) {
-      const person = personWords(t.text);
-      said += person.words;
-      if (person.greeting) break;
-    }
-    return said >= ONE_CHANNEL_WORDS;
-  }
-  const repWords = turns.filter((t) => t.speaker === 'rep').reduce((n, t) => n + words(t.text), 0);
-  return repWords >= 2 && turns.some((t) => far(t) && personWords(t.text).words >= 2);
+  if (turns.every((t) => t.speaker === 'call')) return false;
+  const sides = turns.map((t) =>
+    t.speaker === 'rep' ? (words(t.text) >= 3 ? 'rep' : null) : personWords(t.text) >= 2 ? 'them' : null
+  );
+  const first = sides.findIndex(Boolean);
+  return first >= 0 && sides.some((side, i) => i > first && side && side !== sides[first]);
 }
-// More than a keyed-in "one zero" or a stray word between the machine's lines.
-const ONE_CHANNEL_WORDS = 5;
 
 // Who answered and what happened, from the transcript alone. Null when no
 // person answered on it (only a menu, or nothing on their side).

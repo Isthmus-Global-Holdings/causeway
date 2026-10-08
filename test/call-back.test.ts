@@ -217,7 +217,7 @@ const ai: Transcriber = {
     return {
       results: {
         channels: [
-          { alternatives: [{ words: [{ word: 'Hi, Jesse.', start: 0, end: 1 }] }] },
+          { alternatives: [{ words: [{ word: 'Hi there, Jesse.', start: 0, end: 1 }] }] },
           { alternatives: [{ words: [{ word: 'Hello there.', start: 1, end: 2 }] }] },
         ],
       },

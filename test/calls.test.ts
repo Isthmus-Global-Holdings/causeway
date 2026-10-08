@@ -655,7 +655,7 @@ test('refuses a task already completed in HubSpot, and a concurrent run', async 
 const NOVA = {
   results: {
     channels: [
-      { alternatives: [{ words: [{ word: 'Hi there.', start: 0.5, end: 0.8 }] }] },
+      { alternatives: [{ words: [{ word: 'Hi there, Ana.', start: 0.5, end: 0.8 }] }] },
       { alternatives: [{ words: [{ word: 'Send a quote.', start: 1.5, end: 2.5 }] }] },
     ],
   },
@@ -777,7 +777,7 @@ test('transcribes both channels, summarises, and stores who said what', async ()
   assert.deepEqual(recordings, [{ sid: 'RE1', channels: 2 }]);
   const dial = (await dials.get(DIAL_ID))!;
   assert.deepEqual(JSON.parse(dial.transcript_json!), [
-    { speaker: 'rep', start: 0.5, end: 0.8, text: 'Hi there.' },
+    { speaker: 'rep', start: 0.5, end: 0.8, text: 'Hi there, Ana.' },
     { speaker: 'prospect', start: 1.5, end: 2.5, text: 'Send a quote.' },
   ]);
   assert.equal(dial.summary, '- Wants a quote\n- Call back Monday');
@@ -818,7 +818,7 @@ test('a call that only reached the phone menu is transcribed with no summary: on
   assert.equal(ai.summarized, 0);
 });
 
-test('a recording Nova gave back as one channel keeps its summary: who said what can’t be told', async () => {
+test('a recording Nova gave back as one channel gets no summary: who said what can’t be told', async () => {
   class OneChannel extends FakeAi {
     override async transcribe() {
       return {
@@ -831,8 +831,8 @@ test('a recording Nova gave back as one channel keeps its summary: who said what
   const { deps } = await recordedCall(new OneChannel());
   assert.equal(await runTranscription(deps, DIAL_ID, { now: NOW, baseUrl: BASE }), 'done');
   const dial = (await dials.get(DIAL_ID))!;
-  assert.equal(JSON.parse(dial.transcript_json!)[0].speaker, 'call');
-  assert.equal(dial.summary, '- Wants a quote\n- Call back Monday');
+  assert.equal(JSON.parse(dial.transcript_json!)[0].speaker, 'call', 'the transcript is kept');
+  assert.equal(dial.summary, null);
 });
 
 test('a one-channel recording of only a phone menu and a voicemail greeting gets no summary either', async () => {

@@ -262,7 +262,7 @@ const NOVA = {
   results: {
     channels: [
       { alternatives: [{ words: [{ word: 'Hi, it is Jesse.', start: 0.5, end: 1.2 }] }] },
-      { alternatives: [{ words: [{ word: 'Hey Jesse.', start: 1.5, end: 2 }] }] },
+      { alternatives: [{ words: [{ word: 'Hey Jesse, what’s up?', start: 1.5, end: 2 }] }] },
     ],
   },
 };
@@ -296,7 +296,7 @@ test('an answered call has the caller on the first channel; the transcript lands
   const call = (await calls.get(ID))!;
   assert.deepEqual(JSON.parse(call.transcript_json!), [
     { speaker: 'prospect', start: 0.5, end: 1.2, text: 'Hi, it is Jesse.' },
-    { speaker: 'rep', start: 1.5, end: 2, text: 'Hey Jesse.' },
+    { speaker: 'rep', start: 1.5, end: 2, text: 'Hey Jesse, what’s up?' },
   ]);
   const body = hs.objects.get('calls/call-1')!.properties.hs_call_body!;
   assert.match(body, /<li>Wants a quote<\/li>/);

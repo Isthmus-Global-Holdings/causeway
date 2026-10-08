@@ -194,106 +194,19 @@ test('talked with someone: a person past the menu, not a menu, transfer or voice
   );
 });
 
-test('talked with someone, on one channel (all “call”): words past the menu no machine said', () => {
+test('talked with someone, on one channel (all “call”): never, who said what can’t be told', () => {
   const call = (start: number, text: string) => ({ speaker: 'call' as const, start, text });
-  const menu = call(0, 'If you know your party’s extension, please dial it now. For customer service, press 1.');
-  assert.equal(talkedWithSomeone([menu]), false, 'only the menu');
   assert.equal(
     talkedWithSomeone([
-      menu,
-      call(15, 'Your call is being transferred.'),
-      call(34, 'One zero.'),
-      call(36, 'Extension 109 is unavailable. Please leave a message after the tone.'),
+      call(0, 'Thank you for calling Acme. Did you know you can pay bills online? For sales, press 1.'),
     ]),
     false,
-    'a transfer, two keyed-in words and a voicemail greeting'
+    'a menu with a question in it'
   );
   assert.equal(
-    talkedWithSomeone([menu, call(18, 'Good morning, this is Dana. Hi Dana, is Ana in? She’s in a meeting.')]),
-    true,
-    'people talking'
-  );
-  // Someone who came on within seconds of the menu shares its turn.
-  assert.equal(
-    talkedWithSomeone([
-      call(0, 'Your call is being transferred. Good morning, Acme, this is Dana. Hi Dana, is Ana in today?'),
-    ]),
-    true,
-    'a person in the same turn as the transfer notice'
-  );
-  assert.equal(
-    talkedWithSomeone([
-      call(
-        0,
-        'Know your party’s extension, please dial it now. For customer service, please dial 1. For the employee, dial by name directory, please dial star, or dial 0 for the operator.'
-      ),
-    ]),
+    talkedWithSomeone([call(0, 'Good morning, this is Dana. Hi Dana, is Ana in? She’s in a meeting.')]),
     false,
-    'a menu in its own words: dial, not press'
-  );
-  const greeting = call(0, 'Hi, you’ve reached Ruth. Please leave a message after the beep.');
-  const message = call(9, 'Hi Ruth, this is Anel calling about quoting, I’ll try you again tomorrow.');
-  assert.equal(talkedWithSomeone([greeting, message]), false, 'the rep’s message after a voicemail greeting');
-  assert.equal(
-    talkedWithSomeone([
-      call(0, 'Good morning, Acme, this is Dana. Hi Dana, is Ruth in? Let me put you through.'),
-      call(14, 'Hi, you’ve reached Ruth. Please leave a message after the beep.'),
-      call(20, 'Hi Ruth, this is Anel, I’ll try you again tomorrow.'),
-    ]),
-    true,
-    'the front desk before the voicemail'
-  );
-  assert.equal(
-    talkedWithSomeone([
-      call(
-        0,
-        'Good morning, Acme, this is Dana. Ruth is out, let me send you to her voicemail. Hi, you’ve reached Ruth. Please leave a message after the beep. Hi Ruth, this is Anel.'
-      ),
-    ]),
-    true,
-    'the front desk and the greeting in one turn'
-  );
-  assert.equal(
-    talkedWithSomeone([call(0, 'Hey, it’s Ruth. Leave me a message. Hi Ruth, this is Anel, call me back.')]),
-    false,
-    'a greeting’s own opening, then the rep’s message'
-  );
-  assert.equal(
-    talkedWithSomeone([
-      call(
-        0,
-        'Hello, this is Ruth from Acme Logistics Incorporated. I cannot take your call right now. Hi Ruth, this is Anel, I’ll call back.'
-      ),
-    ]),
-    false,
-    'a greeting that introduces itself at length'
-  );
-  assert.equal(
-    talkedWithSomeone([
-      call(0, 'Thank you for calling Acme Corporation. If you know your party’s extension, press 1.'),
-      call(9, 'Your call is being transferred.'),
-    ]),
-    false,
-    'a menu that opens with a welcome'
-  );
-  assert.equal(
-    talkedWithSomeone([call(0, 'Thank you for calling Acme Corporation. This is Dana, how can I help?')]),
-    true,
-    'a front desk that answers with one'
-  );
-  assert.equal(
-    talkedWithSomeone([
-      call(0, 'Thank you for calling Acme. Your call is important to us. If you know your party’s extension, press 1.'),
-    ]),
-    false,
-    'a welcome, an announcement, then the menu'
-  );
-  assert.equal(
-    talkedWithSomeone([
-      call(0, 'Thank you for calling Acme, this is Dana. Hi Dana, is Ruth in? Your call is being transferred.'),
-    ]),
-    true,
-    'a front desk, then the phone system putting the call through'
+    'people talking, too: the transcript is kept, with no summary'
   );
 });
 
@@ -306,6 +219,45 @@ test('talked with someone: a person in the same turn as the menu, on their chann
     ]),
     true
   );
+  assert.equal(
+    talkedWithSomeone([
+      turn('prospect', 0, 'Thank you for calling Acme. Did you know you can pay bills online? For sales, press 1.'),
+      turn('rep', 9, 'One zero.'),
+    ]),
+    false,
+    'a menu that asks something, and keyed-in digits'
+  );
+  assert.equal(
+    talkedWithSomeone([
+      turn('prospect', 0, 'Hi, it’s Jesse at Ferris Freight.'),
+      turn('rep', 2, 'Hey Jesse, what’s up?'),
+    ]),
+    true,
+    'a caller first, then the rep'
+  );
+});
+
+test('talked with someone: a voicemail greeting in their turn ends what counts', () => {
+  const turn = (speaker: 'rep' | 'prospect', start: number, text: string) => ({ speaker, start, text });
+  const rep = turn('rep', 0, 'Hi, is Ruth in today?');
+  assert.equal(
+    talkedWithSomeone([
+      rep,
+      turn(
+        'prospect',
+        3,
+        'Ruth is out, let me send you to her voicemail. Hi, you’ve reached Ruth. Please leave a message after the beep.'
+      ),
+    ]),
+    true,
+    'the front desk, then the greeting, in one turn'
+  );
+  for (const greeting of [
+    'Hey, it’s Ruth. Leave me a message.',
+    'Hello, this is Ruth from Acme Logistics Incorporated. I cannot take your call right now.',
+  ]) {
+    assert.equal(talkedWithSomeone([rep, turn('prospect', 3, greeting)]), false, greeting);
+  }
   assert.equal(
     talkedWithSomeone([
       turn('prospect', 0, 'Hey, it’s Grant. Leave me a message and I’ll call you back.'),
