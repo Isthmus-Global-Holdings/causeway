@@ -121,8 +121,15 @@ export function formatLocal(epochMs: number, timeZone: string): string {
 }
 
 // "2:30 PM" in `timeZone`.
-export function clockTime(epochMs: number, timeZone: string): string {
+export function formatClock(epochMs: number, timeZone: string): string {
   return new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(epochMs));
+}
+
+// "Fri, Sep 25" in `timeZone`, for a day with no time that matters.
+export function formatDay(epochMs: number, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-US', { timeZone, weekday: 'short', month: 'short', day: 'numeric' }).format(
+    new Date(epochMs)
+  );
 }
 
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -199,7 +206,7 @@ export function dayBounds(nowMs: number, timeZone: string): { startMs: number; e
 export function saidAhead(eventMs: number, nowMs: number, timeZone: string): string {
   const day = localDate(eventMs, timeZone);
   const today = localDate(nowMs, timeZone);
-  const at = clockTime(eventMs, timeZone);
+  const at = formatClock(eventMs, timeZone);
   if (day === today) return `today at ${at}`;
   if (day === addDays(today, 1)) return `tomorrow at ${at}`;
   const format =

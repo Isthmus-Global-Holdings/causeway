@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   addDays,
-  clockTime,
   dayBounds,
+  formatClock,
   isDate,
   localDate,
   localDateAt,
@@ -111,7 +111,7 @@ test("a time field's pattern lets through what parseTime reads, and asks for am 
   for (const bad of ['4', '4:30', 'noon']) assert.ok(!pattern.test(bad), bad);
 });
 
-const clock = (ms: number, tz: string) => clockTime(ms, tz).replace(/\s/g, ' ');
+const clock = (ms: number, tz: string) => formatClock(ms, tz).replace(/\s/g, ' ');
 
 test('a time said in their zone becomes one instant, read on either clock', () => {
   // The rep is in Denver (MDT), they're in New York (EDT): 2pm theirs is noon the rep's.

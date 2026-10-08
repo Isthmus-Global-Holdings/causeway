@@ -104,11 +104,18 @@ export function planCalls(rows: CallRow[], now: number, timeZone: string): CallP
 }
 
 // Today's calls in the order the page ranks them, saved so logging one can go
-// straight to the next (nextInPlan): the set-time calls with their time.
+// straight to the next (nextInPlan): the set-time calls with their time, and
+// who each is, for the list beside a call.
 export function planItems(plan: CallPlan): WorkPlan['items'] {
+  const who = (r: CallRow) => ({
+    ...(r.companyName ? { company: r.companyName } : {}),
+    ...(r.contactName ? { contact: r.contactName } : {}),
+  });
   return [
-    ...plan.atTime.filter(canCall).map((r) => ({ id: r.taskId, drafted: false, at: callableFrom(r.dueAt ?? 0) })),
-    ...plan.due.filter(canCall).map((r) => ({ id: r.taskId, drafted: false })),
+    ...plan.atTime
+      .filter(canCall)
+      .map((r) => ({ id: r.taskId, drafted: false, at: callableFrom(r.dueAt ?? 0), ...who(r) })),
+    ...plan.due.filter(canCall).map((r) => ({ id: r.taskId, drafted: false, ...who(r) })),
   ];
 }
 
