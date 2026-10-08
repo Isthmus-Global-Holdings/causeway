@@ -606,7 +606,11 @@ page, under the script:
   interview if it was canceled (by them: the line is open, offer another
   time), rushed connects piling up lately, and what your longest connect did.
 
-**Coaching** in the navbar has the patterns across every call:
+**Coaching** in the navbar has the patterns across every call, in two halves,
+with the tables that need more calls parked under them:
+
+**Earning the conversation**: getting past the menu and the front desk to the
+person, and leaving with a next step.
 
 - How far your calls get, as bars: calls, someone picked up, reached them, a
   next step agreed, an interview booked on one of those calls (counted by
@@ -622,24 +626,38 @@ page, under the script:
   Interviews (`meeting_logs`); one set straight in HubSpot isn't seen.
 - The front desk as its own category: how often it put you through, what it
   did otherwise (as bars), by name, and what you said when it put you through.
-- Rushed connects: under 1:30 of talk with no next step, listed.
+- Objections, most common first, in their words, with the openings that got
+  past them.
+- Your last twenty calls drawn to scale, one above the other on one scale
+  (the longest is the full width), each linking its page: where each call
+  went and where it ended, at a glance.
+
+**The conversation**: once you reach them, the Mom Test.
+
+- The Mom Test, call by call: on every call and interview that reached them,
+  newest first, whether you asked about a specific last time, whether you
+  pitched, their longest story (a minute or more is a story), whether you
+  caught the fluff, and what they gave up at the end (their time, an intro,
+  money), with the counts above the table and the longest story named. A
+  dash is nothing said yet, not a no: the rules hear some of it on a
+  transcript, a review settles the rest.
+- Who did the talking: on each recorded call that reached them, their share
+  of the words against half (on an interview they should do most of it).
 - Long connects (5 minutes or more of talk): what worked, the opening, what
   was agreed, and how you talked on recorded ones against short ones (their
   share of the talking, your questions, "you" over "we"), from their part of
   the call.
-- Who did the talking: on each recorded call that reached them, their share
-  of the words against half (on an interview they should do most of it).
-- Objections, most common first, in their words, with the openings that got
-  past them.
-- Reached rate by hour of their day (in the contact's time zone, from their
-  state or their company's; unknown counts in yours), with groups under three
-  calls marked as too few. Until an hour has about 30 calls it says it's too
-  early to pick one, and no best hour is named, here or before a call: a
-  difference between hours means nothing on fewer.
-- Follow-up timing: by the gap since the last call, how often the next call
-  reached them, after a connect (a second connect) and before one.
-- Where each call ended, and your last calls with their tags and what to
-  adjust on each.
+- Rushed connects: under 1:30 of talk with no next step, listed.
+- What to adjust, call by call: your last calls with their tags and the
+  notes on each.
+
+**When there are enough calls** (folded away until then): reached rate by
+hour of their day (in the contact's time zone, from their state or their
+company's; unknown counts in yours), with groups under three calls marked as
+too few; until two hours have about 30 calls each it says it's too early to
+pick one, and no best hour is named, here or before a call. And follow-up
+timing: by the gap since the last call, how often the next call reached
+them, after a connect (a second connect) and before one.
 
 On **Calls**, each logged call shows its strip and its tags too, with **Leave
 out of coaching** for a test call (and **Put back in coaching**).

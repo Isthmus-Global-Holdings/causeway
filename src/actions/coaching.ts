@@ -37,15 +37,19 @@ import {
   callBrief,
   callFunnel,
   coachingReport,
+  momTestReport,
   prepNotes,
+  STRIPS,
   type BookingReport,
   type CallBrief,
   type CoachingReport,
   type Funnel,
+  type MomTestReport,
 } from '../lib/coaching';
 import {
   allBookedInterviews,
   allCallInsights,
+  callInsightsFor,
   callInsightsNear,
   callsToReview,
   d1CallInsightStore,
@@ -74,14 +78,23 @@ export interface CoachingOverview {
   report: CoachingReport;
   bookings: BookingReport;
   funnel: Funnel;
-  unread: number; // logged calls not read yet (up to READ_ON_OPEN + 1)
+  interviews: CallInsight[]; // the interviews' calls read, oldest first
+  momTest: MomTestReport;
+  strips: Strip[]; // the latest calls drawn to scale, newest first
+  unread: number; // calls not read yet (up to READ_ON_OPEN + 1)
+}
+
+export interface Strip {
+  call: CallInsight;
+  timeline: Timeline | null; // null until the call is read by rules that draw, or when nothing can be drawn
 }
 
 export async function coachingOverview(c: Context<AppEnv>): Promise<CoachingOverview> {
   const deps = insightDeps(c.env);
-  const [settings, rows, booked, unread] = await Promise.all([
+  const [settings, rows, interviews, booked, unread] = await Promise.all([
     loadAppSettings(c.env),
     allCallInsights(c.env.DB),
+    allCallInsights(c.env.DB, 'meeting'),
     allBookedInterviews(c.env.DB),
     deps.insights.needing(READ_ON_OPEN + 1, RULES_VERSION),
   ]);
@@ -90,11 +103,24 @@ export async function coachingOverview(c: Context<AppEnv>): Promise<CoachingOver
   }
   const now = Date.now();
   const report = coachingReport(rows, settings.timeZone);
+  // The drawings of the latest calls, read by id: the report's rows come
+  // without them.
+  const latest = rows
+    .filter((r) => r.gate !== 'wrong_number')
+    .slice(-STRIPS)
+    .reverse();
+  const drawn = await callInsightsFor(
+    c.env.DB,
+    latest.map((r) => r.call_task_id)
+  );
   return {
     settings,
     report,
     bookings: bookingReport(booked, now),
     funnel: callFunnel(report, booked, now),
+    interviews,
+    momTest: momTestReport(rows, interviews),
+    strips: latest.map((call) => ({ call, timeline: parseTimeline(drawn.get(call.call_task_id)?.timeline_json) })),
     unread: unread.length,
   };
 }

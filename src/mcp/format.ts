@@ -16,6 +16,7 @@ import {
 import {
   BOOKING_STATUS_LABELS,
   insightPath,
+  type MomTestReport,
   heldRate,
   hourLabel,
   MIN_SAMPLE,
@@ -436,7 +437,7 @@ export function bookingSummary(bookings: BookingReport, timeZone: string, origin
 
 // The coaching report, with rates as percentages and every group's size, so
 // a pattern from a handful of calls reads as one.
-export function coachingSummary(report: CoachingReport, timeZone: string, origin: string) {
+export function coachingSummary(report: CoachingReport, timeZone: string, origin: string, momTest?: MomTestReport) {
   const rate = (r: Rate) => ({ calls: r.calls, reached: r.reached, rate: pct(rateOf(r)) });
   return {
     timeZone,
@@ -444,6 +445,25 @@ export function coachingSummary(report: CoachingReport, timeZone: string, origin
     calls: report.calls,
     reached: report.reached,
     answered: report.answered,
+    // The Mom Test on every call and interview that reached them: counts of
+    // what the rules and the reviews have said; the rest is unsaid, not no.
+    momTest: momTest
+      ? {
+          reached: momTest.rows.length,
+          interviews: momTest.rows.filter((r) => r.kind === 'interview').length,
+          askedAboutLastTime: momTest.asked,
+          pitched: momTest.pitched,
+          storiesOfAMinute: momTest.stories,
+          fluffCaught: momTest.fluffCaught,
+          commitments: momTest.commitments,
+          longestStory: momTest.longest
+            ? {
+                ...callInsightSummary(momTest.longest.call, timeZone, origin),
+                sec: momTest.longest.call.longest_story_sec,
+              }
+            : null,
+        }
+      : null,
     reachedByHourTheirTime: report.byHour.map((h) => ({ hour: hourLabel(h.hour), ...rate(h) })),
     reachedByTimeZone: report.byZone.map((z) => ({ zone: z.label, ...rate(z) })),
     averageLengthByOutcome: report.lengthByOutcome.map((l) => ({
