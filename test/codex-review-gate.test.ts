@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CODEX_BOT, codexVerdict, headChangedAt } from '../scripts/codex-review-gate.mjs';
+import {
+  CODEX_BOT,
+  codexVerdict,
+  findingsText,
+  headChangedAt,
+  openCodexFindings,
+} from '../scripts/codex-review-gate.mjs';
 
 const HEAD = '9c1a642a3d5e7f0b1c2d3e4f5a6b7c8d9e0f1a2b';
 const bot = { login: CODEX_BOT };
@@ -111,4 +117,58 @@ test('or at the last force-push, when it moved the head back to a commit that al
 test('with no run recorded for this PR, only what Codex says from now on counts', () => {
   const runs = [run('2026-10-08T01:00:00Z', []), run('2026-10-08T01:00:00Z', [9], 'push')];
   assert.equal(headChangedAt({ runs, issueEvents: [], prNumber: 9, now }), now);
+});
+
+// A review thread as GraphQL gives it: the bot's login without "[bot]".
+const thread = (login: string, isResolved: boolean, n = 1) => ({
+  isResolved,
+  path: 'src/workflows/transcribe.ts',
+  comments: {
+    nodes: [
+      {
+        author: { login },
+        url: `https://github.com/o/r/pull/19#discussion_r${n}`,
+        body: '**<sub><sub>![P2 Badge](https://img.shields.io/badge/P2-yellow?style=flat)</sub></sub>  Preserve summaries for one-channel recordings**\n\nWhen Nova returns…',
+      },
+    ],
+  },
+});
+
+test('open findings: Codex’s threads not resolved yet, with priority and title', () => {
+  const open = openCodexFindings([
+    thread('chatgpt-codex-connector', false, 1),
+    thread('chatgpt-codex-connector', true, 2),
+    thread('coderabbitai', false, 3),
+    thread('anelcanto', false, 4),
+  ]);
+  assert.deepEqual(open, [
+    {
+      url: 'https://github.com/o/r/pull/19#discussion_r1',
+      path: 'src/workflows/transcribe.ts',
+      priority: 'P2',
+      title: 'Preserve summaries for one-channel recordings',
+    },
+  ]);
+  assert.equal(
+    findingsText(open),
+    '- P2 Preserve summaries for one-channel recordings (src/workflows/transcribe.ts): https://github.com/o/r/pull/19#discussion_r1'
+  );
+  assert.equal(openCodexFindings([thread(CODEX_BOT, false)]).length, 1, 'the REST login, with [bot], too');
+});
+
+test('no findings: none left, or none by Codex', () => {
+  assert.deepEqual(openCodexFindings([]), []);
+  assert.deepEqual(openCodexFindings([thread('chatgpt-codex-connector', true)]), []);
+  assert.deepEqual(openCodexFindings([{ isResolved: false, path: null, comments: { nodes: [] } }]), []);
+});
+
+test('a finding with no badge or body still has a title', () => {
+  const [f] = openCodexFindings([
+    {
+      isResolved: false,
+      path: null,
+      comments: { nodes: [{ author: { login: 'chatgpt-codex-connector' }, url: 'u', body: null }] },
+    },
+  ]);
+  assert.deepEqual(f, { url: 'u', path: null, priority: null, title: 'Codex finding' });
 });
