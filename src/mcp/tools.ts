@@ -894,11 +894,13 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
           leave_out,
         });
         const log = await d1CallLogStore(env.DB).get(task_id);
+        // An interview's follow-up is on its latest log.
+        const nextDue = log ? log.next_due : ((await d1MeetingLogStore(env.DB).latest(task_id))?.next_due ?? null);
         const { timeZone } = await loadAppSettings(env);
         return {
           saved: true,
           leftOut: leave_out ?? null,
-          reading: afterCallSummary(notes, log?.next_due ?? null, timeZone),
+          reading: afterCallSummary(notes, nextDue, timeZone),
           url: pageUrl(origin, log ? `/calls/${task_id}` : `/meetings/${task_id}`),
         };
       })

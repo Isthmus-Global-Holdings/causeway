@@ -156,6 +156,17 @@ function styleOf(calls: CallInsight[]): Style {
   };
 }
 
+// Who did the talking: every call with a transcript that reached them, and
+// how often they talked more than half. `rows` newest first; the Coaching
+// page passes the interviews' calls with the cold calls.
+export function talkReport(rows: CallInsight[]): Pick<CoachingReport, 'talk' | 'theyLed'> {
+  const talked = rows.filter((c) => c.reached && c.gate !== 'wrong_number' && c.prospect_talk_share !== null);
+  return {
+    talk: talked.slice(0, RECENT),
+    theyLed: { calls: talked.filter((c) => (c.prospect_talk_share ?? 0) > 0.5).length, of: talked.length },
+  };
+}
+
 // `rows` oldest first, as allCallInsights reads them.
 export function coachingReport(rows: CallInsight[], repTimeZone: string): CoachingReport {
   const calls = rows.filter((r) => r.gate !== 'wrong_number');
@@ -260,7 +271,7 @@ export function coachingReport(rows: CallInsight[], repTimeZone: string): Coachi
 
   const connects = calls.filter((c) => c.reached);
   const long = connects.filter(isLongConnect);
-  const talked = newest.filter((c) => c.reached && c.prospect_talk_share !== null);
+  const { talk, theyLed } = talkReport(newest);
   return {
     calls: calls.length,
     reached: connects.length,
@@ -279,8 +290,8 @@ export function coachingReport(rows: CallInsight[], repTimeZone: string): Coachi
     fastNoNextStep: { connects: connects.length, calls: newest.filter(fastNoNextStep) },
     longConnects: [...long].sort((a, b) => (b.talk_sec ?? b.duration_sec ?? 0) - (a.talk_sec ?? a.duration_sec ?? 0)),
     style: { long: styleOf(long), short: styleOf(connects.filter((c) => (c.talk_sec ?? c.duration_sec ?? 0) < 120)) },
-    talk: talked.slice(0, RECENT),
-    theyLed: { calls: talked.filter((c) => (c.prospect_talk_share ?? 0) > 0.5).length, of: talked.length },
+    talk,
+    theyLed,
     recent: newest.slice(0, RECENT),
     nextStepCalls: new Set(calls.filter((c) => c.stage === 'next_step').map((c) => c.call_task_id)),
   };

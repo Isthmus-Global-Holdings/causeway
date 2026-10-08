@@ -170,7 +170,12 @@ function entryOf(item: HistoryItem, nowSec: number, insights: Map<string, CallIn
     (item.kind === 'dial' &&
       (item.dial.subject === 'meeting' ? !isLive(dialState(item.dial, nowSec)) : item.dial.log_outcome !== null));
   const coached = taskId && logged && !(item.kind === 'logged' && item.log.channel === 'whatsapp_message');
-  return { ...entry, coaching: coached ? { taskId, insight: insights.get(taskId) ?? null } : null };
+  const insight = taskId ? (insights.get(taskId) ?? null) : null;
+  // An interview's reading is of its latest call: an earlier attempt from the
+  // same page shows nothing rather than another call's coaching.
+  const theirs =
+    item.kind !== 'dial' || item.dial.subject !== 'meeting' || !insight || insight.dial_id === item.dial.id;
+  return { ...entry, coaching: coached && theirs ? { taskId, insight } : null };
 }
 
 // What coaching read from the call (drawn to scale, then its tags), and the

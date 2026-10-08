@@ -36,6 +36,7 @@ import {
   coachingReport,
   describeCall,
   momTestReport,
+  talkReport,
   HOUR_SAMPLE,
   hourLabel,
   lastInterviewNote,
@@ -799,6 +800,8 @@ test('the Coaching page and the call page’s card', async () => {
     pitched: 0,
     longest_story_sec: 95,
     commitment: 'intro',
+    prospect_talk_share: 0.7,
+    source: 'transcript',
   });
   const page = String(
     await coachingPage(
@@ -809,6 +812,7 @@ test('the Coaching page and the call page’s card', async () => {
         funnel: callFunnel(report, [], 0),
         interviews: [interview],
         momTest: momTestReport(rows, [interview]),
+        talk: talkReport([...rows, interview].sort((a, b) => b.at_sec - a.at_sec)),
         strips: [
           { call: rows.find((r) => r.call_task_id === '5')!, timeline: callTimeline(lyleFacts, heard(putThrough)) },
           { call: rows[0], timeline: null },
@@ -851,6 +855,36 @@ test('the Coaching page and the call page’s card', async () => {
   assert.match(page, /<td data-label="They gave">an intro<\/td>/);
   assert.match(page, /<td data-label="Asked about the last time">–<\/td>/, 'a call nothing has judged');
   assert.match(page, /<h2>What to adjust, call by call<\/h2>/);
+  // Who did the talking counts the interview too.
+  const talked = talkReport([...rows, interview].sort((a, b) => b.at_sec - a.at_sec));
+  assert.ok(talked.theyLed.of > 1 && talked.talk.some((c) => c.subject === 'meeting'), 'the interview is counted');
+  assert.match(
+    page,
+    new RegExp(
+      `They talked more than you on ${talked.theyLed.calls} of the ${talked.theyLed.of} recorded calls and interviews`
+    )
+  );
+  assert.match(page, /<a href="\/meetings\/m1" title="[^"]*">Grant Ives<\/a> <span class="tag">Interview<\/span>/);
+  // No cold call read yet, but an interview: the page still shows it.
+  const onlyInterviews = String(
+    await coachingPage(
+      {
+        settings: { timeZone: TZ } as never,
+        report: coachingReport([], TZ),
+        bookings: bookingReport([], 0),
+        funnel: callFunnel(coachingReport([], TZ), [], 0),
+        interviews: [interview],
+        momTest: momTestReport([], [interview]),
+        talk: talkReport([interview]),
+        strips: [],
+        unread: 0,
+      },
+      'rep@example.com'
+    )
+  );
+  assert.match(onlyInterviews, /No calls read yet/);
+  assert.match(onlyInterviews, /<h2>The Mom Test, call by call<\/h2>/);
+  assert.match(onlyInterviews, /<h2>Who did the talking<\/h2>/);
 
   const empty = String(await coachingCard({ before: [], brief: null, after: null }));
   assert.equal(empty, '');
@@ -1439,6 +1473,7 @@ test('bookings followed to how they turned out, by lead time, invite and the boo
         funnel: callFunnel(coachingReport(sample(), TZ), [], 0),
         interviews: [],
         momTest: momTestReport([], []),
+        talk: talkReport([]),
         strips: [],
         unread: 0,
       },
@@ -1468,6 +1503,7 @@ test('bookings followed to how they turned out, by lead time, invite and the boo
         funnel: callFunnel(coachingReport([], TZ), [], 0),
         interviews: [],
         momTest: momTestReport([], []),
+        talk: talkReport([]),
         strips: [],
         unread: 1,
       },
@@ -1528,6 +1564,7 @@ test('the rep’s own cancel is counted, but left out of the held rate', async (
         funnel: callFunnel(coachingReport(sample(), TZ), [], 0),
         interviews: [],
         momTest: momTestReport([], []),
+        talk: talkReport([]),
         strips: [],
         unread: 0,
       },
@@ -1890,6 +1927,40 @@ test('an interview’s call is read once it ended, keyed by the meeting, with ho
   assert.equal(await reviewCall(deps(), 'none', nothing, Date.now()), null, 'nothing to review');
 });
 
+test('an interview read once is read again after a redial, a later log, or when its dial timed out', async () => {
+  const dials = d1DialStore(db);
+  const store = d1CallInsightStore(db);
+  await dials.begin(dial({ id: 'first', task_id: 'm1', subject: 'meeting', started_sec: T0 }), 120);
+  await dials.setProspectResult('first', { sid: 'CA1', status: 'no-answer', durationSec: null });
+  assert.equal((await readInterview(deps(), 'm1', Date.now()))?.dial_id, 'first');
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [], 'read');
+
+  // A redial from the page: the row is of the earlier call, so it's read again.
+  await dials.begin(dial({ id: 'second', task_id: 'm1', subject: 'meeting', started_sec: T0 + 1800 }), 120);
+  await dials.setProspectResult('second', { sid: 'CA2', status: 'completed', durationSec: 600 });
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [{ id: 'm1', subject: 'meeting' }], 'a newer dial');
+  const again = await readInterview(deps(), 'm1', Date.now());
+  assert.deepEqual([again?.dial_id, again?.outcome], ['second', 'connected']);
+  assert.deepEqual(await store.needing(10, RULES_VERSION), []);
+
+  // Logged as a no-show after the read: the outcome is the log's, so it's read again.
+  const later = Date.now() + 60_000;
+  await logMeeting('m1', 'NO_SHOW', new Date(later).toISOString().slice(0, 19).replace('T', ' '));
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [{ id: 'm1', subject: 'meeting' }], 'logged since');
+  assert.equal((await readInterview(deps(), 'm1', later + 60_000))?.outcome, 'no_answer');
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [], 'read after the log');
+
+  // A dial whose final statuses never came: ended once it's older than the timeout, for the sweep too.
+  await dials.begin(dial({ id: 'lost', task_id: 'm2', subject: 'meeting', started_sec: T0 }), 120);
+  assert.deepEqual(await store.needing(10, RULES_VERSION), [], 'no status, no cutoff given: not yet');
+  assert.deepEqual(
+    await store.needing(10, RULES_VERSION, T0 + 1),
+    [{ id: 'm2', subject: 'meeting' }],
+    'past the cutoff'
+  );
+  assert.equal(await readUnreadCalls(deps(), 10, Date.now()), 1, 'the sweep reads it');
+});
+
 test('an interview’s call still going isn’t read; one not recorded reads the rep’s notes on it', async () => {
   const dials = d1DialStore(db);
   const nowSec = Math.floor(Date.now() / 1000);
@@ -2147,6 +2218,7 @@ test('the hours note stays until two hours have enough calls to compare', async 
       funnel: callFunnel(report, [], 0),
       interviews: [],
       momTest: momTestReport([], []),
+      talk: talkReport([]),
       strips: [],
       unread: 0,
     };

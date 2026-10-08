@@ -195,7 +195,7 @@ function talkCard({ talk, theyLed }: Pick<CoachingReport, 'talk' | 'theyLed'>, t
   return html`<section class="card">
     <h2>Who did the talking</h2>
     <p>
-      They talked more than you on ${theyLed.calls} of the ${theyLed.of} recorded call${theyLed.of === 1 ? '' : 's'} that reached them.
+      They talked more than you on ${theyLed.calls} of the ${theyLed.of} recorded call${theyLed.of === 1 ? '' : 's'} and interviews that reached them.
       On an interview they should do most of it: their world, what they did the last time, not your idea.
     </p>
     ${bars(
@@ -203,7 +203,7 @@ function talkCard({ talk, theyLed }: Pick<CoachingReport, 'talk' | 'theyLed'>, t
       talk.map((c) => {
         const share = c.prospect_talk_share ?? 0;
         return {
-          label: html`<a href="/calls/${c.call_task_id}" title="${formatLocal(c.at_sec * 1000, timeZone)}">${c.label}</a>`,
+          label: html`<a href="${insightPath(c)}" title="${formatLocal(c.at_sec * 1000, timeZone)}">${c.label}</a>${c.subject === 'meeting' ? html` <span class="tag">Interview</span>` : ''}`,
           value: Math.round(share * 100),
           of: 100,
           shown: pct(share),
@@ -382,7 +382,7 @@ function momTestCard(m: MomTestReport, timeZone: string): Html {
 }
 
 export function coachingPage(
-  { settings, report, bookings, funnel, momTest, strips, unread }: CoachingOverview,
+  { settings, report, bookings, funnel, momTest, talk, strips, unread }: CoachingOverview,
   actor: string
 ): Html {
   const tz = settings.timeZone;
@@ -393,13 +393,17 @@ export function coachingPage(
     : '';
 
   if (!report.calls) {
+    // No cold call read yet: what there is (interviews booked straight in
+    // HubSpot and recorded from here, say) still shows.
     return layout(
       'Coaching',
       actor,
       html`<h1>Coaching</h1>
         ${reading}
         <p class="muted">No calls read yet. Each call you log is read here: who answered, how far it got, the objection, and whether a next step was agreed.</p>
-        ${bookings.booked ? bookingsCard(bookings, tz) : ''}`,
+        ${bookings.booked ? bookingsCard(bookings, tz) : ''}
+        ${momTest.rows.length ? momTestCard(momTest, tz) : ''}
+        ${talk.talk.length ? talkCard(talk, tz) : ''}`,
       'coaching'
     );
   }
@@ -496,7 +500,7 @@ export function coachingPage(
 
         ${momTestCard(momTest, tz)}
 
-        ${talkCard(report, tz)}
+        ${talkCard(talk, tz)}
 
         <section class="card">
           <h2>Long connects: what they did differently</h2>

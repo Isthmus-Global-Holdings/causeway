@@ -1972,7 +1972,13 @@ export interface CallInsightStore {
   // `rulesVersion`, read from the notes before their transcript arrived, or
   // reviewed since they were read.
   // Newest first; WhatsApp messages aren't calls, and left-out calls stay out.
-  needing(limit: number, rulesVersion: number): Promise<{ id: string; subject: InsightSubject }[]>;
+  // `dialsEndedBySec`: an interview's dial started before this with no final
+  // status counts as ended (its webhooks were lost: dialState's timeout).
+  needing(
+    limit: number,
+    rulesVersion: number,
+    dialsEndedBySec?: number
+  ): Promise<{ id: string; subject: InsightSubject }[]>;
   // Leaves the call out of coaching, or puts it back. False when it hasn't
   // been read yet (read it, then try again).
   setExcluded(callTaskId: string, excluded: boolean): Promise<boolean>;
@@ -2011,7 +2017,7 @@ export function d1CallInsightStore(db: D1Database): CallInsightStore {
       return ms === null ? null : Math.floor(ms / 1000);
     },
 
-    async needing(limit, rulesVersion) {
+    async needing(limit, rulesVersion, dialsEndedBySec = 0) {
       // Why a read row wants reading again, for either kind.
       const stale = (id: string) => `
              (i.excluded = 0 AND i.rules_version < ?1)
@@ -2034,14 +2040,19 @@ export function d1CallInsightStore(db: D1Database): CallInsightStore {
              SELECT d.task_id AS id, 'meeting' AS subject, d.started_sec AS at
              FROM dials d
              LEFT JOIN call_insights i ON i.call_task_id = d.task_id AND i.subject = 'meeting'
-             WHERE d.subject = 'meeting' AND (d.rep_status IS NOT NULL OR d.prospect_status IS NOT NULL)
+             WHERE d.subject = 'meeting'
+               AND (d.rep_status IS NOT NULL OR d.prospect_status IS NOT NULL OR d.started_sec < ?3)
                AND d.id = (SELECT d2.id FROM dials d2 WHERE d2.task_id = d.task_id AND d2.subject = 'meeting'
                            ORDER BY d2.started_sec DESC, d2.id DESC LIMIT 1)
-               AND (i.call_task_id IS NULL OR ${stale('d.task_id')})
+               -- Read of an earlier dial, or before the interview was logged: read again.
+               AND (i.call_task_id IS NULL OR i.dial_id IS NOT d.id
+                    OR (i.excluded = 0 AND EXISTS (SELECT 1 FROM meeting_logs m WHERE m.meeting_id = d.task_id
+                        AND strftime('%s', m.created_at) > strftime('%s', i.extracted_at)))
+                    OR ${stale('d.task_id')})
            )
            ORDER BY at DESC LIMIT ?2`
         )
-        .bind(rulesVersion, limit)
+        .bind(rulesVersion, limit, dialsEndedBySec)
         .all<{ id: string; subject: InsightSubject }>();
       return results.map((r) => ({ id: r.id, subject: r.subject }));
     },
