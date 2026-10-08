@@ -186,7 +186,7 @@ async function readFacts(
     unsure: JSON.stringify(unsure),
     sources: JSON.stringify(rulesSources()),
     timeline_json: timelineJson(callTimeline(facts, reading)),
-    excluded: before?.excluded ?? 0,
+    excluded: before && before.dial_id === (key.dial?.id ?? null) ? before.excluded : 0, // a new call starts in
     extracted_at: new Date(now).toISOString(),
   };
   // A review reads it again, but a stored reading from a better source or

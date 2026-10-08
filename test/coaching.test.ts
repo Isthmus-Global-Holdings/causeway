@@ -2024,6 +2024,34 @@ test('an interview dialled again is a new call: its reading replaces the first�
   );
   assert.deepEqual(await d1CallReviewStore(db).list('m1', 'second'), [], 'none of it yet');
   assert.equal((await d1CallReviewStore(db).list('m1', 'first')).length, 1, 'the first call’s still stands for it');
+
+  // Left out as a test call, then dialled again: the new call starts in.
+  assert.equal(await excludeCall(deps(), 'm1', true, Date.now()), true);
+  assert.deepEqual(await allCallInsights(db, 'meeting'), []);
+  await dials.begin(
+    dial({
+      id: 'third',
+      task_id: 'm1',
+      subject: 'meeting',
+      contact_label: putThrough.label,
+      started_sec: T0 + 14 * DAY,
+    }),
+    120
+  );
+  await dials.setProspectResult('third', { sid: 'CA3', status: 'completed', durationSec: 200 });
+  assert.deepEqual(
+    await store.needing(10, RULES_VERSION),
+    [{ id: 'm1', subject: 'meeting' }],
+    'a left-out call’s redial is read'
+  );
+  const third = await readInterview(deps(), 'm1', Date.now());
+  assert.deepEqual([third?.dial_id, third?.excluded], ['third', 0]);
+  assert.equal((await store.get('m1'))?.excluded, 0, 'in coaching again');
+  assert.equal((await allCallInsights(db, 'meeting')).length, 1);
+  // A reread of that same call keeps the rep's choice.
+  assert.equal(await excludeCall(deps(), 'm1', true, Date.now()), true);
+  await readInterview(deps(), 'm1', Date.now(), { reread: true });
+  assert.equal((await store.get('m1'))?.excluded, 1, 'left out stays left out through a reread');
 });
 
 test('an interview moved and dialled again: the earlier occurrence’s log isn’t this call’s, and the page shows this call', async () => {
