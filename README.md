@@ -158,6 +158,19 @@ timeline like one made in HubSpot.
   ranked ones. Calls to make reloads itself then, and logging a call goes to it
   next. One from an earlier day that nobody made is just overdue. A reminder
   set by hand in HubSpot counts too.
+- **In their time zone**: when they say "call me at 2 or 3 in the afternoon"
+  and mean their afternoon, type the time as they said it and pick their zone
+  beside it, "Eastern (them)" (from their state or country, else their
+  company's). Without it, the time is yours. As you type, a line under it
+  shows the time on the other clock ("= Fri 12:00 PM your time", or "= Fri
+  2:00 PM Eastern" in their address's zone). The app turns it into your time
+  once, when it's saved, so the task, its reminder, the queue and every other
+  page show your time, the same as any other call. The zone you picked isn't
+  kept: a set-time call for someone whose address is in another zone shows
+  the time there on Calls to make, named ("1:00 PM Eastern"), not as the time
+  they gave. The same picker is on Move, the log
+  form's follow-up, booking an interview and rescheduling one, and the
+  connector's tools take it as `time_zone`.
 - **Move** (on each call that's due) pushes it to another day without logging
   a call. Tomorrow is filled in. The task keeps its time of day (09:00 if it
   has none). Give it a time and it's a set-time call, which can be later

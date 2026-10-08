@@ -16,7 +16,15 @@
 // The form's values are stored with the row on the first submission, so a
 // retry writes exactly what the rep first submitted.
 
-import { isDate, localDateAt, parseHubSpotTime, parseTime, timeOfDay, type TimeOfDay } from '../lib/dates';
+import {
+  isDate,
+  parseHubSpotTime,
+  parseSaidTime,
+  saidAt,
+  timeOfDay,
+  type SaidTime,
+  type TimeOfDay,
+} from '../lib/dates';
 import { CALL_CHANNELS, type CallChannel, type CallLog, type CallLogStore, type Dial } from '../lib/db';
 import { HubSpotApiError, type CallStatus, type HubSpot } from '../lib/hubspot';
 import { textToHtml, toTaskBodyHtml } from '../lib/richtext';
@@ -103,7 +111,7 @@ export interface CallLogInput {
   // date: "YYYY-MM-DD" in the rep's time zone. time: the time the contact
   // asked to be called at, which makes a set-time call (CALL only). lastTry:
   // the EMAIL is the last one, drafted from closeTheLoopEmail.
-  next: { type: TaskType; date: string; time?: TimeOfDay; lastTry?: boolean } | null;
+  next: { type: TaskType; date: string; time?: SaidTime; lastTry?: boolean } | null;
   booking: BookingInput | null; // the interview the call booked
   dial: Dial | null; // the app's dial this outcome is for; null if the rep called another way
   transcript: CallTranscript | null; // the dial's transcript, if it finished before the rep logged
@@ -185,7 +193,7 @@ export function parseCallLogForm(
   if (date < today) throw new WorkflowError('The follow-up date is in the past.');
   if (type === LAST_TRY) return { ...base, next: { type: 'EMAIL', date, lastTry: true } };
   const timeText = type === 'CALL' ? (form.next_time ?? '') : '';
-  const time = timeText ? parseTime(timeText) : null;
+  const time = timeText ? parseSaidTime(timeText, form.next_time_tz) : null;
   if (timeText && !time)
     throw new WorkflowError('Enter a time like 4pm or 4:30pm for the follow-up call, or leave it blank.');
   return { ...base, next: time ? { type, date, time } : { type, date } };
@@ -327,8 +335,8 @@ export async function prepareCallLog(
       if (channel !== 'phone' && !whatsapp) {
         throw new WorkflowError('That number isn’t one WhatsApp can reach. Check it on the page or in HubSpot.');
       }
-      const at = next?.time ?? (due === null ? DEFAULT_NEXT_TIME : timeOfDay(due, opts.timeZone));
-      const nextDue = next ? localDateAt(next.date, opts.timeZone, at) : null;
+      const at: SaidTime = next?.time ?? (due === null ? DEFAULT_NEXT_TIME : timeOfDay(due, opts.timeZone));
+      const nextDue = next ? saidAt(next.date, at, opts.timeZone) : null;
       if (next?.time && nextDue !== null && nextDue <= opts.now) {
         throw new WorkflowError('The follow-up call’s time has already passed.');
       }

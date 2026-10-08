@@ -3,14 +3,18 @@ import { test } from 'node:test';
 import {
   addDays,
   dayBounds,
+  formatClock,
   isDate,
   localDate,
   localDateAt,
   nextCalendarDayAt,
+  parseSaidTime,
   parseTime,
+  saidAt,
   TIME_PATTERN,
   timeOfDay,
 } from '../src/lib/dates.ts';
+import { SAID_TIME_SCRIPT, timeInput } from '../src/views/layout.ts';
 
 const NINE = { hour: 9, minute: 0 };
 
@@ -105,4 +109,53 @@ test("a time field's pattern lets through what parseTime reads, and asks for am 
     assert.ok(parseTime(ok), ok);
   }
   for (const bad of ['4', '4:30', 'noon']) assert.ok(!pattern.test(bad), bad);
+});
+
+const clock = (ms: number, tz: string) => formatClock(ms, tz).replace(/\s/g, ' ');
+
+test('a time said in their zone becomes one instant, read on either clock', () => {
+  // The rep is in Denver (MDT), they're in New York (EDT): 2pm theirs is noon the rep's.
+  const theirs = parseSaidTime('2pm', 'America/New_York');
+  assert.deepEqual(theirs, { hour: 14, minute: 0, timeZone: 'America/New_York' });
+  const at = saidAt('2026-10-09', theirs!, 'America/Denver');
+  assert.equal(iso(at), '2026-10-09T18:00:00.000Z');
+  assert.equal(clock(at, 'America/Denver'), '12:00 PM');
+  assert.equal(clock(at, 'America/New_York'), '2:00 PM');
+  // No zone, or a blank one, is the rep's own.
+  assert.deepEqual(parseSaidTime('2pm', ''), { hour: 14, minute: 0 });
+  assert.equal(iso(saidAt('2026-10-09', parseSaidTime('2pm')!, 'America/Denver')), '2026-10-09T20:00:00.000Z');
+  // A zone that isn't one, or a time without its am or pm, is refused.
+  assert.equal(parseSaidTime('2pm', 'Mars/Olympus'), null);
+  assert.equal(parseSaidTime('2', 'America/New_York'), null);
+});
+
+test('a time said in their zone is on their date: 9pm in Honolulu is the next morning in Panama', () => {
+  const at = saidAt('2026-10-09', parseSaidTime('9pm', 'Pacific/Honolulu')!, 'America/Panama');
+  assert.equal(iso(at), '2026-10-10T07:00:00.000Z');
+  assert.equal(localDate(at, 'America/Panama'), '2026-10-10');
+});
+
+test("a time field with zones offers theirs first after the rep's, once each", async () => {
+  const field = String(
+    await timeInput({ name: 'time', zones: { yours: 'America/Denver', theirs: 'America/New_York', dateName: 'date' } })
+  );
+  assert.match(field, /name="time_tz"/);
+  assert.match(field, /data-their-zone="America\/New_York" data-their-label="Eastern"/);
+  assert.match(
+    field,
+    /<option value="">Mountain \(you\)<\/option>\s*<option value="America\/New_York">Eastern \(them\)/
+  );
+  assert.equal(field.match(/value="America\/New_York"/g)?.length, 1);
+  assert.equal(field.match(/value="America\/Denver"/g), null);
+  // Their zone is the rep's: no "(them)".
+  const same = String(
+    await timeInput({ name: 'time', zones: { yours: 'America/Denver', theirs: 'America/Denver', dateName: 'date' } })
+  );
+  assert.doesNotMatch(same, /\(them\)/);
+});
+
+test("the time field's script reads times the way parseTime does", () => {
+  // The script is a template literal: its regexes must keep their backslashes.
+  assert.match(SAID_TIME_SCRIPT, /\\d\{2\}/);
+  assert.doesNotThrow(() => new Function(SAID_TIME_SCRIPT));
 });

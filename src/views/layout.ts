@@ -1,6 +1,7 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
 import { CONVERSATION_GOAL, firstLine, MAX_LEARNED } from '../lib/conversations';
+import { PROSPECT_ZONES, zoneLabel } from '../lib/address';
 import { TIME_PATTERN } from '../lib/dates';
 import type { TodayCounts } from '../workflows/today';
 import { STYLES } from './styles';
@@ -121,16 +122,88 @@ export function steps(current: 'draft' | 'send'): Html {
   return html`<p class="muted steps">${step('1. Draft', current === 'draft')} · ${step('2. Preview & send', current === 'send')}</p>`;
 }
 
+// Whose clock a typed time is on: the rep's, or the contact's when they said
+// "call me at 2pm" in theirs. `dateName` is the form's date field the time
+// goes with (their date, when it's their time).
+export interface TimeZones {
+  yours: string;
+  theirs: string | null; // from their address (lib/address.ts partyTimeZone)
+  dateName: string;
+}
+
 // A time of day, typed: "4pm", "4:30pm" or "16:30" (lib/dates.ts parseTime).
 // Not <input type=time>, which won't send an hour and its am or pm until the
-// minutes are filled in too.
-export function timeInput(opts: { name: string; id?: string; label?: string; required?: boolean }): Html {
-  return html`<input type="text" data-time name="${opts.name}" ${opts.id ? html`id="${opts.id}"` : ''} ${
+// minutes are filled in too. With `zones`, a select beside it ("<name>_tz")
+// says whose time it is, the rep's by default. The server turns theirs into
+// the rep's once (lib/dates.ts saidAt), so every task and interview stays on
+// the rep's clock, and the line under it (SAID_TIME_SCRIPT) shows the other
+// side's time as it's typed.
+export function timeInput(opts: {
+  name: string;
+  id?: string;
+  label?: string;
+  required?: boolean;
+  zones?: TimeZones;
+}): Html {
+  const input = html`<input type="text" data-time name="${opts.name}" ${opts.id ? html`id="${opts.id}"` : ''} ${
     opts.label ? html`aria-label="${opts.label}"` : ''
   } placeholder="4pm" pattern="${TIME_PATTERN}" title="A time like 4pm, 4:30pm or 16:30" autocomplete="off" ${
     opts.required ? 'required' : ''
   } />`;
+  const z = opts.zones;
+  if (!z) return input;
+  const theirs = z.theirs && z.theirs !== z.yours ? z.theirs : null;
+  const others = PROSPECT_ZONES.filter((zone) => zone !== z.yours && zone !== theirs);
+  return html`<span class="said-time" data-said-time="${z.dateName}" data-rep-zone="${z.yours}" ${
+    theirs ? html`data-their-zone="${theirs}" data-their-label="${zoneLabel(theirs)}"` : ''
+  }>${input}<select name="${opts.name}_tz" aria-label="Whose time" title="Whose time it is: yours, or theirs if they said it in their time zone">
+      <option value="">${zoneLabel(z.yours)} (you)</option>
+      ${theirs ? html`<option value="${theirs}">${zoneLabel(theirs)} (them)</option>` : ''}
+      ${others.map((zone) => html`<option value="${zone}">${zoneLabel(zone)}</option>`)}
+    </select><output class="muted"></output></span>`;
 }
+
+// Under each time with zones: in another zone, what that is in the rep's; in
+// the rep's, what it is in their address's zone (when it says), named, since
+// the time they gave may have been on another clock. The same
+// arithmetic as lib/dates.ts localDateAt and parseTime, on the browser's Intl.
+export const SAID_TIME_SCRIPT = `(() => {
+  const offset = (ms, tz) => {
+    const p = {};
+    for (const part of new Intl.DateTimeFormat('en-US', { timeZone: tz, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }).formatToParts(ms)) p[part.type] = Number(part.value);
+    return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute) - Math.floor(ms / 60000) * 60000;
+  };
+  const parse = (text) => {
+    const t = text.trim().toLowerCase();
+    let m = /^(\\d{2}):(\\d{2})$/.exec(t);
+    if (m) return +m[1] < 24 && +m[2] < 60 ? [+m[1], +m[2]] : null;
+    m = /^(\\d{1,2})(?::(\\d{2}))?\\s*([ap])\\.?\\s*(?:m\\.?)?$/.exec(t);
+    if (!m || +m[1] < 1 || +m[1] > 12 || +(m[2] || 0) > 59) return null;
+    return [(+m[1] % 12) + (m[3] === 'p' ? 12 : 0), +(m[2] || 0)];
+  };
+  for (const box of document.querySelectorAll('[data-said-time]')) {
+    const input = box.querySelector('input');
+    const zone = box.querySelector('select');
+    const out = box.querySelector('output');
+    const date = box.closest('form')?.elements[box.dataset.saidTime];
+    const { repZone, theirZone, theirLabel } = box.dataset;
+    const sync = () => {
+      const from = zone.value || repZone;
+      const to = zone.value ? repZone : theirZone;
+      const t = parse(input.value);
+      out.textContent = '';
+      if (!to || !t || !date?.value) return;
+      const [y, mo, d] = date.value.split('-').map(Number);
+      const wall = Date.UTC(y, mo - 1, d, t[0], t[1]);
+      const at = wall - offset(wall - offset(wall, from), from);
+      const said = new Intl.DateTimeFormat('en-US', { timeZone: to, weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(at);
+      out.textContent = '= ' + said + (zone.value ? ' your time' : ' ' + theirLabel);
+    };
+    for (const el of [input, zone, date]) el?.addEventListener('input', sync);
+    zone.addEventListener('change', sync);
+    sync();
+  }
+})();`;
 
 // A contact (0-1), company (0-2) or deal (0-3) record in HubSpot.
 export function recordUrl(portalId: string, objectTypeId: '0-1' | '0-2' | '0-3', id: string): string {

@@ -3,6 +3,7 @@ import type { CallCoaching } from '../actions/coaching';
 import { fillScript, MAX_SCRIPT, SCRIPT_PLACEHOLDERS } from '../lib/call-script';
 import { suggestConversation } from '../lib/conversations';
 import { parseFitReason } from '../lib/fit';
+import { partyTimeZone, zoneLabel } from '../lib/address';
 import { addDays, formatClock, formatDay, formatLocal, localDate } from '../lib/dates';
 import { sqliteTime, type CallLog, type Dial, type DialMode, type InboundCall, type RecentSend } from '../lib/db';
 import { extensionOf, formatPhone, toE164 } from '../lib/phone';
@@ -56,6 +57,7 @@ import {
   layout,
   queueTabs,
   recordUrl,
+  SAID_TIME_SCRIPT,
   timeInput,
   todayStrip,
   type Html,
@@ -122,11 +124,16 @@ export function setupReady(setup: CallsSetup): boolean {
 // Moves the call to another day without logging one. Tomorrow is filled in, so
 // one click covers the usual case; the date sent is absolute, so a double
 // submit lands on the same day. A time, only when they asked for one, makes it
-// a set-time call, which can be later today.
-function moveForm(row: CallRow, tomorrow: string): Html {
+// a set-time call, which can be later today, typed in their time zone when
+// they said it in theirs.
+function moveForm(row: CallRow, tomorrow: string, timeZone: string): Html {
   return html`<form method="post" action="/calls/${row.taskId}/snooze" class="move">
     <input type="date" name="date" value="${tomorrow}" min="${addDays(tomorrow, -1)}" aria-label="Move to" required />
-    ${timeInput({ name: 'time', label: 'At a set time (optional), only if they asked for one' })}
+    ${timeInput({
+      name: 'time',
+      label: 'At a set time (optional), only if they asked for one',
+      zones: { yours: timeZone, theirs: row.timeZone, dateName: 'date' },
+    })}
     <button type="submit" class="quiet">Move</button>
   </form>`;
 }
@@ -152,8 +159,10 @@ function dueCell(row: CallRow, timeZone: string, now: number): Html {
   if (row.dueAt === null) return html`<span class="muted">no due date</span>`;
   if (!row.setTime) return html`${formatLocal(row.dueAt, timeZone)}`;
   const today = localDate(now, timeZone) === localDate(row.dueAt, timeZone);
+  const theirs = row.timeZone && row.timeZone !== timeZone ? row.timeZone : null;
   return html`${formatLocal(row.dueAt, timeZone)}
-    <span class="tag in" title="They asked to be called at this time">${today ? `Set time · ${setTimeStatus(row.dueAt, now)}` : 'Set time'}</span>`;
+    <span class="tag in" title="They asked to be called at this time">${today ? `Set time · ${setTimeStatus(row.dueAt, now)}` : 'Set time'}</span>
+    ${theirs ? html`<span class="muted" title="Their time zone, from their address">${formatClock(row.dueAt, theirs)} ${zoneLabel(theirs)}</span>` : ''}`;
 }
 
 // What the contact did with the app's emails. A click ranks a call up, then
@@ -191,7 +200,7 @@ function callRow(row: CallRow, timeZone: string, now: number, moveTo: string | n
       <div class="actions">
         ${row.phone ? html`<a class="button primary" href="${callNowHref(row.taskId)}" title="Open the call and start calling ${formatPhone(row.phone)}">Call</a>` : ''}
         <a class="button" href="/calls/${row.taskId}" data-prefetch-hover>Open</a>
-        ${moveTo ? moveForm(row, moveTo) : ''}
+        ${moveTo ? moveForm(row, moveTo, timeZone) : ''}
         ${dropForm(row.taskId, row.contactName ?? row.companyName ?? 'this contact')}
       </div>
     </td>
@@ -362,6 +371,7 @@ export function callsPage(
           </section>`
           : ''
       }
+      <script>${raw(SAID_TIME_SCRIPT)}</script>
 
     `,
     'queue',
@@ -1111,7 +1121,16 @@ function bookingFields(prefix: string, state: CallPageState, required: boolean):
       </div>
       <div class="field">
         <label for="${prefix}_time">Time</label>
-        ${timeInput({ name: 'book_time', id: `${prefix}_time`, required })}
+        ${timeInput({
+          name: 'book_time',
+          id: `${prefix}_time`,
+          required,
+          zones: {
+            yours: state.timeZone,
+            theirs: partyTimeZone(state.parties.contact, state.parties.company),
+            dateName: 'book_date',
+          },
+        })}
       </div>
     </div>
     <div class="grid-2">
@@ -1285,8 +1304,16 @@ function logForm(state: CallPageState): Html {
     </div>
     <div class="field" id="next-time-field">
       <label for="next_time">At a set time <span class="muted">(optional)</span></label>
-      ${timeInput({ name: 'next_time', id: 'next_time' })}
-      <p class="muted">Only when they asked to be called at a time: HubSpot reminds you 5 minutes before, and it’s the next call from then. Left blank, it’s due at this call’s usual time.</p>
+      ${timeInput({
+        name: 'next_time',
+        id: 'next_time',
+        zones: {
+          yours: state.timeZone,
+          theirs: partyTimeZone(state.parties.contact, state.parties.company),
+          dateName: 'next_date',
+        },
+      })}
+      <p class="muted">Only when they asked to be called at a time. If they said it in their time, pick their zone: it’s saved in yours. HubSpot reminds you 5 minutes before, and it’s the next call from then. Left blank, it’s due at this call’s usual time.</p>
     </div>
     <ol class="consequences">
       <li>The call goes on the contact's HubSpot timeline with this outcome${state.dial ? ', its length and numbers' : ''}${waFields.length ? '. A WhatsApp message goes on it as a WhatsApp message' : ''}.</li>
@@ -1505,7 +1532,7 @@ export function callPage(state: CallPageState, actor: string): Html {
       </div>
       ${!live && state.recordingState?.kind === 'pending' ? html`<script>${raw(POLL_SCRIPT)}</script>` : ''}
       ${!completed && !dropped && !live ? html`<script>${raw(BOOKING_SCRIPT)}</script><script>${raw(NEXT_TIME_SCRIPT)}</script>` : ''}
-      <script>${raw(BOOKING_FORMAT_SCRIPT)}</script>
+      <script>${raw(BOOKING_FORMAT_SCRIPT)}</script><script>${raw(SAID_TIME_SCRIPT)}</script>
       ${browserCalls ? browserCallScripts() : ''}
       ${state.callNow ? html`<script>${raw(DROP_CALL_NOW_SCRIPT)}</script>` : ''}
       ${state.callNow && canDial ? html`<script>${raw(CALL_NOW_SCRIPT)}</script>` : ''}
