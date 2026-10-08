@@ -62,8 +62,8 @@ import {
 } from '../src/lib/db.ts';
 import type { HubSpot } from '../src/lib/hubspot.ts';
 import type { Turn } from '../src/lib/transcript.ts';
-import { afterCallSummary, beforeCallSummary, bookingSummary } from '../src/mcp/format.ts';
-import { coachingCard, coachingPage } from '../src/views/coaching.ts';
+import { afterCallSummary, callReviewSummary, beforeCallSummary, bookingSummary } from '../src/mcp/format.ts';
+import { callTags, coachingCard, coachingPage } from '../src/views/coaching.ts';
 import {
   excludeCall,
   readCall,
@@ -420,6 +420,11 @@ function insight(over: Partial<CallInsight> & Pick<CallInsight, 'call_task_id'>)
     gatekeeper_line: null,
     what_worked: null,
     adjust: null,
+    asked_last_time: null,
+    pitched: null,
+    longest_story_sec: null,
+    fluff_caught: null,
+    commitment: null,
     prospect_talk_share: null,
     rep_questions: null,
     you_focus: null,
@@ -871,10 +876,16 @@ test('after the call, the connector gets the tags, who decided them, and the fol
       lengthSec: 92,
       objection: { kind: 'busy', inTheirWords: read.objection, gotPast: true },
       nextStep: { agreed: true, when: summary.tags.nextStep.when, what: null },
-      talkedAboutTheirWorld: null,
-      openedUp: null,
+      momTest: summary.tags.momTest,
     }
   );
+  assert.deepEqual(summary.tags.momTest, {
+    askedAboutLastTime: false,
+    pitched: false,
+    longestStorySec: read.longest_story_sec,
+    fluffCaught: null,
+    commitment: 'time',
+  });
   assert.match(summary.tags.nextStep.when!, /11:00/);
   assert.deepEqual(summary.sources, { stage: { by: 'rules', p: null } });
   assert.equal(summary.review, null);
@@ -1496,6 +1507,220 @@ test('before calling someone who canceled their interview, the call page says th
   assert.ok(notes.some((n) => /They canceled the interview/.test(n.text)));
 });
 
+// --- The Mom Test: the rules' first pass, for a review to settle ---
+
+// A call that reached them, with the rep asking about the last time, pitching, and them offering an intro.
+const momTestCall: Turn[] = [
+  { speaker: 'prospect', start: 0, end: 1.5, text: 'hello this is grant' },
+  {
+    speaker: 'rep',
+    start: 2,
+    end: 9,
+    text: 'hey grant this is anel i build software for trucking companies our software lets you quote faster',
+  },
+  { speaker: 'prospect', start: 10, end: 10.5, text: 'okay' },
+  { speaker: 'rep', start: 12, end: 14, text: 'walk me through the last load you quoted' },
+  {
+    speaker: 'prospect',
+    start: 15,
+    end: 70,
+    text: 'well last tuesday a broker called about a reefer load to denver and',
+  },
+  { speaker: 'rep', start: 72, end: 74, text: 'who handles the invoicing' },
+  { speaker: 'prospect', start: 75, end: 80, text: 'talk to my wife she does all of that i can give you her number' },
+];
+
+test('the Mom Test: the rules hear a question about the last time, a pitch, a story and an intro; the rest stays unsure', () => {
+  const read = ruleInsight(
+    facts({ label: 'Grant Ives', firstName: 'Grant', durationSec: 82, transcript: { turns: momTestCall, summary: [] } })
+  );
+  assert.equal(read.reached, 1);
+  assert.deepEqual(
+    [read.asked_last_time, read.pitched, read.longest_story_sec, read.fluff_caught, read.commitment],
+    [1, 1, 55, null, 'intro']
+  );
+  assert.deepEqual(read.marks.lastTimeAt, [3]);
+  assert.deepEqual(read.marks.pitchAt, [1]);
+  assert.deepEqual(
+    read.unsure,
+    ['commitment', 'fluffCaught'],
+    'an intro the rules heard still wants a look; fluff always does'
+  );
+
+  // A set time is a commitment the rules are sure of; the framing line isn't a pitch.
+  const lunch = heard(lunchThenBooked);
+  assert.deepEqual([lunch.asked_last_time, lunch.pitched, lunch.commitment], [0, 0, 'time']);
+  assert.ok(lunch.longest_story_sec! > 0 && lunch.longest_story_sec! < 60);
+  assert.deepEqual(lunch.unsure, ['askedAboutLastTime', 'pitched', 'fluffCaught'], 'not asking isn’t proof');
+  // Their number given is a next step, but what they committed is for a review to say.
+  const lyle = heard(putThrough);
+  assert.equal(lyle.commitment, null);
+  assert.ok(lyle.unsure.includes('commitment'));
+  // Never reached: nothing to judge, nothing unsure.
+  const desk = heard(onHold);
+  assert.deepEqual(
+    [desk.asked_last_time, desk.pitched, desk.longest_story_sec, desk.fluff_caught, desk.commitment, desk.unsure],
+    [null, null, null, null, null, []]
+  );
+  // No transcript: the rules can't hear it, and don't pretend to.
+  const notes = ruleInsight(facts({ notes: 'Talked with Sam, he told me about last week’s quote' }));
+  assert.deepEqual([notes.asked_last_time, notes.commitment], [null, null]);
+  assert.ok(!notes.unsure.includes('fluffCaught'));
+});
+
+test('a review that says the rules heard wrong takes the pitch and last-time marks off the drawing', () => {
+  const drawing = {
+    totalSec: 90,
+    phases: [{ kind: 'them', from: 0, to: 90, label: null }],
+    turns: [{ who: 'prospect', from: 5, to: 80, story: true }],
+    marks: [
+      { kind: 'opening', at: 2, text: null },
+      { kind: 'pitch', at: 2, text: 'our software' },
+      { kind: 'last_time', at: 12, text: 'walk me through' },
+    ],
+    longestStorySec: 75,
+  };
+  const row = insight({
+    call_task_id: 'd1',
+    pitched: 1,
+    asked_last_time: 1,
+    longest_story_sec: 75,
+    timeline_json: JSON.stringify(drawing),
+  });
+  const reviewed = withReviews(row, [
+    {
+      reviewer: 'claude',
+      corrections: { pitched: false, longestStorySec: 40 },
+      what_worked: null,
+      adjust: null,
+      reviewed_at: '2026-10-08T17:00:00Z',
+    },
+  ]);
+  const t = parseTimeline(reviewed.timeline_json)!;
+  assert.deepEqual(
+    t.marks.map((m) => m.kind),
+    ['opening', 'last_time'],
+    'the pitch the rules heard wrong is gone; the question stays'
+  );
+  assert.equal(t.longestStorySec, 40, 'the review’s figure');
+  assert.equal(t.turns[0].story, undefined, 'under a minute now: no story tick');
+  // Raised to a story the rules hadn't measured: their longest turn gets the tick.
+  const short = {
+    ...drawing,
+    turns: [
+      { who: 'prospect', from: 5, to: 40 },
+      { who: 'prospect', from: 50, to: 58 },
+    ],
+    longestStorySec: 35,
+  };
+  const raised = withReviews(
+    insight({ call_task_id: 'd2', longest_story_sec: 35, timeline_json: JSON.stringify(short) }),
+    [{ reviewer: 'claude', corrections: { longestStorySec: 70 }, what_worked: null, adjust: null, reviewed_at: '' }]
+  );
+  assert.deepEqual(
+    parseTimeline(raised.timeline_json)!.turns.map((k) => k.story ?? false),
+    [true, false]
+  );
+  // An explicit null clears the story; taking back that they were reached clears the lot.
+  const noStory = withReviews(row, [
+    { reviewer: 'claude', corrections: { longestStorySec: null }, what_worked: null, adjust: null, reviewed_at: '' },
+  ]);
+  assert.equal(noStory.longest_story_sec, null);
+  assert.equal(parseTimeline(noStory.timeline_json)?.longestStorySec, null, 'the drawing says none too');
+  const desk = withReviews(row, [
+    {
+      reviewer: 'rep',
+      corrections: { whoAnswered: 'gatekeeper', reachedThem: false },
+      what_worked: null,
+      adjust: null,
+      reviewed_at: '',
+    },
+  ]);
+  assert.deepEqual(
+    [desk.asked_last_time, desk.pitched, desk.longest_story_sec, desk.fluff_caught, desk.commitment],
+    [null, null, null, null, null],
+    'never reached: nothing to judge'
+  );
+  assert.deepEqual(
+    parseUnsure(desk.unsure).filter(
+      (u) => u !== 'whoAnswered' && u !== 'reachedThem' && u !== 'stage' && u !== 'frontDeskResult'
+    ),
+    [],
+    'and nothing unsure about it'
+  );
+  const deskDrawing = parseTimeline(desk.timeline_json)!;
+  assert.deepEqual(
+    deskDrawing.marks.map((m) => m.kind),
+    ['opening']
+  );
+  assert.equal(deskDrawing.longestStorySec, null);
+  assert.equal(
+    withReviews(insight({ call_task_id: 'n', timeline_json: null }), [
+      { reviewer: 'rep', corrections: { pitched: false }, what_worked: null, adjust: null, reviewed_at: '' },
+    ]).timeline_json,
+    null,
+    'nothing drawn: nothing to change'
+  );
+});
+
+test('the review’s transcript stamps each turn start–end, so a story’s length reads off the line', async () => {
+  await logCall('t1', { outcome: 'connected', duration_sec: 543, notes: putThrough.notes });
+  const log = (await d1CallLogStore(db).get('t1'))!;
+  const notes = (await callNotes(db, 't1'))!;
+  const summary = callReviewSummary(
+    { settings: { timeZone: TZ } as never, log, turns: putThrough.turns, summary: [], notes, reviews: [] },
+    ORIGIN
+  );
+  assert.match(
+    summary.transcript![0],
+    /^\[0:01–0:07\] Prospect: thank you for calling/,
+    'capped by its words, not the 14 s gap'
+  );
+  assert.match(summary.transcript![9], /^\[0:56–1:30\] You: yeah so basically lyle/);
+  assert.match(summary.rules, /stamped \[start–end\]/);
+});
+
+test('a review settles the Mom Test over the rules', () => {
+  const row = insight({
+    call_task_id: 'm1',
+    asked_last_time: 0,
+    pitched: 0,
+    longest_story_sec: 14,
+    fluff_caught: null,
+    commitment: 'time',
+    unsure: JSON.stringify(['askedAboutLastTime', 'pitched', 'fluffCaught']),
+  });
+  const reviewed = withReviews(row, [
+    {
+      reviewer: 'claude',
+      corrections: { askedAboutLastTime: true, longestStorySec: 95, fluffCaught: false, commitment: 'intro' },
+      what_worked: null,
+      adjust: 'When he says “we usually”, ask when it last happened.',
+      reviewed_at: '2026-10-08T17:00:00Z',
+    },
+  ]);
+  assert.deepEqual(
+    [
+      reviewed.asked_last_time,
+      reviewed.pitched,
+      reviewed.longest_story_sec,
+      reviewed.fluff_caught,
+      reviewed.commitment,
+    ],
+    [1, 0, 95, 0, 'intro']
+  );
+  assert.deepEqual(parseUnsure(reviewed.unsure), ['pitched'], 'the review said nothing about pitching');
+  const by = parseSources(reviewed.sources);
+  assert.deepEqual(
+    [by.askedAboutLastTime?.by, by.longestStorySec?.by, by.fluffCaught?.by, by.commitment?.by, by.pitched],
+    ['claude', 'claude', 'claude', 'claude', undefined]
+  );
+  const tags = String(callTags(reviewed, parseUnsure(reviewed.unsure)));
+  assert.match(tags, /Asked about the last time · Story 1:35 · They gave an intro/);
+  assert.doesNotMatch(tags, /Pitched|Caught the fluff/);
+  assert.match(tags, /Not sure of whether you pitched/);
+});
+
 // --- Reviews: Claude's or the rep's, laid over the rules' reading ---
 
 test('a review answers tags over the rules, the rep’s over Claude’s, and they’re no longer unsure', () => {
@@ -1599,6 +1824,39 @@ test('a review is saved, survives the rules reading the call again, and a new on
   assert.equal(again?.stage, 'conversation');
   assert.equal((await d1CallInsightStore(db).get('t1'))?.what_worked, 'Let them talk about dispatch.');
   assert.deepEqual(await callsToReview(db, 10), [], 'reviewed: off the list');
+  // A review from before the review rules could answer the new tags brings
+  // the call back to the list; reviewing again takes it off.
+  await db.prepare(`UPDATE call_reviews SET rules_version = 0 WHERE call_task_id = 't1'`).run();
+  assert.deepEqual(
+    (await callsToReview(db, 10)).map((c) => c.call_task_id),
+    ['t1'],
+    'reviewed under older rules: back on the list'
+  );
+  // Asked again only for what's new, the review answers only that: its
+  // corrections go over the earlier ones rather than replacing them.
+  const refreshed = await reviewCall(
+    deps(),
+    't1',
+    {
+      reviewer: 'claude',
+      corrections: { commitment: 'time' },
+      what_worked: null,
+      adjust: null,
+      reviewed_at: '2026-10-08T19:00:00Z',
+    },
+    Date.now()
+  );
+  assert.deepEqual(
+    [refreshed?.stage, refreshed?.commitment],
+    ['conversation', 'time'],
+    'the old stage kept, the new tag added'
+  );
+  assert.deepEqual((await d1CallReviewStore(db).list('t1'))[0].corrections, {
+    stage: 'conversation',
+    objection: { kind: 'not_now' },
+    commitment: 'time',
+  });
+  assert.deepEqual(await callsToReview(db, 10), [], 'reviewed under the current rules again');
 
   // Claude's second review drops the stage: the rules' stage is back.
   const replaced = await reviewCall(

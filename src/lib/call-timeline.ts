@@ -11,7 +11,7 @@ import type { CallFacts, RuleReading } from './call-insight';
 import { turnEnd, turnSpan, type Turn } from './transcript';
 
 export type PhaseKind = 'menu' | 'desk' | 'hold' | 'them' | 'voicemail' | 'call';
-export type MarkKind = 'opening' | 'objection' | 'next_step';
+export type MarkKind = 'opening' | 'objection' | 'next_step' | 'last_time' | 'pitch';
 
 export interface Phase {
   kind: PhaseKind;
@@ -119,11 +119,43 @@ export function callTimeline(facts: CallFacts, reading: Reading): Timeline | nul
   mark('opening', m.openingAt, m.openingAt !== null ? turns[m.openingAt].text : null);
   mark('objection', m.objectionAt, reading.objection);
   mark('next_step', m.nextStepAt, reading.next_step_text);
+  // The Mom Test, where the rules heard it: a question about the last time, a pitch.
+  for (const i of m.lastTimeAt) mark('last_time', i, turns[i]?.text ?? null);
+  for (const i of m.pitchAt) mark('pitch', i, turns[i]?.text ?? null);
 
   return { totalSec, phases, turns: ticks, marks, longestStorySec };
 }
 
 export const timelineJson = (t: Timeline | null): string | null => (t ? JSON.stringify(t) : null);
+
+// A drawing with the reading's Mom Test over it, as it stands after any
+// reviews: a pitch or a last-time question that stands at anything but yes
+// (the review said no, or took back that they were reached) loses its
+// marks, and the longest story is the reading's, null included. A question
+// the rules missed can't be placed, so it gains no mark: the tag line says it.
+export function withReviewedTags(
+  t: Timeline,
+  tags: { pitched: number | null; asked_last_time: number | null; longest_story_sec: number | null }
+): Timeline {
+  const marks = t.marks.filter(
+    (m) => !((m.kind === 'pitch' && tags.pitched !== 1) || (m.kind === 'last_time' && tags.asked_last_time !== 1))
+  );
+  const longestStorySec = tags.longest_story_sec;
+  let turns = t.turns.map(({ story: _story, ...tick }) => tick);
+  if (longestStorySec !== null && longestStorySec >= STORY_SEC) {
+    // The story ticks as the rules drew them, or, when the review raised the
+    // figure to a story the rules hadn't measured, their longest turn.
+    const flagged = t.turns.filter((k) => k.story);
+    if (flagged.length) turns = t.turns;
+    else {
+      const longest = t.turns
+        .map((k, i) => ({ i, sec: k.who === 'prospect' ? k.to - k.from : -1 }))
+        .reduce((best, k) => (k.sec > best.sec ? k : best), { i: -1, sec: -1 });
+      if (longest.i >= 0) turns = turns.map((k, i) => (i === longest.i ? { ...k, story: true as const } : k));
+    }
+  }
+  return { ...t, marks, turns, longestStorySec };
+}
 
 // call_insights keeps the timeline as JSON; a damaged value reads as none.
 export function parseTimeline(json: string | null | undefined): Timeline | null {
@@ -175,7 +207,10 @@ export function timelineText(t: Timeline, outcome: string | null = null): string
   for (const m of t.marks) {
     if (m.kind === 'objection') parts.push(`Objection at ${clock(Math.round(m.at))}`);
     if (m.kind === 'next_step') parts.push(`Next step at ${clock(Math.round(m.at))}`);
+    if (m.kind === 'pitch') parts.push(`You pitched at ${clock(Math.round(m.at))}`);
   }
+  const asked = t.marks.filter((m) => m.kind === 'last_time');
+  if (asked.length) parts.push(`Asked about the last time at ${asked.map((m) => clock(Math.round(m.at))).join(', ')}`);
   if (t.longestStorySec !== null && t.longestStorySec >= STORY_SEC) {
     parts.push(`Their longest story ${clock(t.longestStorySec)}`);
   }

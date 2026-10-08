@@ -156,7 +156,8 @@ dl.strips .n { text-align: right; font-variant-numeric: tabular-nums; }
 .strip .tick.prospect.story { height: 0.9rem; }
 .strip .mark { position: absolute; top: 0; left: var(--l); width: 0.5rem; height: 0.5rem; margin-left: -0.25rem; border-radius: 50%; background: var(--fg); }
 .strip .mark.objection { background: var(--warn-fg); }
-.strip .mark.next_step { background: var(--accent); }
+.strip .mark.next_step, .strip .mark.last_time { background: var(--accent); }
+.strip .mark.pitch { background: var(--warn-fg); }
 .strip-text { margin: 0; font-size: 0.9em; }
 ol.consequences { margin: 0; padding-left: var(--space-5); display: flex; flex-direction: column; gap: var(--space-1); }
 

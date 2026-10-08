@@ -3,6 +3,7 @@ import type { CallCoaching, CoachingOverview } from '../actions/coaching';
 import { clock } from '../lib/call-history';
 import {
   adjustNotes,
+  COMMITMENT_LABELS,
   FAST_CALL_SEC,
   GATE_LABELS,
   GATEKEEPER_RESULT_LABELS,
@@ -31,6 +32,7 @@ import {
   type Rate,
   type Style,
 } from '../lib/coaching';
+import { STORY_SEC } from '../lib/call-timeline';
 import { formatLocal } from '../lib/dates';
 import type { CallInsight } from '../lib/db';
 import { CALL_OUTCOMES } from '../workflows/call-logged';
@@ -52,6 +54,11 @@ const TAG_WORDS: Record<Tag, string> = {
   stage: 'how far it got',
   objection: 'the objection',
   nextStep: 'the next step',
+  askedAboutLastTime: 'whether you asked about the last time',
+  pitched: 'whether you pitched',
+  longestStorySec: 'their longest story',
+  fluffCaught: 'whether you caught the fluff',
+  commitment: 'what they committed',
 };
 
 // What coaching read from one call, in a line: who answered, the phone
@@ -70,6 +77,14 @@ export function callTags(call: InsightFields, unsure: Tag[]): Html {
     call.reached && call.talk_sec !== null ? `Talked ${clock(call.talk_sec)}` : '',
     call.objection_kind ? `Objection: ${objectionFor(call.objection_kind)?.label ?? call.objection_kind}` : '',
     call.next_step ? `Next step: ${call.next_step_text ?? 'agreed'}` : '',
+    // The Mom Test, as far as anything has said.
+    call.asked_last_time === 1 ? 'Asked about the last time' : '',
+    call.pitched === 1 ? 'Pitched' : '',
+    call.longest_story_sec !== null && call.longest_story_sec >= STORY_SEC
+      ? `Story ${clock(call.longest_story_sec)}`
+      : '',
+    call.fluff_caught === 1 ? 'Caught the fluff' : '',
+    call.commitment ? `They gave ${COMMITMENT_LABELS[call.commitment]}` : '',
   ].filter(Boolean);
   return html`<p>
     <span class="tag">${STAGE_LABELS[call.stage]}</span> ${parts.join(' · ')}

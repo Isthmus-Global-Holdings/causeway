@@ -29,7 +29,7 @@ import {
   type Tag,
   type TagSources,
 } from '../lib/call-insight';
-import { callTimeline, parseTimeline, type Timeline } from '../lib/call-timeline';
+import { callTimeline, parseTimeline, withReviewedTags, type Timeline } from '../lib/call-timeline';
 import {
   bookingReport,
   callBrief,
@@ -201,7 +201,7 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
     sources: parseSources(read.sources),
     notes: adjustNotes(read),
     feedbackBy: feedbackBy(reviews),
-    timeline: callTimeline(facts, reading),
+    timeline: ((t) => (t ? withReviewedTags(t, read) : null))(callTimeline(facts, reading)),
   };
 }
 

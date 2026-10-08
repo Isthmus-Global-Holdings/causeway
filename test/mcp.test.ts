@@ -238,16 +238,40 @@ test('calls are reviewed from here: the ones to review, one with its rules, and 
   assert.match(call.data.rules, /Correct the tags/);
   assert.equal(call.data.call.repNotes, 'Talked with Ana. Busy at lunch, said call back tomorrow.');
   assert.equal(call.data.transcript, null, 'logged by hand: no recording');
+  assert.match(call.data.rules, /stamped \[start–end\]/);
   assert.deepEqual(call.data.reviews, []);
+
+  assert.match(call.data.rules, /## The Mom Test/);
+  assert.deepEqual(call.data.reading.tags.momTest, {
+    askedAboutLastTime: null,
+    pitched: null,
+    longestStorySec: null,
+    fluffCaught: null,
+    commitment: null,
+  });
 
   const reviewed = await callTool('review_call', {
     task_id: '1',
-    corrections: { stage: 'conversation', nextStep: { agreed: true, what: 'Call back tomorrow' } },
+    corrections: {
+      stage: 'conversation',
+      nextStep: { agreed: true, what: 'Call back tomorrow' },
+      askedAboutLastTime: false,
+      fluffCaught: false,
+      commitment: 'time',
+    },
     what_worked: 'Asked about her week before anything else.',
     adjust: 'Leave with a time, not “tomorrow”.',
   });
   assert.equal(reviewed.isError, false, reviewed.text);
   assert.equal(reviewed.data.reading.sources.stage.by, 'claude');
+  assert.deepEqual(reviewed.data.reading.tags.momTest, {
+    askedAboutLastTime: false,
+    pitched: null,
+    longestStorySec: null,
+    fluffCaught: false,
+    commitment: 'time',
+  });
+  assert.equal(reviewed.data.reading.sources.commitment.by, 'claude');
   assert.deepEqual(
     [reviewed.data.reading.review.whatWorkedBy, reviewed.data.reading.review.adjustBy],
     ['claude', 'claude']

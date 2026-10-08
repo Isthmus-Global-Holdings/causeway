@@ -16,6 +16,7 @@ import { latestMeetingDial, logMeeting, meetingsOverview } from '../actions/meet
 import { openContactTask, saveNumbers } from '../actions/records';
 import { loadAppSettings } from '../lib/app-settings';
 import {
+  COMMITMENTS,
   GATEKEEPER_RESULTS,
   GATES,
   OBJECTION_KINDS,
@@ -841,7 +842,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Review a call',
       description:
-        "Save a review of one logged call for coaching, after reading it with get_call_review and following its rules: corrections for only the tags that were wrong or unsure (the rest keep the rules' reading), what worked, and what to adjust next time. Saved in the app only (not HubSpot); reviewing again replaces this reviewer's earlier review. reviewer 'rep' when the rep says what happened; the rep's review wins over Claude's. leave_out: true for a test call, to leave it out of coaching (false puts it back).",
+        "Save a review of one logged call for coaching, after reading it with get_call_review and following its rules: corrections for only the tags that were wrong or unsure (the rest keep the rules' reading), the Mom Test on it (asked about the last time, pitched, their longest story, fluff caught, what they committed), what worked, and what to adjust next time. Saved in the app only (not HubSpot); reviewing again replaces this reviewer's earlier review. reviewer 'rep' when the rep says what happened; the rep's review wins over Claude's. leave_out: true for a test call, to leave it out of coaching (false puts it back).",
       inputSchema: {
         task_id: id,
         reviewer: z.enum(REVIEWERS).default('claude'),
@@ -863,6 +864,18 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
                 what: z.string().max(200).nullable().optional().describe('in a few words'),
               })
               .optional(),
+            askedAboutLastTime: z.boolean().optional().describe('asked about a specific past instance'),
+            pitched: z.boolean().optional().describe('described the idea or the product'),
+            longestStorySec: z
+              .number()
+              .int()
+              .min(0)
+              .max(3600)
+              .nullable()
+              .optional()
+              .describe('their longest uninterrupted stretch, from the stamps'),
+            fluffCaught: z.boolean().optional().describe('brought "usually" / "I would" back to a past instance'),
+            commitment: z.enum(COMMITMENTS).nullable().optional().describe('what they gave up: time, intro, money'),
           })
           .default({}),
         what_worked: z.string().max(1_000).optional(),

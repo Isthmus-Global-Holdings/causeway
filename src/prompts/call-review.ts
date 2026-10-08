@@ -1,7 +1,8 @@
 // How Claude reviews a logged call through the connector (get_call_review,
-// then review_call): what each tag means, and what to say about the call.
-// Not a skill copy: the rep's to edit directly. The interview reminders
-// (prompts/interview-questions.ts) are what a good call looks like.
+// then review_call): what each tag means, the Mom Test on the call, and what
+// to say about it. Not a skill copy: the rep's to edit directly. The
+// interview reminders (prompts/interview-questions.ts) are what a good call
+// looks like.
 
 import { INTERVIEW_REMINDERS } from './interview-questions';
 
@@ -18,6 +19,14 @@ The rules already tagged the call. Answer only the tags that are wrong, or that 
 - stage: how far it got: no_connect, voicemail, gatekeeper, opening (reached, but it ended at the opening), conversation (they talked about their work), next_step (a time, a number, an interview or another step was agreed).
 - objection: the first objection the person raised, as a kind (sales_call, not_decision_maker, no_problem, trust, have_solution, send_info, busy, not_now, not_interested, other) with their words; kind null when there was none.
 - nextStep: whether a next step was agreed, and what, in a few words ("Call back Thursday 8 AM", "Gave his cell").
+
+## The Mom Test
+Only once the rep reached the person they called for (on an interview, the whole call). The rules take a first pass from the words; you can hear what they can't. Answer each you can tell; leave out what the call doesn't show:
+- askedAboutLastTime: true when the rep asked about a specific past instance ("the last load you quoted", "walk me through what happened"), not habits ("how do you usually") or hypotheticals ("would you", "if you could").
+- pitched: true when the rep described what they build or could build, beyond the one line that frames the call ("I'm a founder, I'm not selling anything" is framing, not a pitch).
+- longestStorySec: the longest stretch the prospect talked without the rep cutting in, in seconds. Each transcript line is stamped [start–end] (the end is when their last word ended, not when the next turn began), so a turn's length is end minus start; silence between turns isn't talking. A story is a minute or more: that's what these calls are for. Leave it out when the rules' figure already reads right.
+- fluffCaught: true when the prospect went generic or hypothetical ("we usually", "I would", "we'd probably") and the rep brought it back to a specific time it happened; false when the rep let it stand.
+- commitment: what they gave up at the end: time (a set time, an interview booked, "call me Thursday at 8"), intro (someone else to talk to, their number or email), money (a paid pilot, a pre-order). null for compliments, "send me some info", "call me whenever": a friendly call with no commitment is a failure.
 
 ## Say what to keep and what to change
 - what_worked: one or two sentences on what the rep did that kept the call going or got past the front desk, quoting the line. Leave it out when nothing did.

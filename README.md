@@ -567,8 +567,16 @@ the ones worth a review with `calls_to_review` (someone picked up, nobody
 reviewed it yet), reads each with `get_call_review` (the transcript with
 times, your notes, the tags so far, and the rules for reviewing it, in
 `src/prompts/call-review.ts`), and saves what it found with `review_call`:
-corrections for the tags that were wrong or unsure, what worked, and what to
-adjust. On your Claude plan, so it costs nothing extra. A review is kept in
+corrections for the tags that were wrong or unsure, the Mom Test on the call
+(did you ask about a specific last time, did you pitch, their longest story
+in seconds, did you catch the fluff and bring it back to a real instance,
+what they gave up at the end: their time, an intro, money), what worked, and
+what to adjust. The rules take a first pass at the Mom Test from the words
+(a question about the last time, a pitch, how long they talked, a time or an
+intro agreed) and mark the rest unsure; whether you caught the fluff only a
+review can say. A call reviewed before the review rules could answer a tag
+(`REVIEW_RULES_VERSION`, bumped when `review_call` gains one) comes back to
+`calls_to_review` for it. On your Claude plan, so it costs nothing extra. A review is kept in
 `call_reviews` (one per reviewer, replaced whole) and laid over the rules'
 reading every time the call is read, so the sweep never undoes it; yours
 (`reviewer: 'rep'`, when you tell Claude what happened) wins over Claude's.

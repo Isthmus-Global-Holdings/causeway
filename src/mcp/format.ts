@@ -28,7 +28,7 @@ import {
 import { formatLocal, parseHubSpotTime } from '../lib/dates';
 import { sqliteTime, type CallInsight, type InboundCall, type RecentCallLog, type RecentSend } from '../lib/db';
 import { parseFitLabel } from '../lib/fit';
-import { SPEAKER_LABELS } from '../lib/transcript';
+import { SPEAKER_LABELS, turnSpan } from '../lib/transcript';
 import { CALL_REVIEW_RULES } from '../prompts/call-review';
 import type { HubSpotObject } from '../lib/hubspot';
 import { toE164 } from '../lib/phone';
@@ -239,8 +239,22 @@ export function callInsightSummary(call: CallInsight, timeZone: string, origin: 
       : null,
     nextStep: call.next_step ? (call.next_step_text ?? true) : null,
     opening: call.opening,
+    momTest: momTest(call),
     adjust: adjustNotes(call).map((n) => n.text),
     url: pageUrl(origin, `/calls/${call.call_task_id}`),
+  };
+}
+
+// The Mom Test on a call: null for each thing nothing could say (no
+// transcript, never reached, or the rules can't hear it and no review has).
+function momTest(call: InsightFields) {
+  const yes = (v: number | null) => (v === null ? null : v === 1);
+  return {
+    askedAboutLastTime: yes(call.asked_last_time),
+    pitched: yes(call.pitched),
+    longestStorySec: call.longest_story_sec,
+    fluffCaught: yes(call.fluff_caught),
+    commitment: call.commitment,
   };
 }
 
@@ -325,9 +339,7 @@ export function afterCallSummary(after: CallNotes, nextDue: string | null, timeZ
         when: call.next_step ? storedTime(nextDue, timeZone) : null,
         what: call.next_step_text,
       },
-      // Jev's, from the transcript: not read yet.
-      talkedAboutTheirWorld: null,
-      openedUp: null,
+      momTest: momTest(call),
     },
     sources: after.sources,
     unsure: after.unsure,
@@ -360,8 +372,13 @@ export function callReviewSummary(r: CallForReview, origin: string) {
       repNotes: r.log.notes || null,
       url: pageUrl(origin, `/calls/${r.log.call_task_id}`),
     },
+    // Each turn stamped start–end (the end: their last word, not the next turn),
+    // so a turn's length reads off the line and silence between turns doesn't count.
     transcript: r.turns.length
-      ? r.turns.map((t) => `[${clock(Math.round(t.start))}] ${SPEAKER_LABELS[t.speaker]}: ${t.text}`)
+      ? r.turns.map((t, i) => {
+          const { from, to } = turnSpan(r.turns, i, r.log.duration_sec ?? r.notes.read.duration_sec);
+          return `[${clock(Math.round(from))}–${clock(Math.round(to))}] ${SPEAKER_LABELS[t.speaker]}: ${t.text}`;
+        })
       : null,
     autoSummary: r.summary.length ? r.summary : null,
     reading: afterCallSummary(r.notes, r.log.next_due, tz),

@@ -158,6 +158,31 @@ test('a prospect turn of a minute or more is a story', () => {
   assert.match(timelineText(t), /Their longest story 1:15/);
 });
 
+test('a question about the last time and a pitch are marked where the rules heard them', () => {
+  const turns: Turn[] = [
+    { speaker: 'prospect', start: 0, end: 1.5, text: 'hello this is grant' },
+    { speaker: 'rep', start: 2, end: 9, text: 'hey grant this is anel our software lets you quote faster' },
+    { speaker: 'prospect', start: 10, end: 10.5, text: 'okay' },
+    { speaker: 'rep', start: 12, end: 14, text: 'walk me through the last load you quoted' },
+    { speaker: 'prospect', start: 15, end: 40, text: 'well last tuesday a broker called about a reefer load' },
+  ];
+  const t = drawn(
+    facts({ label: 'Grant Ives', firstName: 'Grant', durationSec: 42, transcript: { turns, summary: [] } })
+  )!;
+  assert.deepEqual(
+    t.marks.map((m) => [m.kind, m.at]),
+    [
+      ['opening', 2],
+      ['last_time', 12],
+      ['pitch', 2],
+    ]
+  );
+  assert.match(timelineText(t), /You pitched at 0:02 · Asked about the last time at 0:12/);
+  const strip = String(timelineStrip(t));
+  assert.match(strip, /<span class="mark last_time" style="--l: 28\.6%"><\/span>/);
+  assert.match(strip, /<span class="mark pitch" style="--l: 4\.8%"><\/span>/);
+});
+
 test('without a transcript, a call with a length is one segment; without a length, nothing', () => {
   const voicemail = drawn(facts({ outcome: 'left_voicemail', durationSec: 40 }))!;
   assert.deepEqual(kinds(voicemail), [['voicemail', 0, 40]]);
