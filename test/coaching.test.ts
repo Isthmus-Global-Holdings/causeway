@@ -1604,6 +1604,23 @@ test('a review that says the rules heard wrong takes the pitch and last-time mar
   );
   assert.equal(t.longestStorySec, 40, 'the review’s figure');
   assert.equal(t.turns[0].story, undefined, 'under a minute now: no story tick');
+  // Raised to a story the rules hadn't measured: their longest turn gets the tick.
+  const short = {
+    ...drawing,
+    turns: [
+      { who: 'prospect', from: 5, to: 40 },
+      { who: 'prospect', from: 50, to: 58 },
+    ],
+    longestStorySec: 35,
+  };
+  const raised = withReviews(
+    insight({ call_task_id: 'd2', longest_story_sec: 35, timeline_json: JSON.stringify(short) }),
+    [{ reviewer: 'claude', corrections: { longestStorySec: 70 }, what_worked: null, adjust: null, reviewed_at: '' }]
+  );
+  assert.deepEqual(
+    parseTimeline(raised.timeline_json)!.turns.map((k) => k.story ?? false),
+    [true, false]
+  );
   // An explicit null clears the story; taking back that they were reached clears the lot.
   const noStory = withReviews(row, [
     { reviewer: 'claude', corrections: { longestStorySec: null }, what_worked: null, adjust: null, reviewed_at: '' },
@@ -1815,6 +1832,31 @@ test('a review is saved, survives the rules reading the call again, and a new on
     ['t1'],
     'reviewed under older rules: back on the list'
   );
+  // Asked again only for what's new, the review answers only that: its
+  // corrections go over the earlier ones rather than replacing them.
+  const refreshed = await reviewCall(
+    deps(),
+    't1',
+    {
+      reviewer: 'claude',
+      corrections: { commitment: 'time' },
+      what_worked: null,
+      adjust: null,
+      reviewed_at: '2026-10-08T19:00:00Z',
+    },
+    Date.now()
+  );
+  assert.deepEqual(
+    [refreshed?.stage, refreshed?.commitment],
+    ['conversation', 'time'],
+    'the old stage kept, the new tag added'
+  );
+  assert.deepEqual((await d1CallReviewStore(db).list('t1'))[0].corrections, {
+    stage: 'conversation',
+    objection: { kind: 'not_now' },
+    commitment: 'time',
+  });
+  assert.deepEqual(await callsToReview(db, 10), [], 'reviewed under the current rules again');
 
   // Claude's second review drops the stage: the rules' stage is back.
   const replaced = await reviewCall(
