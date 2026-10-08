@@ -1037,7 +1037,7 @@ test('a transcript that lands after the call was read gets it read again', async
   assert.equal(calls.place, 1, 'their time zone is kept from the first read');
   assert.deepEqual(
     parseTimeline(second?.timeline_json)?.phases.map((p) => p.kind),
-    ['menu', 'desk', 'hold', 'them'],
+    ['menu', 'desk', 'hold', 'desk', 'them'],
     'drawn from the transcript now'
   );
   assert.equal(
