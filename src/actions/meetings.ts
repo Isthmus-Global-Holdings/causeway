@@ -96,22 +96,12 @@ export async function logMeeting(
       outcome: 'success',
       detail: result,
     });
-    // A real conversation, if the rep ticked it. `who` is read with the
-    // meeting; a log finished on an earlier run keeps the name it was
-    // counted under, else asks HubSpot.
+    // A real conversation, if the rep ticked it. The interview is logged by
+    // now, so a failure here is only logged: Coaching's Count is the way back.
     if (input.outcome === 'COMPLETED' && form.conversation === '1') {
-      const hs = createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN);
-      const who =
-        result.who ??
-        (await d1ConversationStore(c.env.DB).get('interview', meetingId))?.who ??
-        contactName(await hs.getObject('contacts', result.contactId, ['firstname', 'lastname', 'email']));
-      await countFromLog(c, form, {
-        kind: 'interview',
-        refId: meetingId,
-        contactId: result.contactId,
-        who,
-        outcome: result.outcome,
-      });
+      await countInterview(c, form, meetingId, result).catch((err: unknown) =>
+        console.error('counting the interview as a real conversation', err)
+      );
     }
     // Coaching reads the interview (its recording, or these notes) in the
     // background, as it does a logged call.
@@ -130,4 +120,31 @@ export async function logMeeting(
     });
     throw err;
   }
+}
+
+// `who` is read with the meeting; a log finished on an earlier run keeps the
+// name it was counted under, else asks HubSpot.
+async function countInterview(
+  c: Context<AppEnv>,
+  form: Record<string, string | undefined>,
+  meetingId: string,
+  result: MeetingLoggedResult
+): Promise<void> {
+  const who =
+    result.who ??
+    (await d1ConversationStore(c.env.DB).get('interview', meetingId))?.who ??
+    contactName(
+      await createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN).getObject('contacts', result.contactId, [
+        'firstname',
+        'lastname',
+        'email',
+      ])
+    );
+  await countFromLog(c, form, {
+    kind: 'interview',
+    refId: meetingId,
+    contactId: result.contactId,
+    who,
+    outcome: result.outcome,
+  });
 }
