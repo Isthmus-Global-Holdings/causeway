@@ -159,6 +159,14 @@ dl.strips .n { text-align: right; font-variant-numeric: tabular-nums; }
 .strip .mark.next_step, .strip .mark.last_time { background: var(--accent); }
 .strip .mark.pitch { background: var(--warn-fg); }
 .strip-text { margin: 0; font-size: 0.9em; }
+/* Coaching's two halves, and the tables parked until there are enough calls */
+section.half { gap: var(--space-4); }
+section.half > h2 { margin: 0; }
+section.half > h2 + p { margin: 0; }
+details.card > summary { font-weight: 600; }
+details.card > section { gap: var(--space-2); margin-top: var(--space-3); }
+/* Read out, not shown: the words behind a picture */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 ol.consequences { margin: 0; padding-left: var(--space-5); display: flex; flex-direction: column; gap: var(--space-1); }
 
 /* Tables */

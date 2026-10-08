@@ -447,14 +447,14 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Call coaching',
       description:
-        "Patterns across every call the rep logged (test calls left out), each read from its transcript or notes: the phone menu, who answered (them, the front desk, voicemail), how far calls get, reached rate by hour of the contact's day and by time zone, average length by outcome, the front desk (by name, and the lines that got the rep put through), objections and the openings that got past them, which follow-up gaps led to another connect, rushed connects (under 1:30) that left with no next step, and what the long connects did. bookedInterviews: the interviews those calls booked, followed to how each turned out (held, no-show, canceled by them or by the rep, still ahead, or past with nothing logged: toLog, each in toLogInterviews with the url to log it on), by how far ahead it was booked, calendar invite or not, and how long they talked on the call that booked it; one they canceled is a reply (they told the rep), a no-show isn't, and the rep's own cancels are left out of the groups. Groups smaller than minCallsForAPattern are too small to call a pattern.",
+        "Patterns across every call the rep logged (test calls left out), each read from its transcript or notes: the phone menu, who answered (them, the front desk, voicemail), how far calls get, momTest (on the calls and interviews that reached them: how many asked about a specific last time, pitched, got a story of a minute or more, caught the fluff, and what they committed: counts of what the rules and reviews have said), reached rate by hour of the contact's day and by time zone, average length by outcome, the front desk (by name, and the lines that got the rep put through), objections and the openings that got past them, which follow-up gaps led to another connect, rushed connects (under 1:30) that left with no next step, and what the long connects did. bookedInterviews: the interviews those calls booked, followed to how each turned out (held, no-show, canceled by them or by the rep, still ahead, or past with nothing logged: toLog, each in toLogInterviews with the url to log it on), by how far ahead it was booked, calendar invite or not, and how long they talked on the call that booked it; one they canceled is a reply (they told the rep), a no-show isn't, and the rep's own cancels are left out of the groups. Groups smaller than minCallsForAPattern are too small to call a pattern.",
       annotations: READ,
     },
     () =>
       run(async () => {
-        const { settings, report, bookings, unread } = await coachingOverview(c);
+        const { settings, report, bookings, momTest, unread } = await coachingOverview(c);
         return {
-          ...coachingSummary(report, settings.timeZone, origin),
+          ...coachingSummary(report, settings.timeZone, origin, momTest),
           bookedInterviews: bookingSummary(bookings, settings.timeZone, origin),
           callsNotReadYet: unread > 0,
         };
