@@ -1965,9 +1965,11 @@ const MAX_INSIGHTS = 5_000;
 
 export interface CallInsightStore {
   get(callTaskId: string): Promise<CallInsight | null>;
-  // Writes the call's reading, replacing an earlier one by older rules, or by
+  // Writes the call's reading, replacing an earlier one by older rules, by
   // the same rules from the same or a worse source (the transcript, then the
-  // notes, then the outcome). Leaves `excluded` as it was.
+  // notes, then the outcome), or of another dial (an interview dialled
+  // again). Leaves `excluded` as it was, unless the dial changed: a new
+  // call starts in.
   save(row: CallInsight): Promise<void>;
   // When the call was logged (epoch seconds): when it was made, for a call
   // not dialled from the app.
@@ -2000,6 +2002,11 @@ export function d1CallInsightStore(db: D1Database): CallInsightStore {
 
     async save(row) {
       const updates = WRITTEN_COLUMNS.filter((c) => c !== 'call_task_id').map((c) => `${c} = excluded.${c}`);
+      // Whether the call is left out is the rep's, and stays through a reread
+      // of the same call; a new call (an interview dialled again) starts in.
+      updates.push(
+        'excluded = CASE WHEN excluded.dial_id IS NOT call_insights.dial_id THEN 0 ELSE call_insights.excluded END'
+      );
       await db
         .prepare(
           `INSERT INTO call_insights (${WRITTEN_COLUMNS.join(', ')})
