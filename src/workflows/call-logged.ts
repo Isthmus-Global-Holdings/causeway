@@ -44,7 +44,15 @@ import {
   type BookingInput,
   type Calendar,
 } from './book-interview';
-import { companyName, contactName, findOpenTask, loadTask, WorkflowError, type TaskType } from './parties';
+import {
+  companyName,
+  contactName,
+  findOpenTask,
+  loadTask,
+  withTaskLock,
+  WorkflowError,
+  type TaskType,
+} from './parties';
 
 const LOCK_TTL_SEC = 60;
 const DEFAULT_NEXT_TIME: TimeOfDay = { hour: 9, minute: 0 };
@@ -292,6 +300,8 @@ export function doneResult(row: CallLog): CallLoggedResult {
   };
 }
 
+const DROPPED = 'This call task was dropped (Deferred in HubSpot), so the call wasn’t logged.';
+
 export async function prepareCallLog(
   hs: HubSpot,
   store: CallLogStore,
@@ -303,66 +313,72 @@ export async function prepareCallLog(
 
   let row = await store.get(callTaskId);
   if (!row) {
-    const { task, contact, company, related } = await loadTask(hs, callTaskId, 'CALL', ['tasks']);
-    knownTaskIds = related?.tasks;
-    // Completed in HubSpot but never logged here: probably logged by hand
-    // there already, and a second log would duplicate it.
-    if (task.properties.hs_task_status === 'COMPLETED') {
-      throw new WorkflowError('This call task is already completed in HubSpot, so nothing was logged.', 409);
-    }
-    const contactLabel = contactName(contact);
-    const company_ = companyName(company);
-    const due = parseHubSpotTime(task.properties.hs_timestamp);
-    const { next, booking } = input;
-    const channel = input.channel ?? 'phone';
-    // A Twilio dial is a phone call's: one left on the page doesn't count for WhatsApp.
-    const dial = channel === 'phone' ? input.dial : null;
-    const whatsapp = input.whatsappField ? whatsappNumber(contact.properties[input.whatsappField]) : null;
-    if (channel !== 'phone' && !whatsapp) {
-      throw new WorkflowError('That number isn’t one WhatsApp can reach. Check it on the page or in HubSpot.');
-    }
-    const at: SaidTime = next?.time ?? (due === null ? DEFAULT_NEXT_TIME : timeOfDay(due, opts.timeZone));
-    const nextDue = next ? saidAt(next.date, at, opts.timeZone) : null;
-    if (next?.time && nextDue !== null && nextDue <= opts.now) {
-      throw new WorkflowError('The follow-up call’s time has already passed.');
-    }
-    const bookedTimes = booking ? bookingTimes(booking, opts.timeZone, opts.now) : null;
-    await store.create({
-      call_task_id: callTaskId,
-      contact_id: contact.id,
-      company_id: company?.id ?? null,
-      owner_id: task.properties.hubspot_owner_id || null,
-      title: callTitle(channel, company_, contactLabel),
-      channel,
-      outcome: input.outcome,
-      notes: input.notes,
-      twilio_status: dial?.prospect_status ?? null,
-      duration_sec: dial?.prospect_duration_sec ?? null,
-      from_number: dial?.from_number ?? null,
-      to_number:
-        whatsapp ??
-        dial?.to_number ??
-        contact.properties.phone ??
-        contact.properties.mobilephone ??
-        company?.properties.phone ??
-        null,
-      next_type: next?.type ?? null,
-      next_subject: !next
-        ? null
-        : next.lastTry
-          ? lastTrySubject(company_, contactLabel)
-          : nextTaskSubject(next.type, company_, contactLabel),
-      next_body: next?.lastTry ? lastTryBody(contact.properties.firstname) : null,
-      next_due: nextDue === null ? null : new Date(nextDue).toISOString(),
-      next_set_time: next?.time ? 1 : 0,
-      dial_id: dial?.id ?? null,
-      book_start: bookedTimes?.startAt ?? null,
-      book_title: booking ? interviewTitle(company_, contactLabel) : null,
-      book_invite: booking?.invite ? 1 : 0,
-      book_invitee_email: booking ? inviteeEmail(contact, booking.invite) : null,
-      book_minutes: booking?.minutes ?? null,
-      book_join_url: booking?.joinUrl ?? null,
-      book_phone: booking ? bookingPhone(contact, company, booking.byPhone) : null,
+    // Under the task's lock from the status check to the row: a Drop waits for
+    // it, sees the row and refuses, or wrote DEFERRED first and is seen here.
+    await withTaskLock(store, callTaskId, Math.floor(opts.now / 1000), async (beforeWrite) => {
+      const { task, contact, company, related } = await loadTask(hs, callTaskId, 'CALL', ['tasks']);
+      knownTaskIds = related?.tasks;
+      // Completed in HubSpot but never logged here: probably logged by hand
+      // there already, and a second log would duplicate it.
+      if (task.properties.hs_task_status === 'COMPLETED') {
+        throw new WorkflowError('This call task is already completed in HubSpot, so nothing was logged.', 409);
+      }
+      if (task.properties.hs_task_status === 'DEFERRED') throw new WorkflowError(DROPPED, 409);
+      const contactLabel = contactName(contact);
+      const company_ = companyName(company);
+      const due = parseHubSpotTime(task.properties.hs_timestamp);
+      const { next, booking } = input;
+      const channel = input.channel ?? 'phone';
+      // A Twilio dial is a phone call's: one left on the page doesn't count for WhatsApp.
+      const dial = channel === 'phone' ? input.dial : null;
+      const whatsapp = input.whatsappField ? whatsappNumber(contact.properties[input.whatsappField]) : null;
+      if (channel !== 'phone' && !whatsapp) {
+        throw new WorkflowError('That number isn’t one WhatsApp can reach. Check it on the page or in HubSpot.');
+      }
+      const at: SaidTime = next?.time ?? (due === null ? DEFAULT_NEXT_TIME : timeOfDay(due, opts.timeZone));
+      const nextDue = next ? saidAt(next.date, at, opts.timeZone) : null;
+      if (next?.time && nextDue !== null && nextDue <= opts.now) {
+        throw new WorkflowError('The follow-up call’s time has already passed.');
+      }
+      const bookedTimes = booking ? bookingTimes(booking, opts.timeZone, opts.now) : null;
+      beforeWrite();
+      await store.create({
+        call_task_id: callTaskId,
+        contact_id: contact.id,
+        company_id: company?.id ?? null,
+        owner_id: task.properties.hubspot_owner_id || null,
+        title: callTitle(channel, company_, contactLabel),
+        channel,
+        outcome: input.outcome,
+        notes: input.notes,
+        twilio_status: dial?.prospect_status ?? null,
+        duration_sec: dial?.prospect_duration_sec ?? null,
+        from_number: dial?.from_number ?? null,
+        to_number:
+          whatsapp ??
+          dial?.to_number ??
+          contact.properties.phone ??
+          contact.properties.mobilephone ??
+          company?.properties.phone ??
+          null,
+        next_type: next?.type ?? null,
+        next_subject: !next
+          ? null
+          : next.lastTry
+            ? lastTrySubject(company_, contactLabel)
+            : nextTaskSubject(next.type, company_, contactLabel),
+        next_body: next?.lastTry ? lastTryBody(contact.properties.firstname) : null,
+        next_due: nextDue === null ? null : new Date(nextDue).toISOString(),
+        next_set_time: next?.time ? 1 : 0,
+        dial_id: dial?.id ?? null,
+        book_start: bookedTimes?.startAt ?? null,
+        book_title: booking ? interviewTitle(company_, contactLabel) : null,
+        book_invite: booking?.invite ? 1 : 0,
+        book_invitee_email: booking ? inviteeEmail(contact, booking.invite) : null,
+        book_minutes: booking?.minutes ?? null,
+        book_join_url: booking?.joinUrl ?? null,
+        book_phone: booking ? bookingPhone(contact, company, booking.byPhone) : null,
+      });
     });
     row = await store.get(callTaskId);
     if (!row) throw new Error(`call_logs row for ${callTaskId} missing right after insert`);

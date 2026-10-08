@@ -25,7 +25,7 @@ import {
 } from '../lib/twiml';
 import { logCallBack } from '../workflows/call-back';
 import { logInboundCall, reconcileInboundCall, runInboundTranscription, startInbound } from '../workflows/inbound';
-import { DIAL_GUARD_SEC } from '../workflows/dial';
+import { claimBrowserDial } from '../workflows/dial';
 import { readDialCall } from '../workflows/call-insight';
 import { runTranscription } from '../workflows/transcribe';
 import type { AppEnv, Env } from '../types';
@@ -107,11 +107,7 @@ twilioRoute.post('/twilio/voice/connect', async (c) => {
 twilioRoute.post('/twilio/voice/client', async (c) => {
   const { d, CallSid } = await formParams(c);
   const id = d && DIAL_ID.test(d) ? d : null;
-  const nowSec = Math.floor(Date.now() / 1000);
-  const dial =
-    id && CallSid
-      ? await d1DialStore(c.env.DB).claimBrowserCall(id, CallSid, new Date().toISOString(), nowSec - DIAL_GUARD_SEC)
-      : null;
+  const dial = id && CallSid ? await claimBrowserDial(d1DialStore(c.env.DB), id, CallSid, Date.now) : null;
   if (!dial) return twiml(sayAndHangUp('This call has expired. Start it again from the app.'));
   return prospectTwiml(c.env, dial);
 });

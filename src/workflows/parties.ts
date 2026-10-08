@@ -1,3 +1,4 @@
+import type { TaskLocks } from '../lib/db';
 import type { HubSpot, HubSpotObject, ObjectType } from '../lib/hubspot';
 import { toE164 } from '../lib/phone';
 import { htmlToText } from '../lib/richtext';
@@ -280,4 +281,40 @@ export async function resolveParties(
     contact: contactById.get(recordContacts.get(id)?.[0] ?? '') ?? null,
     company: companyById.get(companyOf(id) ?? '') ?? null,
   });
+}
+
+const TASK_LOCK_SEC = 120;
+// Left of the lease when the protected write starts, at least: a HubSpot
+// request (HUBSPOT_TIMEOUT_MS) or a D1 write ends well inside it.
+const WRITE_MARGIN_SEC = 40;
+
+// Runs `run` holding the CALL task's lock (lib/db.ts TaskLocks): Drop, logging
+// a call and dialling each check the task and write under it, so none of them
+// acts on what another is changing. `run` calls `beforeWrite` just before its
+// write: if slow reads used up the lease, it stops there, before another
+// request can take the lock and pass its own check.
+export async function withTaskLock<T>(
+  locks: TaskLocks,
+  taskId: string,
+  nowSec: number,
+  run: (beforeWrite: () => void) => Promise<T>
+): Promise<T> {
+  const lease = await locks.lockTask(taskId, nowSec, TASK_LOCK_SEC);
+  if (lease === null) {
+    throw new WorkflowError(
+      'This call task is being changed right now (a call, a log or a Drop). Try again in a moment.',
+      409
+    );
+  }
+  const started = Date.now();
+  const beforeWrite = () => {
+    if ((Date.now() - started) / 1000 > TASK_LOCK_SEC - WRITE_MARGIN_SEC) {
+      throw new WorkflowError('HubSpot was too slow to answer, so nothing was changed. Try again.', 409);
+    }
+  };
+  try {
+    return await run(beforeWrite);
+  } finally {
+    await locks.unlockTask(taskId, lease);
+  }
 }

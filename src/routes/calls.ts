@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { bookInterview, callsOverview, logCall, snoozeCallTask } from '../actions/calls';
+import { bookInterview, callsOverview, dropCallTask, logCall, snoozeCallTask } from '../actions/calls';
 import { callCoaching } from '../actions/coaching';
 import { loadAppSettings } from '../lib/app-settings';
 import { MAX_SCRIPT, normalizeScript } from '../lib/call-script';
@@ -37,8 +37,8 @@ export const callQueueRoute = new Hono<AppEnv>();
 
 // GET /queue/calls — every open CALL task: today's ranked by who to call
 // first, with the next one on top, then the upcoming ones, and the callers
-// waiting on a call back above them. Logging or moving a call redirects here
-// with its result.
+// waiting on a call back above them. Logging, moving or dropping a call
+// redirects here with its result.
 callQueueRoute.get('/', async (c) => {
   rememberQueueTab(c, 'calls');
   const logged = c.req.query('logged') || null;
@@ -59,6 +59,7 @@ callQueueRoute.get('/', async (c) => {
     movedId && Number.isFinite(movedDue)
       ? { taskId: movedId, dueAt: movedDue, setTime: c.req.query('set') === '1' }
       : null;
+  const dropped = c.req.query('dropped') || null;
   const [{ hs, now, settings, queue, plan, meetings, logged: worked }, waiting] = await Promise.all([
     callsOverview(c, { logged, moved }),
     waitingOnCallBack(c.env.DB, Math.floor(Date.now() / 1000)),
@@ -73,7 +74,18 @@ callQueueRoute.get('/', async (c) => {
     }),
   ]);
   return c.html(
-    callsPage(queue, flash, moved, setupOf(c.env, settings), now, settings.timeZone, today, waiting, c.get('actor'))
+    callsPage(
+      queue,
+      flash,
+      moved,
+      dropped,
+      setupOf(c.env, settings),
+      now,
+      settings.timeZone,
+      today,
+      waiting,
+      c.get('actor')
+    )
   );
 });
 
@@ -239,6 +251,14 @@ callsRoute.post('/:id/snooze', async (c) => {
   const { dueAt } = await snoozeCallTask(c, taskId, field('date'), field('time'), field('time_tz'));
   const query = { moved: taskId, due: String(dueAt), ...(field('time') ? { set: '1' } : {}) };
   return c.redirect(`/queue/calls?${new URLSearchParams(query)}`, 303);
+});
+
+// POST /calls/:id/drop — the rep won't make this call. Marks the CALL task
+// DEFERRED in HubSpot, which takes it off the queue, and creates no follow-up.
+callsRoute.post('/:id/drop', async (c) => {
+  const taskId = c.req.param('id');
+  await dropCallTask(c, taskId);
+  return c.redirect(`/queue/calls?${new URLSearchParams({ dropped: taskId })}`, 303);
 });
 
 mountDialRoutes(callsRoute, 'task');

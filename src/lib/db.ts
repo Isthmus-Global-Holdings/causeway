@@ -216,12 +216,14 @@ export async function addSetTimeCallToPlan(
 
 // Tasks worked through the app in the last two days, which a plan (at most a
 // day old) and the queues (HubSpot's search trails writes) skip: calls
-// logged, emails sent, marked sent or dropped. A drop leaves no row of its
-// own, only its audit entry.
+// logged or dropped, emails sent, marked sent or dropped. A drop leaves no
+// row of its own, only its audit entry.
 export async function recentlyWorked(db: D1Database, kind: 'call' | 'email'): Promise<Set<string>> {
   const sql =
     kind === 'call'
-      ? `SELECT call_task_id AS id FROM call_logs WHERE created_at >= datetime('now', '-2 days')`
+      ? `SELECT call_task_id AS id FROM call_logs WHERE created_at >= datetime('now', '-2 days')
+         UNION SELECT task_id FROM audit_log
+           WHERE action = 'drop call task' AND outcome = 'success' AND created_at >= datetime('now', '-2 days')`
       : `SELECT email_task_id AS id FROM sent_confirmations WHERE created_at >= datetime('now', '-2 days')
          UNION SELECT email_task_id FROM sent_emails WHERE created_at >= datetime('now', '-2 days')
          UNION SELECT task_id FROM audit_log
@@ -678,10 +680,13 @@ export type NewDial = Pick<
   | 'subject'
 >;
 
-export interface DialStore {
+export interface DialStore extends TaskLocks {
   get(id: string): Promise<Dial | null>;
   getByRepCallSid(sid: string): Promise<Dial | null>;
   latestForTask(taskId: string): Promise<Dial | null>;
+  // Every dial for the task started at or after `sinceSec`: a stale page can
+  // start a second while a long first one is still on.
+  startedSince(taskId: string, sinceSec: number): Promise<Dial[]>;
   // Records the dial only if no other dial for the task started within
   // `windowSec` and is still live. False means one is already ringing.
   begin(dial: NewDial, windowSec: number): Promise<boolean>;
@@ -725,6 +730,7 @@ const DIAL_COLUMNS = `id, task_id, subject, contact_id, contact_label, to_number
 
 export function d1DialStore(db: D1Database): DialStore {
   return {
+    ...d1TaskLocks(db),
     async get(id) {
       return db.prepare(`SELECT ${DIAL_COLUMNS} FROM dials WHERE id = ?`).bind(id).first<Dial>();
     },
@@ -738,6 +744,14 @@ export function d1DialStore(db: D1Database): DialStore {
         .prepare(`SELECT ${DIAL_COLUMNS} FROM dials WHERE task_id = ? ORDER BY started_sec DESC, rowid DESC LIMIT 1`)
         .bind(taskId)
         .first<Dial>();
+    },
+
+    async startedSince(taskId, sinceSec) {
+      const { results } = await db
+        .prepare(`SELECT ${DIAL_COLUMNS} FROM dials WHERE task_id = ? AND started_sec >= ?`)
+        .bind(taskId, sinceSec)
+        .all<Dial>();
+      return results;
     },
 
     async begin(dial, windowSec) {
@@ -786,11 +800,13 @@ export function d1DialStore(db: D1Database): DialStore {
     },
 
     async claimBrowserCall(id, callSid, at, notBeforeSec) {
-      // One statement, so it and endBrowserCall can't both win.
+      // One statement, so it and endBrowserCall can't both win. Strictly after,
+      // as dialState counts a dial live (age < DIAL_GUARD_SEC): one Drop sees
+      // as over is never claimed.
       return db
         .prepare(
           `UPDATE dials SET rep_call_sid = ?, connected_at = ?
-           WHERE id = ? AND mode = 'browser' AND connected_at IS NULL AND rep_status IS NULL AND started_sec >= ?
+           WHERE id = ? AND mode = 'browser' AND connected_at IS NULL AND rep_status IS NULL AND started_sec > ?
            RETURNING ${DIAL_COLUMNS}`
         )
         .bind(callSid, at, id, notBeforeSec)
@@ -954,7 +970,7 @@ export type NewCallLog = Omit<
 >;
 
 // What the "call logged" workflow needs from storage.
-export interface CallLogStore {
+export interface CallLogStore extends TaskLocks {
   get(callTaskId: string): Promise<CallLog | null>;
   // No-op if the row already exists: the first submission's values stick.
   create(row: NewCallLog): Promise<void>;
@@ -980,6 +996,7 @@ export interface CallLogStore {
 
 export function d1CallLogStore(db: D1Database): CallLogStore {
   return {
+    ...d1TaskLocks(db),
     async get(callTaskId) {
       return db
         .prepare(
@@ -1265,6 +1282,38 @@ export async function dismissCallBack(db: D1Database, inboundCallId: string, at:
     .bind(at, inboundCallId)
     .run();
   return (result.meta.changes ?? 0) > 0;
+}
+
+// --- A CALL task's lock ---
+
+// Drop, logging a call and dialling each hold the task's lock from their check
+// to their write (migrations/0032_task_locks.sql).
+export interface TaskLocks {
+  // The lease (its expiry, epoch seconds) if this caller now holds the task's
+  // lock; null while another does.
+  lockTask(taskId: string, nowSec: number, ttlSec: number): Promise<number | null>;
+  // Frees this caller's lease only, as ContactTaskLockStore.release.
+  unlockTask(taskId: string, lease: number): Promise<void>;
+}
+
+export function d1TaskLocks(db: D1Database): TaskLocks {
+  return {
+    async lockTask(taskId, nowSec, ttlSec) {
+      const result = await db
+        .prepare(
+          `INSERT INTO task_locks (task_id, lock_until) VALUES (?, ?)
+           ON CONFLICT (task_id) DO UPDATE SET lock_until = excluded.lock_until
+           WHERE task_locks.lock_until < ?`
+        )
+        .bind(taskId, nowSec + ttlSec, nowSec)
+        .run();
+      return result.meta.changes === 1 ? nowSec + ttlSec : null;
+    },
+
+    async unlockTask(taskId, lease) {
+      await db.prepare('DELETE FROM task_locks WHERE task_id = ? AND lock_until = ?').bind(taskId, lease).run();
+    },
+  };
 }
 
 // --- Opening a contact's task from their page ---

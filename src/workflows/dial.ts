@@ -31,7 +31,7 @@ import { extensionOf, toE164 } from '../lib/phone';
 import { TwilioApiError, type Twilio } from '../lib/twilio';
 import { randomToken } from '../lib/tracking';
 import { isOpen, loadMeeting, meetingOutcome } from './meeting-queue';
-import { companyName, contactName, loadTask, WorkflowError, type TaskParties } from './parties';
+import { companyName, contactName, loadTask, withTaskLock, WorkflowError, type TaskParties } from './parties';
 
 // A dial for the same task within this window that hasn't ended blocks a new
 // one, so a double-click doesn't ring the rep's phone twice. A browser dial's
@@ -78,11 +78,45 @@ export interface DialOptions {
 }
 
 export async function startDial(deps: DialDeps, taskId: string, field: PhoneField, opts: DialOptions): Promise<Dial> {
-  const { task, contact, company } = await loadTask(deps.hs, taskId, 'CALL');
-  if (task.properties.hs_task_status === 'COMPLETED') {
-    throw new WorkflowError('This call task is already completed.', 409);
+  // Under the task's lock from the status check to the dial's row: a Drop
+  // waits for it and sees the dial live, or wrote DEFERRED first and is seen here.
+  return withTaskLock(deps.dials, taskId, Math.floor(opts.now / 1000), async (beforeWrite) => {
+    const { task, contact, company } = await loadTask(deps.hs, taskId, 'CALL');
+    if (task.properties.hs_task_status === 'COMPLETED') {
+      throw new WorkflowError('This call task is already completed.', 409);
+    }
+    if (task.properties.hs_task_status === 'DEFERRED') throw new WorkflowError(DROPPED, 409);
+    beforeWrite();
+    return beginDial(deps, { subject: 'task', id: taskId }, hubspotTarget({ contact, company }, field), opts);
+  });
+}
+
+const DROPPED = 'This call task was dropped, so it wasn’t dialled.';
+
+// The browser call of a dial from a page: the dial is claimed, so each
+// connects at most once, within DIAL_GUARD_SEC of the click. A task's dial is
+// claimed under the task's lock, with the cutoff taken inside it: a Drop that
+// saw the dial as over came first and this sees it over too, or this came
+// first and the Drop sees the call live. Null when it can't be claimed.
+export async function claimBrowserDial(
+  dials: DialStore,
+  id: string,
+  callSid: string,
+  now: () => number
+): Promise<Dial | null> {
+  const claim = () => {
+    const at = now();
+    return dials.claimBrowserCall(id, callSid, new Date(at).toISOString(), Math.floor(at / 1000) - DIAL_GUARD_SEC);
+  };
+  const dial = await dials.get(id);
+  if (!dial) return null;
+  if (dial.subject !== 'task') return claim();
+  try {
+    return await withTaskLock(dials, dial.task_id, Math.floor(now() / 1000), claim);
+  } catch (err) {
+    if (err instanceof WorkflowError) return null; // a Drop, a log or another dial holds the task
+    throw err;
   }
-  return beginDial(deps, { subject: 'task', id: taskId }, hubspotTarget({ contact, company }, field), opts);
 }
 
 // Calls the contact of an interview, from its prep page.

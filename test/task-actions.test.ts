@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import { sameTimeOn } from '../src/lib/dates.ts';
+import { d1TaskLocks, type CallLog, type TaskLocks } from '../src/lib/db.ts';
+import { sqliteD1 } from './sqlite-d1.ts';
 import { applyRecentChange, planCalls, planItems, type CallQueue, type CallRow } from '../src/workflows/call-queue.ts';
 import { loadEmailQueue } from '../src/workflows/email-queue.ts';
-import { dropEmail, snoozeCall } from '../src/workflows/task-actions.ts';
+import { dropCall, dropEmail, snoozeCall } from '../src/workflows/task-actions.ts';
 import { FakeHubSpot, FakeSentStore, FakeStore } from './fakes.ts';
 
 const NOW = Date.parse('2026-09-25T15:00:00Z'); // Fri 10:00 in Panama
@@ -14,11 +16,13 @@ const NINE = { hour: 9, minute: 0 };
 let hs: FakeHubSpot;
 let sent: FakeSentStore;
 let confirmations: FakeStore;
+let locks: TaskLocks;
 
 beforeEach(() => {
   hs = new FakeHubSpot();
   sent = new FakeSentStore();
   confirmations = new FakeStore();
+  locks = d1TaskLocks(sqliteD1());
   // Due today at 14:30 Panama.
   hs.put('tasks', 'c1', { hs_task_type: 'CALL', hs_task_status: 'NOT_STARTED', hs_timestamp: '2026-09-25T19:30:00Z' });
   hs.put('tasks', 'c2', { hs_task_type: 'CALL', hs_task_status: 'NOT_STARTED', hs_timestamp: null });
@@ -163,6 +167,56 @@ test('dropEmail backs off when a send claims the task while it drops', async () 
   };
   await assert.rejects(dropEmail(hs, sent, confirmations, 'e1'), /send page/);
   assert.equal((await hs.getObject('tasks', 'e1')).properties.hs_task_status, 'NOT_STARTED');
+});
+
+// Only `get` is read; a row is a call logged from the app. No dials: those
+// are in calls.test.ts, on the real SQL.
+function callLogs(rows: Record<string, { completed_at: string | null }> = {}) {
+  return {
+    callLogs: { get: async (id: string) => (rows[id] ?? null) as CallLog | null },
+    dials: { startedSince: async () => [] },
+    locks,
+  };
+}
+const NOW_SEC = NOW / 1000;
+
+test('dropCall defers the task, and a repeat is a no-op', async () => {
+  await dropCall(hs, callLogs(), 'c1', NOW_SEC);
+  await dropCall(hs, callLogs(), 'c1', NOW_SEC);
+  assert.equal((await hs.getObject('tasks', 'c1')).properties.hs_task_status, 'DEFERRED');
+});
+
+test('dropCall refuses non-CALL and completed tasks', async () => {
+  await assert.rejects(dropCall(hs, callLogs(), 'e1', NOW_SEC), /not CALL/);
+  await hs.updateObject('tasks', 'c1', { hs_task_status: 'COMPLETED' });
+  await assert.rejects(dropCall(hs, callLogs(), 'c1', NOW_SEC), /no longer open/);
+});
+
+test('dropCall refuses a call logged from the app', async () => {
+  await assert.rejects(dropCall(hs, callLogs({ c1: { completed_at: null } }), 'c1', NOW_SEC), /call page/);
+  assert.equal((await hs.getObject('tasks', 'c1')).properties.hs_task_status, 'NOT_STARTED');
+});
+
+test('dropCall refuses while a log or a dial holds the task, and frees it after', async () => {
+  const lease = await locks.lockTask('c1', NOW_SEC, 60);
+  assert.ok(lease);
+  await assert.rejects(dropCall(hs, callLogs(), 'c1', NOW_SEC), /being changed/);
+  assert.equal((await hs.getObject('tasks', 'c1')).properties.hs_task_status, 'NOT_STARTED');
+  await locks.unlockTask('c1', lease);
+  await dropCall(hs, callLogs(), 'c1', NOW_SEC);
+  assert.equal(await locks.lockTask('c1', NOW_SEC, 60), NOW_SEC + 60, 'Drop released its lease');
+});
+
+test('dropCall stops before its write once slow reads used up the lock', async (t) => {
+  let clock = Date.now();
+  t.mock.method(Date, 'now', () => clock);
+  const get = hs.getObject.bind(hs);
+  hs.getObject = async (type, id, props) => {
+    clock += 90_000; // HubSpot slow to answer
+    return get(type, id, props);
+  };
+  await assert.rejects(dropCall(hs, callLogs(), 'c1', NOW_SEC), /too slow/);
+  assert.equal((await get('tasks', 'c1')).properties.hs_task_status, 'NOT_STARTED');
 });
 
 test('loadEmailQueue leaves out tasks the rep just closed, even if search still returns them', async () => {

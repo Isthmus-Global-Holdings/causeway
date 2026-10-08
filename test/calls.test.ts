@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import { Hono } from 'hono';
-import { d1CallLogStore, d1DialStore, type CallLog, type Dial, type DialStore } from '../src/lib/db.ts';
+import { d1CallLogStore, d1DialStore, d1TaskLocks, type CallLog, type Dial, type DialStore } from '../src/lib/db.ts';
 import { planProgress } from '../src/lib/work-plan.ts';
 import { createHubSpot, HubSpotApiError } from '../src/lib/hubspot.ts';
 import { TwilioApiError, type NewCall, type Twilio } from '../src/lib/twilio.ts';
@@ -21,7 +21,8 @@ import {
 import { callNowHref, callPage, type CallPageState } from '../src/views/calls.ts';
 import { BOOKING_FIELDS, bookingFieldsOf, parseBookingForm } from '../src/workflows/book-interview.ts';
 import { loadCallContext, historyTimeline, type CallContext } from '../src/workflows/call-context.ts';
-import { dialState, startDial } from '../src/workflows/dial.ts';
+import { claimBrowserDial, DIAL_GUARD_SEC, dialState, isLive, startDial } from '../src/workflows/dial.ts';
+import { dropCall } from '../src/workflows/task-actions.ts';
 import { loadCallQueue } from '../src/workflows/call-queue.ts';
 import { recordingState, runTranscription, type Transcriber } from '../src/workflows/transcribe.ts';
 import { FakeHubSpot } from './fakes.ts';
@@ -109,6 +110,41 @@ test("rings the rep from the Twilio number, with this dial's webhooks", async ()
   assert.equal(dial.to_number, '+13855550100', 'the prospect number comes from HubSpot, as E.164');
   assert.equal(dial.contact_label, 'Ana Díaz at Acme');
   assert.equal(dial.rep_call_sid, 'CA1');
+});
+
+test('a dropped call task is never dialled', async () => {
+  await hs.updateObject('tasks', '1', { hs_task_status: 'DEFERRED' });
+  await assert.rejects(startDial({ hs, twilio, dials }, '1', 'phone', dialOpts()), /dropped/);
+  assert.equal(twilio.calls.length, 0);
+  assert.equal(await dials.latestForTask('1'), null);
+});
+
+test('a dial waits for a Drop holding the task: refused, nothing recorded or rung', async () => {
+  const lease = await dials.lockTask('1', NOW_SEC, 60);
+  await assert.rejects(startDial({ hs, twilio, dials }, '1', 'phone', dialOpts()), /being changed/);
+  assert.equal(twilio.calls.length, 0);
+  assert.equal(await dials.latestForTask('1'), null);
+  await dials.unlockTask('1', lease!);
+  await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts());
+  assert.equal(twilio.calls.length, 1, 'the dial released the lock it held');
+});
+
+test('Drop refuses a task with a live call', async () => {
+  const stores = { callLogs: d1CallLogStore(db), dials, locks: d1TaskLocks(db) };
+  await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts());
+  await assert.rejects(dropCall(hs, stores, '1', NOW_SEC), /in progress/);
+  assert.equal((await hs.getObject('tasks', '1')).properties.hs_task_status, 'NOT_STARTED');
+});
+
+test('Drop sees a long call still on, after a later dial for the same task ended', async () => {
+  const stores = { callLogs: d1CallLogStore(db), dials, locks: d1TaskLocks(db) };
+  await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts()); // confirmed: live up to two hours
+  const later = 'f'.repeat(32);
+  await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts({ now: NOW + 200_000, newId: () => later }));
+  await dials.setRepStatus(later, 'no-answer');
+  assert.equal((await dials.latestForTask('1'))?.id, later);
+  await assert.rejects(dropCall(hs, stores, '1', NOW_SEC + 300), /in progress/);
+  assert.equal((await hs.getObject('tasks', '1')).properties.hs_task_status, 'NOT_STARTED');
 });
 
 test("the number's extension is keyed in, and a call to an extension isn't recorded", async () => {
@@ -466,6 +502,23 @@ test('a follow-up call at a set time is due then, with a reminder 5 minutes befo
   const due = Date.parse('2026-09-25T21:00:00Z'); // 16:00 Panama, later today
   assert.equal(hs.created[0].properties.hs_timestamp, new Date(due).toISOString());
   assert.equal(hs.created[0].properties.hs_task_reminders, String(due - 5 * 60_000));
+});
+
+test('a dropped call task is never logged, and a log waits for a Drop holding the task', async () => {
+  const store = d1CallLogStore(db);
+  const input = { outcome: 'connected' as const, notes: '', next: null, dial: null, transcript: null };
+  await hs.updateObject('tasks', '1', { hs_task_status: 'DEFERRED' });
+  await assert.rejects(runCallLogged(hs, store, '1', input, LOG_OPTS), /dropped/);
+  assert.equal(await store.get('1'), null, 'nothing recorded');
+
+  await hs.updateObject('tasks', '1', { hs_task_status: 'NOT_STARTED' });
+  const lease = await store.lockTask('1', NOW_SEC, 60);
+  await assert.rejects(runCallLogged(hs, store, '1', input, LOG_OPTS), /being changed/);
+  assert.equal(await store.get('1'), null, 'nothing recorded');
+  assert.equal(hs.calls.length, 0, 'nothing logged on the contact');
+  await store.unlockTask('1', lease!);
+  await runCallLogged(hs, store, '1', input, LOG_OPTS);
+  assert.equal(hs.calls.length, 1);
 });
 
 test('a second submission writes nothing more', async () => {
@@ -1023,6 +1076,27 @@ test('the browser call dials the prospect once, and only for a fresh browser dia
 
   const unknown = await (await post('/twilio/voice/client', { d: 'f'.repeat(32), CallSid: 'CA11' })).text();
   assert.match(unknown, /expired.*<Hangup\/>/);
+});
+
+test('a browser dial old enough for Drop to see as over is never claimed', async () => {
+  await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts(BROWSER));
+  const at = NOW_SEC + DIAL_GUARD_SEC;
+  assert.equal(isLive(dialState((await dials.get(DIAL_ID))!, at)), false);
+  const iso = new Date(at * 1000).toISOString();
+  assert.equal(await dials.claimBrowserCall(DIAL_ID, 'CA9', iso, at - DIAL_GUARD_SEC), null);
+  assert.ok(await dials.claimBrowserCall(DIAL_ID, 'CA9', iso, at - 1 - DIAL_GUARD_SEC), 'a second younger, it is');
+});
+
+test('a browser claim waits for whatever holds the task, and takes its cutoff then', async () => {
+  await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts(BROWSER));
+  const lease = await dials.lockTask('1', NOW_SEC, 60); // a Drop running
+  assert.equal(await claimBrowserDial(dials, DIAL_ID, 'CA9', () => NOW + 5_000), null);
+  await dials.unlockTask('1', lease!);
+  // The Drop saw it over at the cutoff; a claim after it, however late its
+  // request began, sees the same.
+  assert.equal(await claimBrowserDial(dials, DIAL_ID, 'CA9', () => (NOW_SEC + DIAL_GUARD_SEC) * 1000), null);
+  assert.ok(await claimBrowserDial(dials, DIAL_ID, 'CA9', () => NOW + 5_000));
+  assert.equal(await dials.lockTask('1', NOW_SEC, 60), NOW_SEC + 60, 'the claim released the lock');
 });
 
 test('the browser webhook refuses phone dials, stale dials and cancelled ones', async () => {

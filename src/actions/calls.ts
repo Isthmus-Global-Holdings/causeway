@@ -1,6 +1,6 @@
 // What the call pages and the Claude connector both do with CALL tasks: the
-// ranked list, logging a call, moving one, booking an interview, taking a
-// caller off "Waiting on a call back". Each checks,
+// ranked list, logging a call, moving one, dropping one, booking an
+// interview, taking a caller off "Waiting on a call back". Each checks,
 // runs the workflow and writes the audit row; the caller only parses its
 // input and answers (a redirect, or a tool result).
 
@@ -13,6 +13,7 @@ import {
   d1CallLogStore,
   d1DialStore,
   d1MeetingBookingStore,
+  d1TaskLocks,
   dismissCallBack,
   engagementByContact,
   insertAudit,
@@ -49,7 +50,7 @@ import {
 import { dialState, isLive } from '../workflows/dial';
 import { loadMeetings, type MeetingRow } from '../workflows/meeting-queue';
 import { WorkflowError } from '../workflows/parties';
-import { snoozeCall } from '../workflows/task-actions';
+import { dropCall, snoozeCall } from '../workflows/task-actions';
 import { syncTranscript } from '../workflows/transcribe';
 import { countFromLog } from './coaching';
 
@@ -311,6 +312,28 @@ export async function snoozeCallTask(
       outcome: 'failed',
       error: errorText(err),
     });
+    throw err;
+  }
+}
+
+// The rep won't make this call. Marks the CALL task DEFERRED in HubSpot,
+// which takes it off the queue, and creates no follow-up. Refused while a
+// call for it is live.
+export async function dropCallTask(c: Context<AppEnv>, taskId: string): Promise<void> {
+  const actor = c.get('actor');
+  const audit = (outcome: 'success' | 'failed', error?: string) =>
+    insertAudit(c.env.DB, { actor, workflow: 'task-action', taskId, action: 'drop call task', outcome, error });
+  try {
+    await dropCall(
+      createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN),
+      { callLogs: d1CallLogStore(c.env.DB), dials: d1DialStore(c.env.DB), locks: d1TaskLocks(c.env.DB) },
+      taskId,
+      Math.floor(Date.now() / 1000)
+    );
+    await audit('success');
+    await removeFromPlan(c.env.DB, 'call_plan', taskId);
+  } catch (err) {
+    await audit('failed', errorText(err));
     throw err;
   }
 }

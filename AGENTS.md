@@ -77,7 +77,9 @@ See README.md for the behaviour.
   `excluded` flag kept), with the call's reviews (`call_reviews`, one per
   reviewer, replaced whole by `review_call`) laid over the rules each time; the cron sweep (`runCoachingSweep`) repeats safely. Real conversations (`conversations`) are D1 only too, one row per counted call or interview, replaced whole when marked again; logging only adds one, Coaching's Uncount takes it back. `taskForContact`
   reuses the contact's open task before creating one, under a lock in
-  `contact_task_locks`. A new meeting is
+  `contact_task_locks`. Dropping a CALL task (`dropCall`), logging one
+  (`prepareCallLog`) and dialling it (`startDial`) each hold the task's lock
+  in `task_locks` from their check to their write (`withTaskLock`). A new meeting is
   looked for on the contact before one is created, and a calendar invite's id
   comes from its booking, so neither is ever made twice. Any new multi-step write should follow the same
   resume-not-repeat pattern.
@@ -200,6 +202,7 @@ See README.md for the behaviour.
 | POST | `/calls/:id/log` | Log the call (a phone call, or a WhatsApp call or message: `channel`) on the contact, complete the task, create the follow-up, optionally at a set time (after the response, unless it books an interview), book the interview it set up. Lands on the next call |
 | POST | `/calls/:id/numbers` (also `/meetings/:id/numbers`) | Save the contact's phone and mobile, each with an extension, in HubSpot (JSON for the page's script, so a call isn't interrupted) |
 | POST | `/calls/:id/snooze` | Move a CALL task to another day, keeping its time of day, or to a set time (today or later) |
+| POST | `/calls/:id/drop` | Mark a CALL task DEFERRED (won't call, nothing logged, no follow-up) |
 | GET | `/calls/:id/recording/:dialId` | The call's audio, streamed from Twilio |
 | GET | `/calls/:id/transcript/:dialId` | The transcript card, fetched by the page while it waits |
 | POST | `/calls/:id/transcribe` | Retry a failed transcription |
