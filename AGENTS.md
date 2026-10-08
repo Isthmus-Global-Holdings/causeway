@@ -112,7 +112,7 @@ See README.md for the behaviour.
   (`workflows/call-insight.ts`) is rules, no model.
 - **Pure logic stays pure.** `lib/fit.ts`, `lib/richtext.ts`, `lib/dates.ts`,
   `lib/prompt.ts`, `lib/phone.ts`, `lib/twiml.ts`, `lib/transcript.ts`,
-  `lib/call-script.ts`, `lib/call-insight.ts`, `lib/call-timeline.ts`, `lib/coaching.ts`, `lib/voice-token.ts`, `lib/whatsapp.ts`, `lib/work-plan.ts`, `lib/address.ts`, `lib/call-history.ts`, `lib/sent-rank.ts`, `lib/set-time.ts`, `lib/upwork.ts` (also bundled into the extension), `mcp/format.ts`, `prompts/follow-up-emails.ts`, `prompts/whatsapp-messages.ts` and `prompts/call-review.ts` do no I/O and are unit tested. Workflows take interfaces (`HubSpot`, `Twilio`, and the D1 stores
+  `lib/call-script.ts`, `lib/call-insight.ts`, `lib/call-timeline.ts`, `lib/coaching.ts`, `lib/heard.ts`, `lib/voice-token.ts`, `lib/whatsapp.ts`, `lib/work-plan.ts`, `lib/address.ts`, `lib/call-history.ts`, `lib/sent-rank.ts`, `lib/set-time.ts`, `lib/upwork.ts` (also bundled into the extension), `mcp/format.ts`, `prompts/follow-up-emails.ts`, `prompts/whatsapp-messages.ts` and `prompts/call-review.ts` do no I/O and are unit tested. Workflows take interfaces (`HubSpot`, `Twilio`, and the D1 stores
   in `lib/db.ts`), so tests use fakes or the real SQL on SQLite.
 - **Sending never repeats.** `runSend` records a `sent_emails` row before
   calling Gmail, and never resends a row whose outcome is unknown. The rep
@@ -189,6 +189,7 @@ See README.md for the behaviour.
 | GET | `/calls` | Calls, the record: every call, in and out (dials, calls to the Twilio number, calls logged by hand), newest first, summary, notes, transcript and recording inline, each logged call's coaching tags; `?dir=in\|out`, `?q=` (names, numbers, summaries, notes, transcripts; results show where it matched), `?before=` |
 | GET | `/inbound` | Redirects to `/calls?dir=in` |
 | GET | `/coaching` | Patterns across every logged call: the interviews they booked and how each turned out (held, no-show, canceled, to log), the front desk, rushed connects with no next step, long connects, objections and the openings that got past them, reached rate by hour of their day and time zone, follow-up timing, length by outcome. Reads a few unread calls after it answers |
+| GET | `/coaching/heard` | What you've heard: the software they use and what they said about their work, in their words, by theme, across every call and interview that reached them (their part of each transcript, and the rep's notes); counts of calls and the newest quotes, each linking its call. The record for the synthesis, which is done with Claude (`what_you_heard`) |
 | POST | `/coaching/calls/:id/exclude` | Leave a logged call out of coaching (a test call), or put it back (`excluded=0`); D1 only. The Calls page's button |
 | POST | `/inbound/:id/dismiss` | Take the caller off "Waiting on a call back" without calling (D1 only) |
 | GET | `/inbound/:id` | One inbound call: who (HubSpot contact, caller ID, where the number's from), outcome, recording, transcript, HubSpot log, other calls from the number, Call back |

@@ -10,7 +10,14 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { bookInterview, callsOverview, logCall, snoozeCallTask } from '../actions/calls';
-import { callCoaching, callForReview, callsForReview, coachingOverview, saveCallReview } from '../actions/coaching';
+import {
+  callCoaching,
+  callForReview,
+  callsForReview,
+  coachingOverview,
+  heardOverview,
+  saveCallReview,
+} from '../actions/coaching';
 import { dropEmailTask, markEmailSent, saveEmailDraft } from '../actions/emails';
 import { latestMeetingDial, logMeeting, meetingsOverview } from '../actions/meetings';
 import { openContactTask, saveNumbers } from '../actions/records';
@@ -62,6 +69,7 @@ import {
   afterCallSummary,
   callInsightSummary,
   callReviewSummary,
+  heardSummary,
   beforeCallSummary,
   bookingSummary,
   coachingSummary,
@@ -458,6 +466,22 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
           bookedInterviews: bookingSummary(bookings, settings.timeZone, origin),
           callsNotReadYet: unread > 0,
         };
+      })
+  );
+
+  server.registerTool(
+    'what_you_heard',
+    {
+      title: 'What you’ve heard',
+      description:
+        "What prospects have told the rep across every call and interview that reached them, read by rules from their part of each transcript and from the rep's notes: the software they use (named tools, or a load board, a TMS, spreadsheets, paper, phone and text), with how many calls named each and the newest quotes; what they said about their work by theme (quoting and rates, dispatch and loads, invoicing and getting paid, drivers and people, compliance, the software they use), with how many calls touched each, how many of those hurt, and the quotes; and call by call. Counts of calls, never rates. This is the record: the synthesis (what keeps coming up, what to ask next, which segment to narrow to) is yours to do with the rep from it.",
+      inputSchema: {},
+      annotations: READ,
+    },
+    () =>
+      run(async () => {
+        const { settings, report } = await heardOverview(c);
+        return heardSummary(report, settings.timeZone, origin);
       })
   );
 

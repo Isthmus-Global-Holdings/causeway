@@ -2219,6 +2219,38 @@ export async function callsToReview(db: D1Database, limit: number): Promise<Call
   return results;
 }
 
+// --- What they've told the rep (coaching's What you've heard) ---
+
+export interface HeardRow {
+  call_task_id: string;
+  subject: InsightSubject;
+  label: string;
+  at_sec: number;
+  transcript_json: string | null; // the dial's finished transcript, if any
+  notes: string; // the rep's notes on the call, or the interview's latest log
+}
+
+// Every call and interview that reached them, newest first, with its
+// transcript and the rep's notes: what there is to hear them in.
+export async function heardSources(db: D1Database, limit = 500): Promise<HeardRow[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT i.call_task_id, i.subject, i.label, i.at_sec,
+              CASE WHEN d.transcript_status = 'done' THEN d.transcript_json END AS transcript_json,
+              COALESCE(CASE WHEN i.subject = 'task' THEN l.notes
+                            ELSE (SELECT m.notes FROM meeting_logs m WHERE m.meeting_id = i.call_task_id
+                                  ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1) END, '') AS notes
+       FROM call_insights i
+       LEFT JOIN dials d ON d.id = i.dial_id
+       LEFT JOIN call_logs l ON i.subject = 'task' AND l.call_task_id = i.call_task_id
+       WHERE i.excluded = 0 AND i.reached = 1
+       ORDER BY i.at_sec DESC LIMIT ?`
+    )
+    .bind(limit)
+    .all<HeardRow>();
+  return results;
+}
+
 // --- Interviews booked from calls, and how each turned out (coaching) ---
 
 export interface BookedInterview {

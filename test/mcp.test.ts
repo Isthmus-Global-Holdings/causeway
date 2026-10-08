@@ -116,6 +116,7 @@ test('it introduces itself and lists its tools, marked read-only or safe to repe
     'get_call_task',
     'drafting_rules',
     'call_coaching',
+    'what_you_heard',
     'calls_to_review',
     'get_call_review',
   ]) {
@@ -344,6 +345,15 @@ test('calls are reviewed from here: the ones to review, one with its rules, and 
   assert.match(saved.data.url, /\/meetings\/m1$/);
 
   assert.deepEqual((await callTool('calls_to_review')).data.calls, [], 'both reviewed: off the list');
+
+  const heard = await callTool('what_you_heard');
+  assert.equal(heard.isError, false, heard.text);
+  assert.equal(heard.data.ofCallsThatReachedThem, 2, 'the call and the interview');
+  assert.ok(
+    heard.data.byTheme.some((t: { theme: string }) => t.theme === 'software'),
+    'Lyle on software, twice over'
+  );
+  assert.match(heard.data.callByCall[0].url, /\/meetings\/m1$/);
   const again = await callTool('get_call_review', { task_id: '1' });
   assert.equal(again.data.reviews[0].by, 'claude');
 
