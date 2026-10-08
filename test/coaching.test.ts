@@ -35,6 +35,7 @@ import {
   callFunnel,
   coachingReport,
   describeCall,
+  momTestReport,
   HOUR_SAMPLE,
   hourLabel,
   lastInterviewNote,
@@ -778,7 +779,27 @@ test('the funnel counts each step to an interview held, and names the step that 
 });
 
 test('the Coaching page and the call page’s card', async () => {
-  const report = coachingReport(sample(), TZ);
+  const rows = sample();
+  const report = coachingReport(rows, TZ);
+  const lyleFacts = facts({
+    label: putThrough.label,
+    firstName: 'Lyle',
+    durationSec: 543,
+    transcript: { turns: putThrough.turns, summary: [] },
+  });
+  const interview = insight({
+    call_task_id: 'm1',
+    subject: 'meeting',
+    at_sec: T0 + 2 * DAY,
+    duration_sec: 900,
+    reached: 1,
+    stage: 'conversation',
+    label: 'Grant Ives',
+    asked_last_time: 1,
+    pitched: 0,
+    longest_story_sec: 95,
+    commitment: 'intro',
+  });
   const page = String(
     await coachingPage(
       {
@@ -786,6 +807,12 @@ test('the Coaching page and the call page’s card', async () => {
         report,
         bookings: bookingReport([], 0),
         funnel: callFunnel(report, [], 0),
+        interviews: [interview],
+        momTest: momTestReport(rows, [interview]),
+        strips: [
+          { call: rows.find((r) => r.call_task_id === '5')!, timeline: callTimeline(lyleFacts, heard(putThrough)) },
+          { call: rows[0], timeline: null },
+        ],
         unread: 2,
       },
       'rep@example.com'
@@ -802,7 +829,28 @@ test('the Coaching page and the call page’s card', async () => {
   assert.match(page, /<dl class="bars" aria-label="What the front desk did">/);
   assert.match(page, /style="--w: \d+%"/);
   assert.match(page, /Too few calls to pick an hour by yet/);
-  assert.doesNotMatch(page, /by their time zone|Average length/);
+  assert.doesNotMatch(page, /by their time zone|Average length|Where each call ended/);
+  // Two halves, the tables that need more calls parked under them.
+  assert.match(page, /<h2>Earning the conversation<\/h2>/);
+  assert.match(page, /<h2>The conversation<\/h2>/);
+  assert.ok(page.indexOf('Earning the conversation') < page.indexOf('The conversation'));
+  assert.match(page, /<details class="card">\s*<summary>When there are enough calls/);
+  assert.ok(page.indexOf('<details') < page.indexOf('Reached, by hour of their day'), 'the hours table is parked');
+  assert.ok(page.indexOf('<details') < page.indexOf('Which follow-up timing'));
+  // The last calls drawn to scale: one with a drawing, one not yet.
+  assert.match(page, /<h2>Your last call, to scale<\/h2>/);
+  assert.match(page, /<dl class="strips">\s*<dt><a href="\/calls\/5"/);
+  assert.match(page, /<div class="strip" aria-hidden="true" style="--w: 100%">/);
+  assert.match(page, /<span class="sr-only">Phone menu 0:14 · Front desk \(Rex\)/);
+  // The Mom Test table: a call and an interview, a dash where nothing has said.
+  assert.match(page, /<h2>The Mom Test, call by call<\/h2>/);
+  assert.match(page, /\(1 of them interview\)/);
+  assert.match(page, /you asked about the last time on 1, pitched on 0/);
+  assert.match(page, /Longest story: <a href="\/meetings\/m1">Grant Ives<\/a>, 1:35/);
+  assert.match(page, /<a href="\/meetings\/m1">Grant Ives<\/a> <span class="tag">Interview<\/span>/);
+  assert.match(page, /<td data-label="They gave">an intro<\/td>/);
+  assert.match(page, /<td data-label="Asked about the last time">–<\/td>/, 'a call nothing has judged');
+  assert.match(page, /<h2>What to adjust, call by call<\/h2>/);
 
   const empty = String(await coachingCard({ before: [], brief: null, after: null }));
   assert.equal(empty, '');
@@ -1389,6 +1437,9 @@ test('bookings followed to how they turned out, by lead time, invite and the boo
         report: coachingReport(sample(), TZ),
         bookings: report,
         funnel: callFunnel(coachingReport(sample(), TZ), [], 0),
+        interviews: [],
+        momTest: momTestReport([], []),
+        strips: [],
         unread: 0,
       },
       'rep@example.com'
@@ -1415,6 +1466,9 @@ test('bookings followed to how they turned out, by lead time, invite and the boo
         report: coachingReport([], TZ),
         bookings: report,
         funnel: callFunnel(coachingReport([], TZ), [], 0),
+        interviews: [],
+        momTest: momTestReport([], []),
+        strips: [],
         unread: 1,
       },
       'rep@example.com'
@@ -1472,6 +1526,9 @@ test('the rep’s own cancel is counted, but left out of the held rate', async (
         report: coachingReport(sample(), TZ),
         bookings: report,
         funnel: callFunnel(coachingReport(sample(), TZ), [], 0),
+        interviews: [],
+        momTest: momTestReport([], []),
+        strips: [],
         unread: 0,
       },
       'rep@example.com'
@@ -1568,6 +1625,41 @@ test('the Mom Test: the rules hear a question about the last time, a pitch, a st
   const notes = ruleInsight(facts({ notes: 'Talked with Sam, he told me about last week’s quote' }));
   assert.deepEqual([notes.asked_last_time, notes.commitment], [null, null]);
   assert.ok(!notes.unsure.includes('fluffCaught'));
+});
+
+test('the Mom Test across calls and interviews: counts of what has been said, the longest story', () => {
+  const calls = [
+    insight({
+      call_task_id: 'a',
+      at_sec: T0,
+      asked_last_time: 1,
+      pitched: 1,
+      longest_story_sec: 20,
+      commitment: 'time',
+    }),
+    insight({ call_task_id: 'b', at_sec: T0 + 60, asked_last_time: 0, longest_story_sec: 75, fluff_caught: 1 }),
+    insight({ call_task_id: 'c', at_sec: T0 + 120, reached: 0, gate: 'gatekeeper', stage: 'gatekeeper' }),
+    insight({ call_task_id: 'w', at_sec: T0 + 180, gate: 'wrong_number', commitment: 'money' }),
+  ];
+  const interviews = [
+    insight({ call_task_id: 'm', subject: 'meeting', at_sec: T0 + 30, longest_story_sec: 130, commitment: 'intro' }),
+  ];
+  const m = momTestReport(calls, interviews);
+  assert.deepEqual(
+    m.rows.map((r) => [r.call.call_task_id, r.kind]),
+    [
+      ['b', 'call'],
+      ['m', 'interview'],
+      ['a', 'call'],
+    ],
+    'reached only, newest first; a wrong number isn’t a call'
+  );
+  assert.deepEqual(
+    [m.asked, m.pitched, m.stories, m.fluffCaught, m.commitments],
+    [1, 1, 2, 1, { time: 1, intro: 1, money: 0 }]
+  );
+  assert.equal(m.longest?.call.call_task_id, 'm');
+  assert.deepEqual(momTestReport([], []).rows, []);
 });
 
 test('a review settles the Mom Test over the rules', () => {
@@ -1907,6 +1999,9 @@ test('the hours note stays until two hours have enough calls to compare', async 
       report,
       bookings: bookingReport([], 0),
       funnel: callFunnel(report, [], 0),
+      interviews: [],
+      momTest: momTestReport([], []),
+      strips: [],
       unread: 0,
     };
     return String(await coachingPage(overview, 'rep@example.com'));

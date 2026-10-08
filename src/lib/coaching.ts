@@ -20,10 +20,13 @@ import {
   OBJECTIONS,
   objectionFor,
   STAGE_LABELS,
+  COMMITMENTS,
   type CoachNote,
+  type Commitment,
   type GatekeeperResult,
   type ObjectionKind,
 } from './call-insight';
+import { STORY_SEC } from './call-timeline';
 import { formatLocal, timeOfDay } from './dates';
 import type { BookedInterview, CallInsight } from './db';
 
@@ -343,6 +346,54 @@ export function callFunnel(report: CoachingReport, booked: BookedInterview[], no
     leak = { from, to, advice: LEAK_ADVICE[to.key] };
   }
   return { steps, upcoming: calls(['upcoming', 'to_log']), leak };
+}
+
+// --- The Mom Test, call by call ---
+
+// How many of the latest calls the Coaching page draws to scale.
+export const STRIPS = 20;
+
+export interface MomTestRow {
+  call: CallInsight;
+  kind: 'call' | 'interview';
+}
+
+// Every call and interview that reached them, newest first, with what the
+// rules and the reviews have said about each: counts, not rates, and a dash
+// where nothing has said yet. The longest story across them.
+export interface MomTestReport {
+  rows: MomTestRow[];
+  asked: number; // asked about a specific last time
+  pitched: number;
+  stories: number; // a prospect turn of STORY_SEC or more
+  fluffCaught: number;
+  commitments: Record<Commitment, number>;
+  longest: MomTestRow | null;
+}
+
+export function momTestReport(calls: CallInsight[], interviews: CallInsight[]): MomTestReport {
+  const rows: MomTestRow[] = [
+    ...calls.filter((c) => c.reached && c.gate !== 'wrong_number').map((call) => ({ call, kind: 'call' as const })),
+    ...interviews.filter((c) => c.reached).map((call) => ({ call, kind: 'interview' as const })),
+  ].sort((a, b) => b.call.at_sec - a.call.at_sec);
+  const count = (test: (c: CallInsight) => boolean) => rows.filter((r) => test(r.call)).length;
+  const commitments = Object.fromEntries(
+    COMMITMENTS.map((kind) => [kind, count((c) => c.commitment === kind)])
+  ) as Record<Commitment, number>;
+  let longest: MomTestRow | null = null;
+  for (const row of rows) {
+    const sec = row.call.longest_story_sec;
+    if (sec !== null && sec >= STORY_SEC && sec > (longest?.call.longest_story_sec ?? 0)) longest = row;
+  }
+  return {
+    rows,
+    asked: count((c) => c.asked_last_time === 1),
+    pitched: count((c) => c.pitched === 1),
+    stories: count((c) => c.longest_story_sec !== null && c.longest_story_sec >= STORY_SEC),
+    fluffCaught: count((c) => c.fluff_caught === 1),
+    commitments,
+    longest,
+  };
 }
 
 // The hour with the best rate, among those with enough calls to beat
