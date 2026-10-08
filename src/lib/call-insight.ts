@@ -246,6 +246,10 @@ export function withReviews<T extends InsightFields & { unsure: string; sources:
   const out = { ...row };
   const unsure = new Set(parseUnsure(row.unsure));
   const sources = parseSources(row.sources);
+  const settle = (tag: Tag, by: Reviewer) => {
+    unsure.delete(tag);
+    sources[tag] = { by, p: null };
+  };
   const ordered = [...reviews].sort((a, b) => REVIEWERS.indexOf(a.reviewer) - REVIEWERS.indexOf(b.reviewer));
   for (const { reviewer, corrections: c, what_worked, adjust } of ordered) {
     if (c.whoAnswered !== undefined) out.gate = c.whoAnswered;
@@ -259,16 +263,16 @@ export function withReviews<T extends InsightFields & { unsure: string; sources:
     if (c.nextStep !== undefined) {
       out.next_step = c.nextStep.agreed ? 1 : 0;
       out.next_step_text = c.nextStep.agreed ? (c.nextStep.what ?? out.next_step_text) : null;
-      // How far it got follows, as the rules have it, unless the review says.
+      // How far it got follows, as the rules have it, unless the review says;
+      // a stage it moves is the review's too.
       if (c.stage === undefined) {
+        const stage = out.stage;
         if (!c.nextStep.agreed && out.stage === 'next_step') out.stage = 'conversation';
         if (c.nextStep.agreed && out.reached) out.stage = 'next_step';
+        if (out.stage !== stage) settle('stage', reviewer);
       }
     }
-    for (const tag of correctedTags(c)) {
-      unsure.delete(tag);
-      sources[tag] = { by: reviewer, p: null };
-    }
+    for (const tag of correctedTags(c)) settle(tag, reviewer);
     if (what_worked) out.what_worked = what_worked;
     if (adjust) out.adjust = adjust;
   }

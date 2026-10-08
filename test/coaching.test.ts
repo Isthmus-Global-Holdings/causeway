@@ -1597,8 +1597,18 @@ test('a review’s next step moves how far it got, unless it says how far', () =
   ];
   assert.equal(withReviews(agreedAt, review({ nextStep: { agreed: false } })).stage, 'conversation');
   assert.equal(withReviews(agreedAt, review({ nextStep: { agreed: false }, stage: 'opening' })).stage, 'opening');
-  const opening = insight({ call_task_id: 'n2', stage: 'opening' });
-  assert.equal(withReviews(opening, review({ nextStep: { agreed: true, what: 'Gave his cell' } })).stage, 'next_step');
+  const opening = insight({
+    call_task_id: 'n2',
+    stage: 'opening',
+    unsure: JSON.stringify(['stage', 'nextStep']),
+    sources: JSON.stringify({ stage: { by: 'rules', p: null } }),
+  });
+  const moved = withReviews(opening, review({ nextStep: { agreed: true, what: 'Gave his cell' } }));
+  assert.equal(moved.stage, 'next_step');
+  assert.deepEqual(parseUnsure(moved.unsure), [], 'the stage it moved is settled too');
+  assert.equal(parseSources(moved.sources).stage?.by, 'claude');
+  const kept = withReviews(agreedAt, review({ nextStep: { agreed: true } }));
+  assert.equal(parseSources(kept.sources).stage, undefined, 'a stage it didn’t move stays the rules’');
   const desk = insight({ call_task_id: 'n3', gate: 'gatekeeper', reached: 0, stage: 'gatekeeper' });
   assert.equal(withReviews(desk, review({ nextStep: { agreed: true } })).stage, 'gatekeeper', 'never reached: stays');
 });
