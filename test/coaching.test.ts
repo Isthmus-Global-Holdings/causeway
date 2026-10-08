@@ -240,36 +240,38 @@ test('talked with someone: a person in the same turn as the menu, on their chann
     true,
     'a two-word opener and an answer'
   );
-});
-
-test('talked with someone: a voicemail greeting in their turn ends what counts', () => {
-  const turn = (speaker: 'rep' | 'prospect', start: number, text: string) => ({ speaker, start, text });
-  const rep = turn('rep', 0, 'Hi, is Ruth in today?');
   assert.equal(
     talkedWithSomeone([
-      rep,
-      turn(
-        'prospect',
-        3,
-        'Ruth is out, let me send you to her voicemail. Hi, you’ve reached Ruth. Please leave a message after the beep.'
-      ),
+      turn('rep', 0, 'Hi Ruth, this is Anel.'),
+      turn('prospect', 2, 'Sorry, I can’t take your call right now. Call me tomorrow.'),
     ]),
     true,
-    'the front desk, then the greeting, in one turn'
+    'a live reply that sounds like a greeting, after the rep spoke'
   );
+});
+
+test('talked with someone: before the rep speaks, a voicemail greeting in their turn ends what counts', () => {
+  const turn = (speaker: 'rep' | 'prospect', start: number, text: string) => ({ speaker, start, text });
+  const message = turn('rep', 9, 'Hi Ruth, this is Anel, I’ll try you again tomorrow.');
   for (const greeting of [
     'Hey, it’s Ruth. Leave me a message.',
     'Hello, this is Ruth from Acme Logistics Incorporated. I cannot take your call right now.',
   ]) {
-    assert.equal(talkedWithSomeone([rep, turn('prospect', 3, greeting)]), false, greeting);
+    assert.equal(talkedWithSomeone([turn('prospect', 0, greeting), message]), false, greeting);
   }
   assert.equal(
     talkedWithSomeone([
-      turn('prospect', 0, 'Hey, it’s Grant. Leave me a message and I’ll call you back.'),
-      turn('rep', 6, 'Hi Grant, this is Anel, I’ll try you again tomorrow.'),
+      turn('prospect', 0, 'Acme, this is Dana.'),
+      turn('rep', 2, 'Hi Dana, is Ruth in today?'),
+      turn(
+        'prospect',
+        5,
+        'She’s out, let me send you to her voicemail. Hi, you’ve reached Ruth. Please leave a message after the beep.'
+      ),
+      message,
     ]),
-    false,
-    'a short greeting that doesn’t say “after the tone”'
+    true,
+    'the front desk, then the greeting'
   );
 });
 

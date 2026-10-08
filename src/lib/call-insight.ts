@@ -648,12 +648,14 @@ const greets = (sentence: string) => VOICEMAIL.test(sentence) || GREETING.test(s
 
 // The words a person said in a turn on their side. One turn can run a
 // menu's or a transfer notice's line into a person's, when they came on
-// within seconds of it, so those are dropped sentence by sentence. A
-// voicemail greeting ends what counts, and what came before it counts only
-// if it was an exchange (EXCHANGE, HOLD), not the greeting introducing itself.
-function personWords(text: string): number {
+// within seconds of it, so those are dropped sentence by sentence. Before
+// the rep has said anything, a voicemail greeting ends what counts, and what
+// came before it counts only if it was an exchange (EXCHANGE, HOLD), not the
+// greeting introducing itself. After, they're answering the rep: "Sorry, I
+// can't take your call right now" is a live reply, not a recording.
+function personWords(text: string, answering: boolean): number {
   const sentences = sentencesOf(text);
-  const at = sentences.findIndex(greets);
+  const at = answering ? -1 : sentences.findIndex(greets);
   const before = (at < 0 ? sentences : sentences.slice(0, at)).filter((s) => !switchboard(s));
   const said = before.reduce((n, sentence) => n + words(sentence), 0);
   if (at < 0) return said;
@@ -673,15 +675,14 @@ const KEYED = /^[\s.,!?]*((\d+|one|two|three|four|five|six|seven|eight|nine|zero
 // it never counts: its transcript is kept, with no summary.
 export function talkedWithSomeone(turns: Turn[]): boolean {
   if (turns.every((t) => t.speaker === 'call')) return false;
-  const sides = turns.map((t) =>
-    t.speaker === 'rep'
-      ? words(t.text) >= 2 && !KEYED.test(t.text)
-        ? 'rep'
-        : null
-      : personWords(t.text) >= 2
-        ? 'them'
-        : null
-  );
+  let repSpoke = false;
+  const sides = turns.map((t) => {
+    if (t.speaker === 'rep') {
+      repSpoke ||= words(t.text) >= 2 && !KEYED.test(t.text);
+      return words(t.text) >= 2 && !KEYED.test(t.text) ? 'rep' : null;
+    }
+    return personWords(t.text, repSpoke) >= 2 ? 'them' : null;
+  });
   const first = sides.findIndex(Boolean);
   return first >= 0 && sides.some((side, i) => i > first && side && side !== sides[first]);
 }
