@@ -200,12 +200,15 @@ test('logging an interview sets its outcome and notes, creates the follow-up, an
     nextTaskCreated: true,
     leadStatus: 'CONNECTED',
     inviteUpdated: false,
+    contactId: '10',
+    who: 'Sam Granger at Granger Hauling',
   });
 
   // A second submission, even with different values, writes nothing more.
   const again = await runMeetingLogged(hs, store, 'm1', START, { ...COMPLETED, notes: 'other' }, OPTS);
   assert.equal(hs.created.length, 1);
   assert.equal(again.nextTaskCreated, false);
+  assert.equal(again.who, null, 'not read again');
   assert.match(hs.objects.get('meetings/m1')!.properties.hs_internal_meeting_notes!, /QuickBooks/);
 });
 

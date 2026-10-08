@@ -32,6 +32,10 @@ HubSpot project keep `hubspot-automations`):
   with the interviews they booked followed to how each turned out; and on
   the call page, quietly, what to adjust after the last call and what's
   worked on calls like the next
+- count real conversations toward 100: people who told the rep about their
+  work, ticked on the log form (pre-ticked for a held interview or a long
+  connect) or counted from Coaching, by person, with the line learned, on
+  every page's today strip
 - see every past call, inbound and outbound, on Calls (the record), with its
   summary, notes and transcript, searchable; the missed calls and voicemails
   still waiting on a call back sit in the Queue with the calls to make
@@ -71,7 +75,7 @@ See README.md for the behaviour.
   by it first and HubSpot refuses a second one. Coaching (`readCall`) writes
   only D1, one `call_insights` row per logged call, replaced whole (its
   `excluded` flag kept), with the call's reviews (`call_reviews`, one per
-  reviewer, replaced whole by `review_call`) laid over the rules each time; the cron sweep (`runCoachingSweep`) repeats safely. `taskForContact`
+  reviewer, replaced whole by `review_call`) laid over the rules each time; the cron sweep (`runCoachingSweep`) repeats safely. Real conversations (`conversations`) are D1 only too, one row per counted call or interview, replaced whole when marked again; logging only adds one, Coaching's Uncount takes it back. `taskForContact`
   reuses the contact's open task before creating one, under a lock in
   `contact_task_locks`. A new meeting is
   looked for on the contact before one is created, and a calendar invite's id
@@ -124,7 +128,7 @@ See README.md for the behaviour.
   reviewed.)
 - **Pure logic stays pure.** `lib/fit.ts`, `lib/richtext.ts`, `lib/dates.ts`,
   `lib/prompt.ts`, `lib/phone.ts`, `lib/twiml.ts`, `lib/transcript.ts`,
-  `lib/call-script.ts`, `lib/call-insight.ts`, `lib/call-timeline.ts`, `lib/coaching.ts`, `lib/heard.ts`, `lib/voice-token.ts`, `lib/whatsapp.ts`, `lib/work-plan.ts`, `lib/address.ts`, `lib/call-history.ts`, `lib/sent-rank.ts`, `lib/set-time.ts`, `lib/upwork.ts` (also bundled into the extension), `mcp/format.ts`, `prompts/follow-up-emails.ts`, `prompts/whatsapp-messages.ts` and `prompts/call-review.ts` do no I/O and are unit tested. Workflows take interfaces (`HubSpot`, `Twilio`, and the D1 stores
+  `lib/call-script.ts`, `lib/call-insight.ts`, `lib/call-timeline.ts`, `lib/coaching.ts`, `lib/conversations.ts`, `lib/heard.ts`, `lib/voice-token.ts`, `lib/whatsapp.ts`, `lib/work-plan.ts`, `lib/address.ts`, `lib/call-history.ts`, `lib/sent-rank.ts`, `lib/set-time.ts`, `lib/upwork.ts` (also bundled into the extension), `mcp/format.ts`, `prompts/follow-up-emails.ts`, `prompts/whatsapp-messages.ts` and `prompts/call-review.ts` do no I/O and are unit tested. Workflows take interfaces (`HubSpot`, `Twilio`, and the D1 stores
   in `lib/db.ts`), so tests use fakes or the real SQL on SQLite.
 - **Sending never repeats.** `runSend` records a `sent_emails` row before
   calling Gmail, and never resends a row whose outcome is unknown. The rep
@@ -177,7 +181,7 @@ See README.md for the behaviour.
 
 | Method | Path | What |
 |---|---|---|
-| GET | `/` | Queue, Emails to send tab: today's counts (emails sent, people called, interviews), ranked queue of NOT_STARTED EMAIL tasks + "Next up" |
+| GET | `/` | Queue, Emails to send tab: today's counts (emails sent, people called, interviews) and real conversations so far (of 100), ranked queue of NOT_STARTED EMAIL tasks + "Next up" |
 | GET | `/queue` | The navbar's Queue link: redirects to the tab the rep was last on (`queue_tab` cookie), Emails to send (`/`) or Calls to make (`/queue/calls`) |
 | GET | `/tasks/:id/draft` | Research + Claude context + draft form |
 | POST | `/tasks/:id/draft` | Save Subject + body into `hs_task_body` |
@@ -201,8 +205,9 @@ See README.md for the behaviour.
 | POST | `/calls/:id/transcribe` | Retry a failed transcription |
 | GET | `/calls` | Calls, the record: every call, in and out (dials, calls to the Twilio number, calls logged by hand), newest first, summary, notes, transcript and recording inline, each logged call's coaching tags; `?dir=in\|out`, `?q=` (names, numbers, summaries, notes, transcripts; results show where it matched), `?before=` |
 | GET | `/inbound` | Redirects to `/calls?dir=in` |
-| GET | `/coaching` | Patterns across every logged call: the interviews they booked and how each turned out (held, no-show, canceled, to log), the front desk, rushed connects with no next step, long connects, objections and the openings that got past them, reached rate by hour of their day and time zone, follow-up timing, length by outcome. Reads a few unread calls after it answers |
+| GET | `/coaching` | Real conversations toward 100 (each with the line learned; the calls that reached them, not counted yet, to Count), then the patterns across every logged call: the interviews they booked and how each turned out (held, no-show, canceled, to log), the front desk, rushed connects with no next step, long connects, objections and the openings that got past them, reached rate by hour of their day and time zone, follow-up timing, length by outcome. Reads a few unread calls after it answers |
 | GET | `/coaching/heard` | What you've heard: the software they use and what they said about their work, in their words, by theme, across every call and interview that reached them (their part of each transcript, and the rep's notes); counts of calls and the newest quotes, each linking its call. The record for the synthesis, which is done with Claude (`what_you_heard`) |
+| POST | `/coaching/conversations` | Count a call or interview as a real conversation (`kind`, `ref`, `learned`), or take it back (`on=0`); D1 only. Coaching's Count and Uncount |
 | POST | `/coaching/calls/:id/exclude` | Leave a logged call out of coaching (a test call), or put it back (`excluded=0`); D1 only. The Calls page's button |
 | POST | `/inbound/:id/dismiss` | Take the caller off "Waiting on a call back" without calling (D1 only) |
 | GET | `/inbound/:id` | One inbound call: who (HubSpot contact, caller ID, where the number's from), outcome, recording, transcript, HubSpot log, other calls from the number, Call back |

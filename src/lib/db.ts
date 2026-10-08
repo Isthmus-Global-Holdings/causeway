@@ -17,6 +17,7 @@ import {
   type InsightSource,
   type Reviewer,
 } from './call-insight';
+import type { ConversationKind, ConversationRow } from './conversations';
 import { parsePlan, withoutItem, withSetTimeCall, type WorkPlan } from './work-plan';
 
 export interface Confirmation {
@@ -2309,4 +2310,127 @@ export async function allBookedInterviews(db: D1Database, contactId: string | nu
     .bind(contactId, MAX_INSIGHTS)
     .all<BookedInterview>();
   return results;
+}
+
+// --- Real conversations (lib/conversations.ts): the ones the rep counts toward 100 ---
+
+export interface NewConversation {
+  kind: ConversationKind;
+  ref_id: string;
+  contact_id: string;
+  who: string;
+  learned: string | null;
+  at: string; // ISO
+}
+
+// A call that reached them, not counted yet: one to count from Coaching.
+export interface ConversationCandidate {
+  kind: ConversationKind;
+  ref_id: string;
+  contact_id: string;
+  who: string;
+  at_sec: number;
+  duration_sec: number | null;
+  notes: string | null;
+}
+
+export interface ConversationSummary {
+  people: number;
+  latest: ConversationRow | null;
+}
+
+export interface ConversationStore {
+  get(kind: ConversationKind, refId: string): Promise<ConversationRow | null>;
+  mark(row: NewConversation, now: string): Promise<void>; // replaces an earlier mark of the same call
+  unmark(kind: ConversationKind, refId: string): Promise<void>;
+  list(): Promise<ConversationRow[]>; // newest first
+  summary(): Promise<ConversationSummary>;
+  candidates(limit: number): Promise<ConversationCandidate[]>; // newest first
+}
+
+// The rep's notes on what was counted: the call's, or the interview's last log.
+const CONVERSATION_NOTES = `CASE c.kind
+  WHEN 'call' THEN (SELECT l.notes FROM call_logs l WHERE l.call_task_id = c.ref_id)
+  ELSE (SELECT m.notes FROM meeting_logs m WHERE m.meeting_id = c.ref_id
+        ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1)
+END`;
+
+const CONVERSATION_COLUMNS = `c.kind, c.ref_id, c.contact_id, c.who, c.learned, c.at, ${CONVERSATION_NOTES} AS notes`;
+
+export function d1ConversationStore(db: D1Database): ConversationStore {
+  return {
+    async get(kind, refId) {
+      return db
+        .prepare(`SELECT ${CONVERSATION_COLUMNS} FROM conversations c WHERE c.kind = ? AND c.ref_id = ?`)
+        .bind(kind, refId)
+        .first<ConversationRow>();
+    },
+
+    async mark(row, now) {
+      await db
+        .prepare(
+          `INSERT INTO conversations (kind, ref_id, contact_id, who, learned, at, marked_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)
+           ON CONFLICT(kind, ref_id) DO UPDATE SET contact_id = excluded.contact_id, who = excluded.who,
+             learned = excluded.learned, marked_at = excluded.marked_at`
+        )
+        .bind(row.kind, row.ref_id, row.contact_id, row.who, row.learned, row.at, now)
+        .run();
+    },
+
+    async unmark(kind, refId) {
+      await db.prepare(`DELETE FROM conversations WHERE kind = ? AND ref_id = ?`).bind(kind, refId).run();
+    },
+
+    async list() {
+      const { results } = await db
+        .prepare(`SELECT ${CONVERSATION_COLUMNS} FROM conversations c ORDER BY c.at DESC, c.ref_id DESC`)
+        .all<ConversationRow>();
+      return results;
+    },
+
+    async summary() {
+      const [people, latest] = await Promise.all([
+        db.prepare(`SELECT COUNT(DISTINCT contact_id) AS n FROM conversations`).first<{ n: number }>(),
+        db
+          .prepare(`SELECT ${CONVERSATION_COLUMNS} FROM conversations c ORDER BY c.at DESC, c.ref_id DESC LIMIT 1`)
+          .first<ConversationRow>(),
+      ]);
+      return { people: people?.n ?? 0, latest };
+    },
+
+    // Calls and interview calls coaching read as reaching the person, not
+    // left out of coaching, and not counted yet.
+    async candidates(limit) {
+      const { results } = await db
+        .prepare(
+          `SELECT CASE i.subject WHEN 'meeting' THEN 'interview' ELSE 'call' END AS kind,
+                  i.call_task_id AS ref_id, i.contact_id, i.label AS who, i.at_sec,
+                  COALESCE(i.talk_sec, i.duration_sec) AS duration_sec,
+                  CASE i.subject
+                    WHEN 'meeting' THEN (SELECT m.notes FROM meeting_logs m WHERE m.meeting_id = i.call_task_id
+                                         ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1)
+                    ELSE (SELECT l.notes FROM call_logs l WHERE l.call_task_id = i.call_task_id)
+                  END AS notes
+           FROM call_insights i
+           WHERE i.reached = 1 AND i.excluded = 0
+             AND NOT EXISTS (SELECT 1 FROM conversations c
+                             WHERE c.ref_id = i.call_task_id
+                               AND c.kind = CASE i.subject WHEN 'meeting' THEN 'interview' ELSE 'call' END)
+           ORDER BY i.at_sec DESC LIMIT ?`
+        )
+        .bind(limit)
+        .all<ConversationCandidate>();
+      return results;
+    },
+  };
+}
+
+// Every call the rep has logged (WhatsApp messages aside): the pace's
+// denominator, how many calls it takes to reach one conversation.
+export async function callsLogged(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COUNT(*) AS n FROM call_logs WHERE channel != 'whatsapp_message'`)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
 }

@@ -5,7 +5,7 @@
 
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
-import { d1CallLogStore, d1DialStore, d1MeetingLogStore, setSetting } from '../src/lib/db.ts';
+import { d1CallLogStore, d1ConversationStore, d1DialStore, d1MeetingLogStore, setSetting } from '../src/lib/db.ts';
 import { mcpApp } from '../src/mcp/app.ts';
 import type { AppEnv } from '../src/types.ts';
 import { callLogDone } from '../src/workflows/call-logged.ts';
@@ -215,6 +215,37 @@ test('a video interview booked from here needs its join link, since no invite ma
   assert.equal(booked.isError, true);
   assert.match(booked.text, /needs its join link/);
   assert.equal(hs.meetings.length, 0, 'no meeting created');
+});
+
+test('log_call counts a real conversation when the rep says so, and only on a call that reached them', async () => {
+  const counted = await callTool('log_call', {
+    task_id: '1',
+    outcome: 'connected',
+    notes: 'Ana said quoting takes her an hour a load. Call back Thursday.',
+    next_type: 'CALL',
+    next_date: TOMORROW,
+    real_conversation: true,
+    learned: 'Quoting takes an hour a load',
+  });
+  assert.equal(counted.isError, false, counted.text);
+  const row = await d1ConversationStore(db).get('call', '1');
+  assert.equal(row?.contact_id, '10');
+  assert.equal(row?.who, 'Ana Díaz at Acme');
+  assert.equal(row?.learned, 'Quoting takes an hour a load');
+
+  const voicemail = await callTool('log_call', {
+    task_id: '3',
+    outcome: 'left_voicemail',
+    next_type: 'CALL',
+    next_date: TOMORROW,
+    real_conversation: true,
+  });
+  assert.equal(voicemail.isError, false, voicemail.text);
+  assert.equal(await d1ConversationStore(db).get('call', '3'), null, 'a voicemail isn’t a conversation');
+
+  const { data } = await callTool('today');
+  assert.equal(data.counts.conversations.people, 1);
+  assert.equal(data.counts.conversations.latest.learned, 'Quoting takes an hour a load');
 });
 
 test('calls are reviewed from here: the ones to review, one with its rules, and the review saved over the rules', async () => {

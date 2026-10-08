@@ -28,6 +28,7 @@ import {
   type DialView,
   type WhatsAppDraft,
 } from './calls';
+import { suggestConversation } from '../lib/conversations';
 import { CANCELED_BY, LOGGABLE_OUTCOMES, meetingLogDone } from '../workflows/meeting-logged';
 import {
   isOpen,
@@ -40,7 +41,7 @@ import { companyName, contactName } from '../workflows/parties';
 import type { TodayCounts } from '../workflows/today';
 import { coachingCard } from './coaching';
 import { whereTheyAre } from './facts';
-import { flash as flashBox, layout, recordUrl, timeInput, todayStrip, type Html } from './layout';
+import { conversationBox, flash as flashBox, layout, recordUrl, timeInput, todayStrip, type Html } from './layout';
 
 export const OUTCOME_LABELS: Record<MeetingOutcome, string> = {
   SCHEDULED: 'Scheduled',
@@ -276,6 +277,7 @@ function logForm(state: MeetingPageState, startAt: number | null): Html {
       <label for="notes">Interview notes</label>
       <textarea id="notes" name="notes" class="mono" placeholder="What they told you, in their words. What they do today, what it costs them, who else to talk to."></textarea>
     </div>
+    ${conversationBox(['COMPLETED'], suggestConversation({ kind: 'interview', outcome: LOGGABLE_OUTCOMES[0].value }))}
     <div class="grid-2">
       <div class="field">
         <label for="next_type">Follow-up task</label>

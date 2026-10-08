@@ -104,6 +104,8 @@ meetingsRoute.post('/:id/log', async (c) => {
       new_time: text('new_time'),
       next_type: text('next_type'),
       next_date: text('next_date'),
+      conversation: text('conversation'),
+      learned: text('learned'),
     },
     text('start')
   );

@@ -43,6 +43,7 @@ import {
   prepNotes,
 } from '../src/lib/coaching.ts';
 import { callTimeline, parseTimeline } from '../src/lib/call-timeline.ts';
+import { conversationReport } from '../src/lib/conversations.ts';
 import {
   allBookedInterviews,
   allCallInsights,
@@ -809,6 +810,8 @@ test('the Coaching page and the call page’s card', async () => {
     await coachingPage(
       {
         settings: { timeZone: TZ } as never,
+        conversations: conversationReport([], 0),
+        candidates: [],
         report,
         bookings: bookingReport([], 0),
         funnel: callFunnel(report, [], 0),
@@ -872,6 +875,8 @@ test('the Coaching page and the call page’s card', async () => {
     await coachingPage(
       {
         settings: { timeZone: TZ } as never,
+        conversations: conversationReport([], 0),
+        candidates: [],
         report: coachingReport([], TZ),
         bookings: bookingReport([], 0),
         funnel: callFunnel(coachingReport([], TZ), [], 0),
@@ -1470,6 +1475,8 @@ test('bookings followed to how they turned out, by lead time, invite and the boo
     await coachingPage(
       {
         settings: { timeZone: TZ } as never,
+        conversations: conversationReport([], 0),
+        candidates: [],
         report: coachingReport(sample(), TZ),
         bookings: report,
         funnel: callFunnel(coachingReport(sample(), TZ), [], 0),
@@ -1500,6 +1507,8 @@ test('bookings followed to how they turned out, by lead time, invite and the boo
     await coachingPage(
       {
         settings: { timeZone: TZ } as never,
+        conversations: conversationReport([], 0),
+        candidates: [],
         report: coachingReport([], TZ),
         bookings: report,
         funnel: callFunnel(coachingReport([], TZ), [], 0),
@@ -1561,6 +1570,8 @@ test('the rep’s own cancel is counted, but left out of the held rate', async (
     await coachingPage(
       {
         settings: { timeZone: TZ } as never,
+        conversations: conversationReport([], 0),
+        candidates: [],
         report: coachingReport(sample(), TZ),
         bookings: report,
         funnel: callFunnel(coachingReport(sample(), TZ), [], 0),
@@ -2390,6 +2401,8 @@ test('the hours note stays until two hours have enough calls to compare', async 
     const report = coachingReport(rows, TZ);
     const overview = {
       settings: { timeZone: TZ } as never,
+      conversations: conversationReport([], 0),
+      candidates: [],
       report,
       bookings: bookingReport([], 0),
       funnel: callFunnel(report, [], 0),
