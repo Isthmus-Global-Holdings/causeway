@@ -642,7 +642,12 @@ const GREETING =
 // from Acme Logistics."): a question, or being put on hold or through.
 const EXCHANGE = /\?|\b(voice ?mail|put you through|transfer)\b/i;
 
+// A business's welcome, which a phone menu opens with and a front desk
+// answers with alike: the menu's when its next sentence is the switchboard.
+const WELCOME = /\b(thanks?( you)? for calling|welcome to)\b/i;
+
 const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+/);
+const switchboard = (sentence: string) => SWITCHBOARD.some((re) => re.test(sentence));
 const greets = (sentence: string) => VOICEMAIL.test(sentence) || GREETING.test(sentence);
 
 // The words a person said in a turn, and whether a voicemail greeting
@@ -655,7 +660,7 @@ function personWords(text: string): { words: number; greeting: boolean } {
   const sentences = sentencesOf(text);
   const at = sentences.findIndex(greets);
   const before = (at < 0 ? sentences : sentences.slice(0, at)).filter(
-    (sentence) => !SWITCHBOARD.some((re) => re.test(sentence))
+    (sentence, i, all) => !switchboard(sentence) && !(WELCOME.test(sentence) && all[i + 1] && switchboard(all[i + 1]))
   );
   const said = before.reduce((n, sentence) => n + words(sentence), 0);
   if (at < 0) return { words: said, greeting: false };

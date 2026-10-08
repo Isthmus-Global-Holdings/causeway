@@ -268,6 +268,19 @@ test('talked with someone, on one channel (all “call”): words past the menu 
     false,
     'a greeting that introduces itself at length'
   );
+  assert.equal(
+    talkedWithSomeone([
+      call(0, 'Thank you for calling Acme Corporation. If you know your party’s extension, press 1.'),
+      call(9, 'Your call is being transferred.'),
+    ]),
+    false,
+    'a menu that opens with a welcome'
+  );
+  assert.equal(
+    talkedWithSomeone([call(0, 'Thank you for calling Acme Corporation. This is Dana, how can I help?')]),
+    true,
+    'a front desk that answers with one'
+  );
 });
 
 test('talked with someone: a person in the same turn as the menu, on their channel', () => {
