@@ -216,8 +216,18 @@ export async function callCoaching(
 // just after logging it usually hasn't yet (that runs in the background), so
 // the rules read it now from the outcome, length and notes.
 export async function callNotes(db: D1Database, callTaskId: string): Promise<CallNotes | null> {
-  const row: CallInsight | null = await d1CallInsightStore(db).get(callTaskId);
-  const fresh = row ? null : await freshFacts(db, callTaskId);
+  const stored: CallInsight | null = await d1CallInsightStore(db).get(callTaskId);
+  // An interview's row is of a call and a log; dialled again, or logged
+  // since, before the background read ran, it's the earlier call's: read
+  // the current one now instead.
+  const fresh = !stored || stored.subject === 'meeting' ? await freshFacts(db, callTaskId) : null;
+  const row =
+    stored &&
+    stored.subject === 'meeting' &&
+    fresh &&
+    (stored.dial_id !== fresh.dialId || stored.meeting_log_id !== fresh.logId)
+      ? null
+      : stored;
   if (!row && !fresh) return null;
   // Its reviews, of this call (an interview dialled again is a new call).
   const reviews: CallReview[] = await d1CallReviewStore(db).list(callTaskId, row ? row.dial_id : fresh!.dialId);
@@ -267,16 +277,24 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
 // The facts of this id's call, for a reading on the spot: the call logged
 // for a CALL task, or an interview's call once it ended (with how the rep
 // logged the interview, if they have). Null when there's neither.
-async function freshFacts(db: D1Database, id: string): Promise<{ facts: CallFacts; dialId: string | null } | null> {
+async function freshFacts(
+  db: D1Database,
+  id: string
+): Promise<{ facts: CallFacts; dialId: string | null; logId: string | null } | null> {
   const log = await d1CallLogStore(db).get(id);
   if (log) {
     if (log.channel === 'whatsapp_message') return null;
     const dial = log.dial_id ? await d1DialStore(db).get(log.dial_id) : null;
-    return { facts: callFacts(log, dial, dial ? dialTranscript(dial) : null), dialId: log.dial_id };
+    return { facts: callFacts(log, dial, dial ? dialTranscript(dial) : null), dialId: log.dial_id, logId: null };
   }
   const dial = await d1DialStore(db).latestForTask(id);
   if (dial?.subject !== 'meeting' || isLive(dialState(dial, Math.floor(Date.now() / 1000)))) return null;
-  return { facts: interviewFacts(dial, await d1MeetingLogStore(db).latest(id), dialTranscript(dial)), dialId: dial.id };
+  const meetingLog = await d1MeetingLogStore(db).latest(id, dial.started_sec);
+  return {
+    facts: interviewFacts(dial, meetingLog, dialTranscript(dial)),
+    dialId: dial.id,
+    logId: meetingLog?.log_id ?? null,
+  };
 }
 
 // Calls worth a review (someone picked up, nobody reviewed it yet), newest
@@ -324,7 +342,7 @@ export async function callForReview(c: Context<AppEnv>, id: string): Promise<Cal
   } else {
     dial = await d1DialStore(c.env.DB).latestForTask(id);
     if (dial?.subject !== 'meeting') throw notACall();
-    const meetingLog = await d1MeetingLogStore(c.env.DB).latest(id);
+    const meetingLog = await d1MeetingLogStore(c.env.DB).latest(id, dial.started_sec);
     call = {
       id,
       kind: 'interview',

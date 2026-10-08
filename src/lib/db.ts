@@ -1644,8 +1644,10 @@ export interface MeetingLogStore {
   unfinished(meetingId: string): Promise<MeetingLog | null>;
   // The calendar invite the app sent when it booked this meeting, if any.
   calendarEventFor(meetingId: string): Promise<string | null>;
-  // The meeting's latest log (how the interview went, as of now), if any.
-  latest(meetingId: string): Promise<MeetingLog | null>;
+  // The meeting's latest log (how the interview went, as of now), if any;
+  // with `sinceSec`, only one made at or after then (the log of the call
+  // started then, not of an earlier occurrence, moved since).
+  latest(meetingId: string, sinceSec?: number | null): Promise<MeetingLog | null>;
   // No-op if the row already exists: the first submission's values stick.
   create(row: NewMeetingLog): Promise<void>;
   acquireLock(logId: string, nowSec: number, ttlSec: number): Promise<boolean>;
@@ -1669,13 +1671,14 @@ export function d1MeetingLogStore(db: D1Database): MeetingLogStore {
         .first<MeetingLog>();
     },
 
-    async latest(meetingId) {
+    async latest(meetingId, sinceSec = null) {
       return db
         .prepare(
-          `SELECT ${MEETING_LOG_COLUMNS} FROM meeting_logs WHERE meeting_id = ?
+          `SELECT ${MEETING_LOG_COLUMNS} FROM meeting_logs
+           WHERE meeting_id = ?1 AND (?2 IS NULL OR CAST(strftime('%s', created_at) AS INTEGER) >= ?2)
            ORDER BY created_at DESC, rowid DESC LIMIT 1`
         )
-        .bind(meetingId)
+        .bind(meetingId, sinceSec)
         .first<MeetingLog>();
     },
 
@@ -2047,12 +2050,15 @@ export function d1CallInsightStore(db: D1Database): CallInsightStore {
              LEFT JOIN call_insights i ON i.call_task_id = d.task_id AND i.subject = 'meeting'
              WHERE d.subject = 'meeting'
                AND (d.rep_status IS NOT NULL OR d.prospect_status IS NOT NULL OR d.started_sec < ?3)
+               -- The latest dial, as latestForTask picks it.
                AND d.id = (SELECT d2.id FROM dials d2 WHERE d2.task_id = d.task_id AND d2.subject = 'meeting'
-                           ORDER BY d2.started_sec DESC, d2.id DESC LIMIT 1)
-               -- Read of an earlier dial, or with an earlier log (or none) of the interview: read again.
+                           ORDER BY d2.started_sec DESC, d2.rowid DESC LIMIT 1)
+               -- Read of an earlier dial, or with an earlier log (or none) of this call: read again.
+               -- A log from before the dial is an earlier occurrence's (moved since), not this call's.
                AND (i.call_task_id IS NULL OR i.dial_id IS NOT d.id
                     OR (i.excluded = 0 AND i.meeting_log_id IS NOT
                         (SELECT m.log_id FROM meeting_logs m WHERE m.meeting_id = d.task_id
+                           AND CAST(strftime('%s', m.created_at) AS INTEGER) >= d.started_sec
                          ORDER BY m.created_at DESC, m.rowid DESC LIMIT 1))
                     OR ${stale('d.task_id')})
            )

@@ -919,7 +919,12 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
         });
         const log = await d1CallLogStore(env.DB).get(task_id);
         // An interview's follow-up is on its latest log.
-        const nextDue = log ? log.next_due : ((await d1MeetingLogStore(env.DB).latest(task_id))?.next_due ?? null);
+        const nextDue = log
+          ? log.next_due
+          : await (async () => {
+              const dial = await d1DialStore(env.DB).latestForTask(task_id);
+              return (await d1MeetingLogStore(env.DB).latest(task_id, dial?.started_sec ?? null))?.next_due ?? null;
+            })();
         const { timeZone } = await loadAppSettings(env);
         return {
           saved: true,
