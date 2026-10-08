@@ -2107,8 +2107,10 @@ export async function callInsightsFor(db: D1Database, callTaskIds: string[]): Pr
 export interface CallReviewStore {
   // The call's reviews, at most one per reviewer.
   list(callTaskId: string): Promise<CallReview[]>;
-  // Writes the reviewer's review of the call, replacing their earlier one
-  // whole, under the current review rules (REVIEW_RULES_VERSION).
+  // Writes the reviewer's review of the call under the current review rules
+  // (REVIEW_RULES_VERSION). It replaces their earlier one whole, unless that
+  // one was under older rules: a reviewer asked again only for what's new
+  // answers only that, so its corrections go over the earlier ones.
   save(callTaskId: string, review: CallReview): Promise<void>;
 }
 
@@ -2132,6 +2134,14 @@ export function d1CallReviewStore(db: D1Database): CallReviewStore {
     },
 
     async save(callTaskId, review) {
+      const earlier = await db
+        .prepare(`SELECT corrections, rules_version FROM call_reviews WHERE call_task_id = ? AND reviewer = ?`)
+        .bind(callTaskId, review.reviewer)
+        .first<{ corrections: string; rules_version: number }>();
+      const corrections =
+        earlier && earlier.rules_version < REVIEW_RULES_VERSION
+          ? { ...parseCorrections(earlier.corrections), ...review.corrections }
+          : review.corrections;
       await db
         .prepare(
           `INSERT INTO call_reviews (call_task_id, reviewer, corrections, what_worked, adjust, reviewed_at, rules_version)
@@ -2143,7 +2153,7 @@ export function d1CallReviewStore(db: D1Database): CallReviewStore {
         .bind(
           callTaskId,
           review.reviewer,
-          JSON.stringify(review.corrections),
+          JSON.stringify(corrections),
           review.what_worked,
           review.adjust,
           review.reviewed_at,

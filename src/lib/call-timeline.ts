@@ -141,10 +141,19 @@ export function withReviewedTags(
     (m) => !((m.kind === 'pitch' && tags.pitched !== 1) || (m.kind === 'last_time' && tags.asked_last_time !== 1))
   );
   const longestStorySec = tags.longest_story_sec;
-  const turns =
-    longestStorySec === null || longestStorySec < STORY_SEC
-      ? t.turns.map(({ story: _story, ...tick }) => tick)
-      : t.turns;
+  let turns = t.turns.map(({ story: _story, ...tick }) => tick);
+  if (longestStorySec !== null && longestStorySec >= STORY_SEC) {
+    // The story ticks as the rules drew them, or, when the review raised the
+    // figure to a story the rules hadn't measured, their longest turn.
+    const flagged = t.turns.filter((k) => k.story);
+    if (flagged.length) turns = t.turns;
+    else {
+      const longest = t.turns
+        .map((k, i) => ({ i, sec: k.who === 'prospect' ? k.to - k.from : -1 }))
+        .reduce((best, k) => (k.sec > best.sec ? k : best), { i: -1, sec: -1 });
+      if (longest.i >= 0) turns = turns.map((k, i) => (i === longest.i ? { ...k, story: true as const } : k));
+    }
+  }
   return { ...t, marks, turns, longestStorySec };
 }
 
