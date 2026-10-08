@@ -81,6 +81,7 @@ export function callTimeline(facts: CallFacts, reading: Reading): Timeline | nul
   const changes = (
     [
       ['hold', startOf(m.holdFrom)],
+      ['desk', startOf(m.deskBackAt)], // back from the hold with an answer
       ['them', reading.reached ? startOf(m.ownerFrom) : null],
       ['voicemail', startOf(m.voicemailFrom)],
     ] as [PhaseKind, number | null][]
