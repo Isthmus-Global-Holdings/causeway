@@ -141,7 +141,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Today',
       description:
-        "Today at a glance: emails sent and people called today, today's interviews, the next email and the next call (as the app ranks them), and any HubSpot writes that didn't finish.",
+        "Today at a glance: emails sent and people called today, today's interviews, the real conversations so far (people who told the rep about their work, toward 100, and the newest), the next email and the next call (as the app ranks them), and any HubSpot writes that didn't finish.",
       annotations: READ,
     },
     () =>
@@ -682,10 +682,32 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
           .describe(
             'only when the contact asked to be called at a time: a set-time call, with a HubSpot reminder, that becomes the next call then'
           ),
+        real_conversation: z
+          .boolean()
+          .optional()
+          .describe(
+            "only when the rep says so: they talked about their work and the rep learned something. Counts toward the rep's 100 real conversations (by person)"
+          ),
+        learned: z
+          .string()
+          .max(280)
+          .optional()
+          .describe('with real_conversation: what the rep learned, one line, their words'),
       },
       annotations: WRITE,
     },
-    ({ task_id, channel, outcome, notes, whatsapp_field, next_type, next_date, next_time }) =>
+    ({
+      task_id,
+      channel,
+      outcome,
+      notes,
+      whatsapp_field,
+      next_type,
+      next_date,
+      next_time,
+      real_conversation,
+      learned,
+    }) =>
       run(async () => {
         const logged = await logCall(
           c,
@@ -698,6 +720,8 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
             next_type: next_type ?? '',
             next_date: next_date ?? '',
             next_time: next_time ?? '',
+            conversation: real_conversation ? '1' : '',
+            learned: learned ?? '',
           },
           null
         );
@@ -781,15 +805,48 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
         new_time: time.optional().describe('RESCHEDULED only'),
         next_type: z.enum(['CALL', 'EMAIL']).optional().describe('the follow-up task, if any'),
         next_date: date.optional().describe("the follow-up's day, YYYY-MM-DD"),
+        real_conversation: z
+          .boolean()
+          .optional()
+          .describe(
+            "only when the rep says so: they talked about their work and the rep learned something. Counts toward the rep's 100 real conversations (by person). COMPLETED only"
+          ),
+        learned: z
+          .string()
+          .max(280)
+          .optional()
+          .describe('with real_conversation: what the rep learned, one line, their words'),
       },
       annotations: WRITE,
     },
-    ({ meeting_id, start_at, outcome, canceled_by, notes, new_date, new_time, next_type, next_date }) =>
+    ({
+      meeting_id,
+      start_at,
+      outcome,
+      canceled_by,
+      notes,
+      new_date,
+      new_time,
+      next_type,
+      next_date,
+      real_conversation,
+      learned,
+    }) =>
       run(async () => {
         const result = await logMeeting(
           c,
           meeting_id,
-          { outcome, canceled_by, notes, new_date, new_time, next_type: next_type ?? '', next_date: next_date ?? '' },
+          {
+            outcome,
+            canceled_by,
+            notes,
+            new_date,
+            new_time,
+            next_type: next_type ?? '',
+            next_date: next_date ?? '',
+            conversation: real_conversation ? '1' : '',
+            learned: learned ?? '',
+          },
           start_at
         );
         const { timeZone } = await loadAppSettings(env);

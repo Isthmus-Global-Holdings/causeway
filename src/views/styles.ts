@@ -73,7 +73,11 @@ section { display: flex; flex-direction: column; gap: var(--space-2); margin-top
 .next-up { padding: var(--space-6); }
 .next-up .next-company { font-size: 1.35rem; font-weight: 700; line-height: 1.25; margin-top: var(--space-1); }
 .row > p.muted { max-width: 36rem; }
-dl.today { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); margin: 0; }
+dl.today { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); margin: 0; }
+dl.today .goal { border-color: var(--accent); }
+dl.today .goal .of { font-size: 1rem; font-weight: 400; color: var(--muted); }
+dl.today .learned { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dl.today .learned a { color: inherit; }
 dl.today .stat { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); }
 dl.today dt { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 dl.today dd { margin: 0; }
@@ -85,6 +89,8 @@ dl.today dd:not(.muted) { font-size: 1.75rem; font-weight: 700; line-height: 1.2
 .flash.warn { background: var(--warn-bg); color: var(--warn-fg); }
 .flash a { color: inherit; text-decoration: underline; font-weight: 600; }
 form.inline { display: inline; }
+#conversations form.row { margin-top: var(--space-2); align-items: center; }
+#conversations form.row input[type=text] { flex: 1; min-width: 12rem; }
 #unfinished { display: grid; gap: var(--space-2); }
 #unfinished:empty { display: none; }
 #unfinished .saving { margin: 0; }
@@ -252,7 +258,8 @@ dl.headers dd { margin: 0; overflow-wrap: anywhere; }
   table.stacked td.row-actions { width: auto; }
   table.stacked td.row-actions .actions { justify-content: flex-start; flex-wrap: wrap; }
   td.fit-cell { width: auto; }
-  dl.today { gap: var(--space-2); }
+  dl.today { gap: var(--space-2); grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  dl.today .goal { grid-column: 1 / -1; }
   dl.today .stat { padding: var(--space-2) var(--space-3); }
   dl.today dt { font-size: 0.7rem; }
   .call-dock { left: 0; right: 0; bottom: 0; width: auto; max-height: 75vh; border-width: 1px 0 0;

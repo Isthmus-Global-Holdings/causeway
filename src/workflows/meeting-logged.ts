@@ -22,6 +22,7 @@ import { isDate, localDateAt, parseHubSpotTime, parseTime, saidWhen, type TimeOf
 import type { CanceledBy, MeetingLog, MeetingLogStore } from '../lib/db';
 import type { HubSpot } from '../lib/hubspot';
 import { escapeHtml, textToHtml, toTaskBodyHtml } from '../lib/richtext';
+import { whoLabel } from '../lib/conversations';
 import { canceledInterviewEmail, missedInterviewEmail } from '../prompts/follow-up-emails';
 import { transcriptHtml, type CallTranscript } from '../lib/transcript';
 import type { Calendar } from './book-interview';
@@ -76,6 +77,8 @@ export interface MeetingLoggedResult {
   nextTaskCreated: boolean;
   leadStatus: string | null;
   inviteUpdated: boolean; // the contact's calendar invite was moved or canceled
+  contactId: string;
+  who: string | null; // "Name (Company)", when this run read them; null when an earlier run had
 }
 
 // The log form's fields, checked. `today` is "YYYY-MM-DD" in the rep's time
@@ -173,8 +176,10 @@ export async function runMeetingLogged(
 ): Promise<MeetingLoggedResult> {
   let row = (await store.unfinished(meetingId)) ?? (await store.get(meetingLogId(meetingId, seenStartAt)));
   const logId = row?.log_id ?? meetingLogId(meetingId, seenStartAt);
+  let who: string | null = null;
   if (!row) {
     const { meeting, contact, company } = await loadMeeting(hs, meetingId);
+    who = whoLabel(contactName(contact), companyName(company));
     const p = meeting.properties;
     if (parseHubSpotTime(p.hs_meeting_start_time) !== seenStartAt) {
       throw new WorkflowError(
@@ -252,6 +257,8 @@ export async function runMeetingLogged(
       nextTaskCreated: false,
       leadStatus: null,
       inviteUpdated: false,
+      contactId: row.contact_id,
+      who,
     };
   }
 
@@ -319,7 +326,16 @@ export async function runMeetingLogged(
       await store.markLeadStatusDone(logId, new Date(opts.now).toISOString());
     }
 
-    return { outcome: row.outcome, newStartAt, nextTaskId, nextTaskCreated, leadStatus, inviteUpdated };
+    return {
+      outcome: row.outcome,
+      newStartAt,
+      nextTaskId,
+      nextTaskCreated,
+      leadStatus,
+      inviteUpdated,
+      contactId: row.contact_id,
+      who,
+    };
   } finally {
     await store.releaseLock(logId);
   }

@@ -36,8 +36,9 @@ import {
   type Style,
 } from '../lib/coaching';
 import { STORY_SEC, timelineText, type Timeline } from '../lib/call-timeline';
+import { firstLine, MAX_LEARNED, type ConversationReport } from '../lib/conversations';
 import { formatLocal } from '../lib/dates';
-import type { CallInsight } from '../lib/db';
+import type { CallInsight, ConversationCandidate } from '../lib/db';
 import { CALL_OUTCOMES } from '../workflows/call-logged';
 import { coachingTabs, layout, type Html } from './layout';
 import { timelineStrip } from './timeline';
@@ -381,11 +382,69 @@ function momTestCard(m: MomTestReport, timeZone: string): Html {
   </section>`;
 }
 
+// The real conversations so far, toward 100: who, when, what was learned,
+// and the pace (how many calls it takes to reach one). Under them, the calls
+// coaching read as reaching the person, not counted yet: count one with a
+// line, or leave it. The rep decides; nothing here counts on its own.
+function conversationsCard(report: ConversationReport, candidates: ConversationCandidate[], timeZone: string): Html {
+  const link = (kind: string, refId: string) => (kind === 'interview' ? `/meetings/${refId}` : `/calls/${refId}`);
+  const pace =
+    report.people && report.callsPerConversation !== null
+      ? html`About 1 in ${report.callsPerConversation} call${report.callsPerConversation === 1 ? '' : 's'} you’ve logged got you one.
+          ${report.toGo ? html`At that rate, the other ${report.toGo} take about ${(report.callsToGo ?? 0).toLocaleString('en-US')} more calls. Keep dialling.` : 'You made it.'}`
+      : html`Count a call or interview when they talked about their work and you learned something: the box on the log form, or Count below.`;
+  return html`<section class="card" id="conversations">
+    <h2>Real conversations: ${report.people} / ${report.goal}</h2>
+    <p class="muted">People who told you about their work, counted once each. ${pace}</p>
+    ${
+      report.entries.length
+        ? html`<ul class="coach">
+            ${report.entries.map(
+              (e) => html`<li class="bright">
+                <a href="${link(e.kind, e.refId)}">${e.who}</a>
+                <span class="muted">· ${e.kind === 'interview' ? 'interview' : 'call'} · ${formatLocal(Date.parse(e.at), timeZone)}</span>
+                ${e.line ? html`<br />${e.own ? html`“${e.line}”` : html`<span class="muted">From your notes: ${e.line}</span>`}` : ''}
+                <form class="inline" method="post" action="/coaching/conversations">
+                  <input type="hidden" name="kind" value="${e.kind}" />
+                  <input type="hidden" name="ref" value="${e.refId}" />
+                  <input type="hidden" name="on" value="0" />
+                  <button type="submit" class="quiet">Uncount</button>
+                </form>
+              </li>`
+            )}
+          </ul>`
+        : ''
+    }
+    ${
+      candidates.length
+        ? html`<h3>Reached them, not counted yet</h3>
+            <p class="muted">Calls where coaching heard the person, newest first. Count the ones where you learned something.</p>
+            <ul class="coach">
+              ${candidates.map(
+                (k) => html`<li>
+                  <a href="${link(k.kind, k.ref_id)}">${k.who}</a>
+                  <span class="muted">· ${formatLocal(k.at_sec * 1000, timeZone)}${k.duration_sec ? html` · ${clock(k.duration_sec)}` : ''}</span>
+                  <form class="row" method="post" action="/coaching/conversations">
+                    <input type="hidden" name="kind" value="${k.kind}" />
+                    <input type="hidden" name="ref" value="${k.ref_id}" />
+                    <input type="text" name="learned" maxlength="${MAX_LEARNED}" value="${firstLine(k.notes, MAX_LEARNED) ?? ''}"
+                      aria-label="What you learned from ${k.who}" placeholder="What you learned" />
+                    <button type="submit">Count</button>
+                  </form>
+                </li>`
+              )}
+            </ul>`
+        : ''
+    }
+  </section>`;
+}
+
 export function coachingPage(
-  { settings, report, bookings, funnel, momTest, talk, strips, unread }: CoachingOverview,
+  { settings, conversations, candidates, report, bookings, funnel, momTest, talk, strips, unread }: CoachingOverview,
   actor: string
 ): Html {
   const tz = settings.timeZone;
+  const counted = conversationsCard(conversations, candidates, tz);
   const { gatekeeper, fastNoNextStep } = report;
   const best = bestHour(report.byHour);
   const reading = unread
@@ -401,6 +460,7 @@ export function coachingPage(
       html`<h1>Coaching</h1>
         ${coachingTabs('patterns')}
         ${reading}
+        ${counted}
         <p class="muted">No calls read yet. Each call you log is read here: who answered, how far it got, the objection, and whether a next step was agreed.</p>
         ${bookings.booked ? bookingsCard(bookings, tz) : ''}
         ${momTest.rows.length ? momTestCard(momTest, tz) : ''}
@@ -423,6 +483,7 @@ export function coachingPage(
         </p>
       </div>
       ${reading}
+      ${counted}
 
       <section class="half">
         <h2>Earning the conversation</h2>

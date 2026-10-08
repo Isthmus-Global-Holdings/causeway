@@ -6,7 +6,7 @@ import type { Context } from 'hono';
 import { googleCalendar, insightDeps, loadAppSettings, type AppSettings } from '../lib/app-settings';
 import { afterResponse } from '../lib/background';
 import { localDate, parseHubSpotTime } from '../lib/dates';
-import { d1DialStore, d1MeetingLogStore, insertAudit, type Dial } from '../lib/db';
+import { d1ConversationStore, d1DialStore, d1MeetingLogStore, insertAudit, type Dial } from '../lib/db';
 import { createHubSpot, HubSpotApiError, type HubSpot } from '../lib/hubspot';
 import { dialTranscript } from '../lib/transcript';
 import type { AppEnv, Env } from '../types';
@@ -15,7 +15,8 @@ import { dialState, isLive } from '../workflows/dial';
 import { parseMeetingLogForm, runMeetingLogged, type MeetingLoggedResult } from '../workflows/meeting-logged';
 import type { MeetingOutcome } from '../lib/hubspot';
 import { applyLoggedOutcome, loadMeetings, type MeetingRow } from '../workflows/meeting-queue';
-import { WorkflowError } from '../workflows/parties';
+import { contactName, WorkflowError } from '../workflows/parties';
+import { countFromLog } from './coaching';
 
 // The latest call made from this interview's page.
 export async function latestMeetingDial(env: Env, meetingId: string): Promise<Dial | null> {
@@ -95,6 +96,23 @@ export async function logMeeting(
       outcome: 'success',
       detail: result,
     });
+    // A real conversation, if the rep ticked it. `who` is read with the
+    // meeting; a log finished on an earlier run keeps the name it was
+    // counted under, else asks HubSpot.
+    if (input.outcome === 'COMPLETED' && form.conversation === '1') {
+      const hs = createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN);
+      const who =
+        result.who ??
+        (await d1ConversationStore(c.env.DB).get('interview', meetingId))?.who ??
+        contactName(await hs.getObject('contacts', result.contactId, ['firstname', 'lastname', 'email']));
+      await countFromLog(c, form, {
+        kind: 'interview',
+        refId: meetingId,
+        contactId: result.contactId,
+        who,
+        outcome: result.outcome,
+      });
+    }
     // Coaching reads the interview (its recording, or these notes) in the
     // background, as it does a logged call.
     afterResponse(c, 'reading the interview for coaching', () =>

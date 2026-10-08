@@ -1574,3 +1574,17 @@ test('late in the day the WhatsApp button warns about the hours', async () => {
   assert.match(String(await callPage(await pageState({ now: late }), 'rep@example.com')), /outside 8am to 8pm/);
   assert.doesNotMatch(String(await callPage(await pageState(), 'rep@example.com')), /outside 8am to 8pm/);
 });
+
+test('the log form offers a real conversation on a connect, ticked after a long one', async () => {
+  const box = (page: string) =>
+    /<input type="checkbox" id="conversation" name="conversation" value="1" ?(checked)? \/>/.exec(page);
+  const short = String(await callPage(await pageState(), 'rep@example.com'));
+  assert.ok(box(short), 'the box is there');
+  assert.equal(box(short)![1], undefined, 'not ticked without a long call');
+  assert.match(short, /data-outcomes="connected replied"/);
+  const long = { ...baseDial, prospect_status: 'completed', prospect_duration_sec: 543 };
+  const ticked = String(
+    await callPage(await pageState({ dial: long, dialState: { kind: 'ended' } as never }), 'rep@example.com')
+  );
+  assert.equal(box(ticked)?.[1], 'checked');
+});

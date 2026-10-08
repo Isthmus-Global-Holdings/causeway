@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
-import { coachingOverview, heardOverview, setCallExcluded } from '../actions/coaching';
+import { coachingOverview, heardOverview, setCallExcluded, setConversation } from '../actions/coaching';
+import { parseConversationForm } from '../lib/conversations';
 import type { AppEnv } from '../types';
 import { coachingPage } from '../views/coaching';
 import { heardPage } from '../views/heard';
@@ -28,4 +29,22 @@ coachingRoute.post('/calls/:id/exclude', async (c) => {
   await setCallExcluded(c, c.req.param('id'), form.excluded !== '0');
   const back = typeof form.back === 'string' && /^\/(?!\/)/.test(form.back) ? form.back : '/calls';
   return c.redirect(back, 303);
+});
+
+// POST /coaching/conversations — count a call or interview as a real
+// conversation (with the one line learned), or take it back (on=0). D1 only.
+coachingRoute.post('/conversations', async (c) => {
+  const form = await c.req.parseBody();
+  const field = (name: string) => (typeof form[name] === 'string' ? (form[name] as string) : undefined);
+  const kind = field('kind') === 'interview' ? 'interview' : 'call';
+  const ref = field('ref') ?? '';
+  await setConversation(
+    c,
+    kind,
+    ref,
+    field('on') !== '0',
+    parseConversationForm({ learned: field('learned') }).learned
+  );
+  const back = field('back');
+  return c.redirect(back && /^\/(?!\/)/.test(back) ? back : '/coaching#conversations', 303);
 });

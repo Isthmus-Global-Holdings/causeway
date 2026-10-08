@@ -703,7 +703,7 @@ sources, what's unsure, and what to adjust).
 ### Today's counts
 
 The Queue, Calls and Interviews pages open with three counts for today
-(midnight to midnight in your time zone):
+(midnight to midnight in your time zone), and a fourth that isn't today's:
 
 - **Emails sent**: sent from Gmail through the app, plus those you marked sent
   after sending from HubSpot. An email sent from HubSpot and never marked sent
@@ -714,6 +714,33 @@ The Queue, Calls and Interviews pages open with three counts for today
   Inbound calls aren't counted.
 - **Interviews**: today's HubSpot meetings logged as Completed, with how many
   are still scheduled. It shows "—" if HubSpot's meetings can't be read.
+- **Real conversations**: every one so far, out of 100, with the last thing
+  you learned under it (see below).
+
+### Real conversations
+
+The goal is 100 people who told you about their work: what they do, what it
+costs them, what's hard. A pick-up isn't one, and neither is a friendly no.
+You decide which calls count; the app only keeps the tally.
+
+- **On the log form.** A call that connected (or a WhatsApp message they
+  replied to) and an interview that happened have a box: *Real conversation:
+  they talked about their work, and you learned something*, and one line,
+  *What you learned*. The box comes ticked for an interview that happened and
+  for a call that connected and ran 5 minutes or more; untick it if it wasn't.
+  Left blank, the line is your notes' first sentence.
+- **On Coaching.** The **Real conversations** card, at the top, lists each
+  one: who, when, the line, and Uncount. Under it, **Reached them, not
+  counted yet**: the calls coaching heard reach the person, each with its
+  notes' first sentence ready to keep or change, and Count. That's how a call
+  logged before the box existed gets counted.
+- **The pace.** How many logged calls it has taken per conversation, and
+  about how many more calls the rest will take at that rate.
+
+People, not calls: a second conversation with someone already counted adds
+nothing to the number. D1 only (`conversations`); nothing goes to HubSpot.
+The connector's `log_call` and `log_meeting` take `real_conversation` and
+`learned`, and `today` returns the count.
 
 ### Claude connector
 
@@ -825,7 +852,7 @@ src/
   prompts/               draft-system (Claude's drafting rules), interview-questions (the prep page)
   lib/                   hubspot, twilio (fetch wrappers), ai (Workers AI), twiml, phone, transcript,
                          voice-token, call-script, fit, richtext, dates, prompt, work-plan, upwork, background, db,
-                         call-insight (one call), coaching (the patterns)
+                         call-insight (one call), coaching (the patterns), conversations (the 100)
   views/                 hono/html templates
 migrations/              plain SQL for D1
 test/                    node:test via tsx

@@ -34,6 +34,14 @@ import {
   type TagSources,
 } from '../lib/call-insight';
 import { callTimeline, parseTimeline, withReviewedTags, type Timeline } from '../lib/call-timeline';
+import {
+  canCount,
+  conversationReport,
+  parseConversationForm,
+  whoFromTitle,
+  type ConversationKind,
+  type ConversationReport,
+} from '../lib/conversations';
 import { heardReport, type HeardReport, type HeardSource } from '../lib/heard';
 import {
   bookingReport,
@@ -55,8 +63,10 @@ import {
   allCallInsights,
   callInsightsFor,
   callInsightsNear,
+  callsLogged,
   callsToReview,
   d1CallInsightStore,
+  d1ConversationStore,
   d1CallLogStore,
   d1CallReviewStore,
   d1DialStore,
@@ -64,6 +74,7 @@ import {
   heardSources,
   insertAudit,
   type CallInsight,
+  type ConversationCandidate,
   type Dial,
 } from '../lib/db';
 import type { HubSpotObject } from '../lib/hubspot';
@@ -78,8 +89,13 @@ import { WorkflowError } from '../workflows/parties';
 // they all have to fit in the 30 seconds after.
 const READ_ON_OPEN = 8;
 
+// How many calls that reached them, not counted yet, Coaching offers to count.
+const CANDIDATES = 10;
+
 export interface CoachingOverview {
   settings: AppSettings;
+  conversations: ConversationReport;
+  candidates: ConversationCandidate[]; // calls that reached them, not counted yet, newest first
   report: CoachingReport;
   bookings: BookingReport;
   funnel: Funnel;
@@ -97,12 +113,16 @@ export interface Strip {
 
 export async function coachingOverview(c: Context<AppEnv>): Promise<CoachingOverview> {
   const deps = insightDeps(c.env);
-  const [settings, rows, interviews, booked, unread] = await Promise.all([
+  const conversationStore = d1ConversationStore(c.env.DB);
+  const [settings, rows, interviews, booked, unread, counted, calls, candidates] = await Promise.all([
     loadAppSettings(c.env),
     allCallInsights(c.env.DB),
     allCallInsights(c.env.DB, 'meeting'),
     allBookedInterviews(c.env.DB),
     deps.insights.needing(READ_ON_OPEN + 1, RULES_VERSION, Math.floor(Date.now() / 1000) - DIAL_MAX_SEC),
+    conversationStore.list(),
+    callsLogged(c.env.DB),
+    conversationStore.candidates(CANDIDATES),
   ]);
   if (unread.length) {
     afterResponse(c, 'reading calls for coaching', () => readUnreadCalls(deps, READ_ON_OPEN, Date.now()));
@@ -121,6 +141,9 @@ export async function coachingOverview(c: Context<AppEnv>): Promise<CoachingOver
   );
   return {
     settings,
+    conversations: conversationReport(counted, calls),
+    // A call logged without a dial is labelled by its title.
+    candidates: candidates.map((k) => ({ ...k, who: whoFromTitle(k.who) })),
     report,
     bookings: bookingReport(booked, now),
     funnel: callFunnel(report, booked, now),
@@ -409,6 +432,81 @@ export async function setCallExcluded(c: Context<AppEnv>, callTaskId: string, ex
     workflow: 'call',
     taskId: callTaskId,
     action: excluded ? 'leave out of coaching' : 'put back in coaching',
+    outcome: 'success',
+  });
+}
+
+// A real conversation counted from a log form's box: only on something that
+// reached them, and never taken back from there (a form without the box, the
+// connector's say, leaves a count alone; Coaching's Uncount takes it back).
+// D1 only, so the rep waits on it with the log's own checks.
+export async function countFromLog(
+  c: Context<AppEnv>,
+  form: Record<string, string | undefined>,
+  call: { kind: ConversationKind; refId: string; contactId: string; who: string; outcome: string }
+): Promise<boolean> {
+  const { counts, learned } = parseConversationForm(form);
+  if (!counts || !canCount(call.kind, call.outcome)) return false;
+  const now = new Date().toISOString();
+  const store = d1ConversationStore(c.env.DB);
+  const earlier = await store.get(call.kind, call.refId);
+  await store.mark(
+    {
+      kind: call.kind,
+      ref_id: call.refId,
+      contact_id: call.contactId,
+      who: call.who,
+      learned: learned ?? earlier?.learned ?? null,
+      at: earlier?.at ?? now,
+    },
+    now
+  );
+  await insertAudit(c.env.DB, {
+    actor: c.get('actor'),
+    workflow: call.kind === 'call' ? 'call' : 'meeting',
+    taskId: call.refId,
+    action: 'count as a real conversation',
+    outcome: 'success',
+  });
+  return true;
+}
+
+// Coaching's Count and Uncount: a call or interview call coaching read as
+// reaching them, or one already counted (its line changed). D1 only.
+export async function setConversation(
+  c: Context<AppEnv>,
+  kind: ConversationKind,
+  refId: string,
+  on: boolean,
+  learned: string | null
+): Promise<void> {
+  const store = d1ConversationStore(c.env.DB);
+  if (!on) {
+    await store.unmark(kind, refId);
+  } else {
+    const [earlier, read] = await Promise.all([store.get(kind, refId), d1CallInsightStore(c.env.DB).get(refId)]);
+    const subject = kind === 'interview' ? 'meeting' : 'task';
+    const insight = read?.subject === subject ? read : null;
+    if (!earlier && !insight?.reached) {
+      throw new WorkflowError('Only a call that reached them can be counted as a conversation.', 404);
+    }
+    await store.mark(
+      {
+        kind,
+        ref_id: refId,
+        contact_id: earlier?.contact_id ?? insight!.contact_id,
+        who: earlier?.who ?? whoFromTitle(insight!.label),
+        learned,
+        at: earlier?.at ?? new Date(insight!.at_sec * 1000).toISOString(),
+      },
+      new Date().toISOString()
+    );
+  }
+  await insertAudit(c.env.DB, {
+    actor: c.get('actor'),
+    workflow: kind === 'call' ? 'call' : 'meeting',
+    taskId: refId,
+    action: on ? 'count as a real conversation' : 'uncount a real conversation',
     outcome: 'success',
   });
 }
