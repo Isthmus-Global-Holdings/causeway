@@ -77,18 +77,38 @@ test('a short or empty commit never matches', () => {
   assert.equal(verdict([{ user: bot, created_at: since.toISOString(), body: null }]), 'waiting');
 });
 
-test('the head changed when its commit was made, or at the last force-push if later', () => {
-  const commitDate = '2026-10-08T03:31:06Z';
-  assert.equal(headChangedAt(commitDate, []).toISOString(), '2026-10-08T03:31:06.000Z');
-  // Reset to an old commit: the force-push is what's fresh, so a usage-limit
-  // comment left for the previous head no longer counts.
-  const events = [
+const run = (created_at: string, prs = [9], event = 'pull_request') => ({
+  event,
+  created_at,
+  pull_requests: prs.map((number) => ({ number })),
+});
+const now = new Date('2026-10-08T06:00:00Z');
+
+test('the head changed at the first run it started on this PR', () => {
+  // A commit made at 01:00 and pushed at 03:31, after Codex's notice about the
+  // previous head at 03:10: the notice no longer counts.
+  const runs = [run('2026-10-08T03:45:00Z'), run('2026-10-08T03:31:10Z'), run('2026-10-08T01:00:00Z', [6])];
+  const since = headChangedAt({ runs, issueEvents: [], prNumber: 9, now });
+  assert.equal(since.toISOString(), '2026-10-08T03:31:10.000Z');
+  const notice = usageLimit('2026-10-08T03:10:00Z');
+  assert.equal(codexVerdict({ comments: [notice], reviews: [], headSha: HEAD, since }).state, 'waiting');
+  assert.equal(
+    codexVerdict({ comments: [usageLimit('2026-10-08T03:31:40Z')], reviews: [], headSha: HEAD, since }).state,
+    'out-of-usage'
+  );
+});
+
+test('or at the last force-push, when it moved the head back to a commit that already ran', () => {
+  const issueEvents = [
     { event: 'head_ref_force_pushed', created_at: '2026-10-08T02:00:00Z' },
     { event: 'labeled', created_at: '2026-10-08T05:00:00Z' },
     { event: 'head_ref_force_pushed', created_at: '2026-10-08T04:10:00Z' },
   ];
-  const since = headChangedAt('2026-10-07T12:00:00Z', events);
+  const since = headChangedAt({ runs: [run('2026-10-07T12:00:00Z')], issueEvents, prNumber: 9, now });
   assert.equal(since.toISOString(), '2026-10-08T04:10:00.000Z');
-  const stale = usageLimit('2026-10-08T04:00:00Z');
-  assert.equal(codexVerdict({ comments: [stale], reviews: [], headSha: HEAD, since }).state, 'waiting');
+});
+
+test('with no run recorded for this PR, only what Codex says from now on counts', () => {
+  const runs = [run('2026-10-08T01:00:00Z', []), run('2026-10-08T01:00:00Z', [9], 'push')];
+  assert.equal(headChangedAt({ runs, issueEvents: [], prNumber: 9, now }), now);
 });

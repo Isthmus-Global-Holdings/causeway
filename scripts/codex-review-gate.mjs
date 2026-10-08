@@ -47,15 +47,23 @@ export function codexVerdict({ comments, reviews, headSha, since }) {
   return { state: 'waiting', detail: `Waiting for Codex to review ${headSha.slice(0, 7)}.` };
 }
 
-// When the PR's head became this commit, as far as GitHub records it: the
-// commit's own date, or the last force-push if that's later. A plain push only
-// adds commits, newer than anything Codex said before; a force-push can move
-// the head back to an old commit, and only the force-push's time is fresh.
-// Both come from the API, so a re-run, or a restart when a label changes,
-// still sees the usage-limit comment Codex left on this push.
-export function headChangedAt(commitDate, issueEvents) {
-  const times = issueEvents.filter((e) => e.event === 'head_ref_force_pushed').map((e) => Date.parse(e.created_at));
-  return new Date(Math.max(Date.parse(commitDate), ...times));
+// When the PR's head became this commit, from what GitHub records rather than
+// the commit's own date (old or made up for a commit pushed later): the first
+// workflow run this commit started on this PR, which lands seconds after the
+// push, or the last force-push if that's later (a reset back to an old commit
+// it already ran on). Both come from the API, so a re-run, or a restart when a
+// label changes, still sees the usage-limit comment Codex left on this push.
+// With nothing recorded (a fork's runs name no PR), only what Codex says from
+// `now` on counts.
+export function headChangedAt({ runs, issueEvents, prNumber, now }) {
+  const firstRun = runs
+    .filter((r) => r.event === 'pull_request' && r.pull_requests?.some((p) => p.number === prNumber))
+    .map((r) => Date.parse(r.created_at));
+  if (firstRun.length === 0) return now;
+  const forcePushes = issueEvents
+    .filter((e) => e.event === 'head_ref_force_pushed')
+    .map((e) => Date.parse(e.created_at));
+  return new Date(Math.max(Math.min(...firstRun), ...forcePushes));
 }
 
 async function github(path) {
@@ -96,11 +104,11 @@ async function main() {
   const repo = process.env.GITHUB_REPOSITORY;
   if (pr.labels.some((l) => l.name === SKIP_LABEL)) pass(`The ${SKIP_LABEL} label is on: not waiting for Codex.`);
 
-  const [commit, events] = await Promise.all([
-    github(`/repos/${repo}/commits/${pr.head.sha}`),
+  const [{ workflow_runs: runs }, issueEvents] = await Promise.all([
+    github(`/repos/${repo}/actions/runs?head_sha=${pr.head.sha}&event=pull_request&per_page=100`),
     all(`/repos/${repo}/issues/${pr.number}/events`),
   ]);
-  const since = headChangedAt(commit.commit.committer.date, events);
+  const since = headChangedAt({ runs, issueEvents, prNumber: pr.number, now: new Date() });
   const deadline = Date.now() + WAIT_MINUTES * 60_000;
   for (;;) {
     const [comments, reviews] = await Promise.all([
