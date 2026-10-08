@@ -15,8 +15,9 @@ const SUMMARY_MARKER = '<!-- codex-pull-request-review-summary -->';
 const WAIT_MINUTES = 15;
 const POLL_SECONDS = 30;
 
-// What Codex has said about `headSha`. `since` is when that commit was made: a
-// usage-limit comment older than that was about an earlier push.
+// What Codex has said about `headSha`. `since` is when the PR's head became
+// this commit (headChangedAt): a usage-limit comment older than that was
+// about an earlier push.
 export function codexVerdict({ comments, reviews, headSha, since }) {
   const byBot = (item) => item.user?.login === CODEX_BOT;
   const isHead = (sha) => sha.length >= 7 && headSha.toLowerCase().startsWith(sha.toLowerCase());
@@ -44,6 +45,17 @@ export function codexVerdict({ comments, reviews, headSha, since }) {
   if (outOfUsage) return { state: 'out-of-usage', detail: 'Codex is out of usage, not waiting for it.' };
 
   return { state: 'waiting', detail: `Waiting for Codex to review ${headSha.slice(0, 7)}.` };
+}
+
+// When the PR's head became this commit, as far as GitHub records it: the
+// commit's own date, or the last force-push if that's later. A plain push only
+// adds commits, newer than anything Codex said before; a force-push can move
+// the head back to an old commit, and only the force-push's time is fresh.
+// Both come from the API, so a re-run, or a restart when a label changes,
+// still sees the usage-limit comment Codex left on this push.
+export function headChangedAt(commitDate, issueEvents) {
+  const times = issueEvents.filter((e) => e.event === 'head_ref_force_pushed').map((e) => Date.parse(e.created_at));
+  return new Date(Math.max(Date.parse(commitDate), ...times));
 }
 
 async function github(path) {
@@ -84,10 +96,11 @@ async function main() {
   const repo = process.env.GITHUB_REPOSITORY;
   if (pr.labels.some((l) => l.name === SKIP_LABEL)) pass(`The ${SKIP_LABEL} label is on: not waiting for Codex.`);
 
-  // From the commit, not this run: a re-run, or a restart when a label is
-  // added, still sees the usage-limit comment Codex left on this push.
-  const commit = await github(`/repos/${repo}/commits/${pr.head.sha}`);
-  const since = new Date(commit.commit.committer.date);
+  const [commit, events] = await Promise.all([
+    github(`/repos/${repo}/commits/${pr.head.sha}`),
+    all(`/repos/${repo}/issues/${pr.number}/events`),
+  ]);
+  const since = headChangedAt(commit.commit.committer.date, events);
   const deadline = Date.now() + WAIT_MINUTES * 60_000;
   for (;;) {
     const [comments, reviews] = await Promise.all([

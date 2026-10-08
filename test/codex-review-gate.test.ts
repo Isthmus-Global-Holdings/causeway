@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CODEX_BOT, codexVerdict } from '../scripts/codex-review-gate.mjs';
+import { CODEX_BOT, codexVerdict, headChangedAt } from '../scripts/codex-review-gate.mjs';
 
 const HEAD = '9c1a642a3d5e7f0b1c2d3e4f5a6b7c8d9e0f1a2b';
 const bot = { login: CODEX_BOT };
@@ -75,4 +75,20 @@ test('only Codex itself counts', () => {
 test('a short or empty commit never matches', () => {
   assert.equal(verdict([], [review('9c1a')]), 'waiting');
   assert.equal(verdict([{ user: bot, created_at: since.toISOString(), body: null }]), 'waiting');
+});
+
+test('the head changed when its commit was made, or at the last force-push if later', () => {
+  const commitDate = '2026-10-08T03:31:06Z';
+  assert.equal(headChangedAt(commitDate, []).toISOString(), '2026-10-08T03:31:06.000Z');
+  // Reset to an old commit: the force-push is what's fresh, so a usage-limit
+  // comment left for the previous head no longer counts.
+  const events = [
+    { event: 'head_ref_force_pushed', created_at: '2026-10-08T02:00:00Z' },
+    { event: 'labeled', created_at: '2026-10-08T05:00:00Z' },
+    { event: 'head_ref_force_pushed', created_at: '2026-10-08T04:10:00Z' },
+  ];
+  const since = headChangedAt('2026-10-07T12:00:00Z', events);
+  assert.equal(since.toISOString(), '2026-10-08T04:10:00.000Z');
+  const stale = usageLimit('2026-10-08T04:00:00Z');
+  assert.equal(codexVerdict({ comments: [stale], reviews: [], headSha: HEAD, since }).state, 'waiting');
 });

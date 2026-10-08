@@ -3,10 +3,11 @@ name: Codex review
 # A required check that waits for Codex to review the PR's latest commit, so
 # "merge when ready" waits for it too. Passes anyway when Codex is out of
 # usage, hasn't answered in 15 minutes, or the PR has the skip-codex label.
-# See scripts/codex-review-gate.mjs.
+# See scripts/codex-review-gate.mjs. Labels run it again both ways: taking
+# skip-codex off must replace the pass that putting it on left.
 on:
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
 
 # A new push makes the old wait pointless.
 concurrency:
