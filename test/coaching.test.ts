@@ -21,6 +21,7 @@ import {
   plainText,
   ruleInsight,
   RULES_VERSION,
+  talkedWithSomeone,
   theirPart,
   transcriptStats,
   withReviews,
@@ -159,6 +160,38 @@ test('the phone menu: how long it took, and the digit it gave for them', () => {
   assert.equal(phoneTree(onHold.turns, 'Hank')?.digit, null, 'the menu has no digit for him');
   assert.equal(phoneTree(wrongNameToVoicemail.turns, 'Owen'), null, 'a person answered');
   assert.equal(phoneTree(putThrough.turns, 'Lyle')?.sec, 14, '“our office hours are” is the menu');
+});
+
+test('talked with someone: a person past the menu, not a menu, transfer or voicemail greeting alone', () => {
+  for (const call of [phoneMenuCallBack, holdToVoicemail, onHold, putThrough]) {
+    assert.equal(talkedWithSomeone(call.turns), true, call.label);
+  }
+  const turn = (speaker: 'rep' | 'prospect', start: number, text: string) => ({ speaker, start, text });
+  const menu = turn(
+    'prospect',
+    0,
+    'If you know your party’s extension, please dial it now. For customer service, press 1.'
+  );
+  assert.equal(talkedWithSomeone([menu]), false, 'only the menu');
+  assert.equal(
+    talkedWithSomeone([
+      menu,
+      turn('prospect', 15, 'Your call is being transferred.'),
+      turn('prospect', 34, '1'),
+      turn('rep', 35, 'One zero.'),
+      turn('prospect', 36, 'Extension 109 is unavailable. Please leave a message after the tone.'),
+    ]),
+    false,
+    'put through to a voicemail'
+  );
+  assert.equal(
+    talkedWithSomeone([
+      turn('prospect', 0, 'Hi, you’ve reached Ruth. Please leave a message after the beep.'),
+      turn('rep', 6, 'Hi Ruth, this is Anel calling about quoting, I’ll try you again tomorrow.'),
+    ]),
+    false,
+    'a voicemail the rep left'
+  );
 });
 
 test('the front desk put them on hold and they never came on (Hugo)', () => {

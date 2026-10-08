@@ -3,7 +3,7 @@
 // contact's open task of that type, or create one, so the call page and the
 // draft page (with their logging and follow-ups) do the rest.
 
-import type { ContactTaskLockStore } from '../lib/db';
+import type { ContactTaskLockStore, LoggedCallRecord } from '../lib/db';
 import type { HubSpot, HubSpotObject } from '../lib/hubspot';
 import { HISTORY_LINKS, loadCallContext, type CallContext } from './call-context';
 import { MEETING_PROPS, meetingRow, type MeetingRow } from './meeting-queue';
@@ -128,7 +128,11 @@ export interface ContactRecord {
 
 // The contact with its first company, tasks, interviews and HubSpot history:
 // the contact with its links, then everything else side by side.
-export async function loadContactRecord(hs: HubSpot, contactId: string): Promise<ContactRecord> {
+export async function loadContactRecord(
+  hs: HubSpot,
+  contactId: string,
+  records?: (callIds: string[]) => Promise<LoggedCallRecord[]>
+): Promise<ContactRecord> {
   const { object: contact, associated } = await hs.getWithAssociations('contacts', contactId, RECORD_CONTACT_PROPS, [
     'companies',
     'tasks',
@@ -151,7 +155,7 @@ export async function loadContactRecord(hs: HubSpot, contactId: string): Promise
         return null;
       }
     ),
-    loadCallContext(hs, { contact, related }),
+    loadCallContext(hs, { contact, related }, records),
   ]);
   return { contact, company, tasks, meetings, context };
 }

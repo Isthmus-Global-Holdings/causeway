@@ -1,7 +1,7 @@
 import { Hono, type Context } from 'hono';
 import { openContactTask } from '../actions/records';
 import { loadAppSettings } from '../lib/app-settings';
-import { latestSendToContact } from '../lib/db';
+import { latestSendToContact, loggedCallRecords } from '../lib/db';
 import { createHubSpot } from '../lib/hubspot';
 import type { AppEnv } from '../types';
 import { companiesPage, companyPage, contactPage, contactsPage } from '../views/records';
@@ -27,7 +27,7 @@ recordsRoute.get('/contacts', async (c) => {
 recordsRoute.get('/contacts/:id', async (c) => {
   const contactId = c.req.param('id');
   const [record, settings, lastEmail] = await Promise.all([
-    loadContactRecord(createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN), contactId),
+    loadContactRecord(createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN), contactId, (ids) => loggedCallRecords(c.env.DB, ids)),
     loadAppSettings(c.env),
     latestSendToContact(c.env.DB, contactId),
   ]);
