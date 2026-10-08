@@ -677,6 +677,9 @@ export interface DialStore {
   get(id: string): Promise<Dial | null>;
   getByRepCallSid(sid: string): Promise<Dial | null>;
   latestForTask(taskId: string): Promise<Dial | null>;
+  // Every dial for the task started at or after `sinceSec`: a stale page can
+  // start a second while a long first one is still on.
+  startedSince(taskId: string, sinceSec: number): Promise<Dial[]>;
   // Records the dial only if no other dial for the task started within
   // `windowSec` and is still live. False means one is already ringing.
   begin(dial: NewDial, windowSec: number): Promise<boolean>;
@@ -733,6 +736,14 @@ export function d1DialStore(db: D1Database): DialStore {
         .prepare(`SELECT ${DIAL_COLUMNS} FROM dials WHERE task_id = ? ORDER BY started_sec DESC, rowid DESC LIMIT 1`)
         .bind(taskId)
         .first<Dial>();
+    },
+
+    async startedSince(taskId, sinceSec) {
+      const { results } = await db
+        .prepare(`SELECT ${DIAL_COLUMNS} FROM dials WHERE task_id = ? AND started_sec >= ?`)
+        .bind(taskId, sinceSec)
+        .all<Dial>();
+      return results;
     },
 
     async begin(dial, windowSec) {

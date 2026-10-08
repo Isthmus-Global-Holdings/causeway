@@ -151,6 +151,17 @@ test('Drop refuses a task with a live call, and backs off from a dial recorded w
   assert.equal((await hs.getObject('tasks', '1')).properties.hs_task_status, 'NOT_STARTED');
 });
 
+test('Drop sees a long call still on, after a later dial for the same task ended', async () => {
+  const stores = { callLogs: d1CallLogStore(db), dials };
+  await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts()); // confirmed: live up to two hours
+  const later = 'f'.repeat(32);
+  await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts({ now: NOW + 200_000, newId: () => later }));
+  await dials.setRepStatus(later, 'no-answer');
+  assert.equal((await dials.latestForTask('1'))?.id, later);
+  await assert.rejects(dropCall(hs, stores, '1', NOW_SEC + 300), /in progress/);
+  assert.equal((await hs.getObject('tasks', '1')).properties.hs_task_status, 'NOT_STARTED');
+});
+
 test("the number's extension is keyed in, and a call to an extension isn't recorded", async () => {
   hs.put('contacts', '10', { firstname: 'Ana', lastname: 'Díaz', phone: '(385) 555-0100 x204' });
   const dial = await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts({ record: true }));

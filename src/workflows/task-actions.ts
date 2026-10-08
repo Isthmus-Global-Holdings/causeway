@@ -9,7 +9,7 @@ import { isDate, localDate, localDateAt, parseHubSpotTime, sameTimeOn, type Time
 import type { CallLogStore, ConfirmationStore, DialStore, SentEmailStore } from '../lib/db';
 import type { HubSpot, HubSpotObject } from '../lib/hubspot';
 import { hasReminder, reminderFor } from '../lib/set-time';
-import { dialState, isLive } from './dial';
+import { DIAL_MAX_SEC, dialState, isLive } from './dial';
 import { WorkflowError, type TaskType } from './parties';
 
 const DEFAULT_CALL_TIME: TimeOfDay = { hour: 9, minute: 0 };
@@ -103,27 +103,27 @@ const CALL_LIVE = 'A call for this task is still in progress. Drop it once the c
 
 // Why a call task can't be dropped now, if it can't: a call logged here
 // finishes through that flow, which completes it, and a live call is the
-// rep's to finish.
-async function callStarted(
-  stores: { callLogs: Pick<CallLogStore, 'get'>; dials: Pick<DialStore, 'latestForTask'> },
-  taskId: string,
-  nowSec: number
-): Promise<{ reason: string; completed: boolean } | null> {
-  const [log, dial] = await Promise.all([stores.callLogs.get(taskId), stores.dials.latestForTask(taskId)]);
-  if (log) return { reason: CALL_LOGGED, completed: Boolean(log.completed_at) };
-  if (dial && isLive(dialState(dial, nowSec))) return { reason: CALL_LIVE, completed: false };
+// rep's to finish. Every dial young enough to be live is checked, not only
+// the latest.
+async function callStarted(stores: DropCallStores, taskId: string, nowSec: number): Promise<string | null> {
+  const [log, dials] = await Promise.all([
+    stores.callLogs.get(taskId),
+    stores.dials.startedSince(taskId, nowSec - DIAL_MAX_SEC),
+  ]);
+  if (log) return CALL_LOGGED;
+  if (dials.some((d) => isLive(dialState(d, nowSec)))) return CALL_LIVE;
   return null;
 }
 
+interface DropCallStores {
+  callLogs: Pick<CallLogStore, 'get'>;
+  dials: Pick<DialStore, 'startedSince'>;
+}
+
 // The rep won't make this call.
-export async function dropCall(
-  hs: HubSpot,
-  stores: { callLogs: Pick<CallLogStore, 'get'>; dials: Pick<DialStore, 'latestForTask'> },
-  taskId: string,
-  nowSec: number
-): Promise<void> {
+export async function dropCall(hs: HubSpot, stores: DropCallStores, taskId: string, nowSec: number): Promise<void> {
   const before = await callStarted(stores, taskId, nowSec);
-  if (before) throw new WorkflowError(before.reason, 409);
+  if (before) throw new WorkflowError(before, 409);
   const task = await loadOpen(hs, taskId, 'CALL');
   const status = task.properties.hs_task_status;
   if (status === 'DEFERRED') return;
@@ -133,14 +133,17 @@ export async function dropCall(
   await hs.updateObject('tasks', taskId, { hs_task_status: 'DEFERRED' });
 
   // As dropEmail: logging and dialling write their D1 row, then read the task;
-  // this writes the task, then reads D1. If either started meanwhile, it wins:
-  // the task gets back COMPLETED if a log already completed it, else open.
+  // this writes the task, then reads D1. If either started meanwhile, it wins.
+  // A log puts back COMPLETED, the status its own run writes: so this can't
+  // reopen a task the log completed at the same moment, and a log that hasn't
+  // read the task yet still goes ahead. A dial alone writes no status: the
+  // task is open again for its log.
   const after = await callStarted(stores, taskId, nowSec);
   if (after) {
     const current = await hs.getObject('tasks', taskId, ['hs_task_status']);
     if (current.properties.hs_task_status === 'DEFERRED') {
-      await hs.updateObject('tasks', taskId, { hs_task_status: after.completed ? 'COMPLETED' : 'NOT_STARTED' });
+      await hs.updateObject('tasks', taskId, { hs_task_status: after === CALL_LOGGED ? 'COMPLETED' : 'NOT_STARTED' });
     }
-    throw new WorkflowError(after.reason, 409);
+    throw new WorkflowError(after, 409);
   }
 }

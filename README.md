@@ -161,10 +161,11 @@ timeline like one made in HubSpot.
 - **Drop** (on each call in the list, and under the call page's log form,
   after a confirm) is for a call you won't make. The `CALL` task is set to
   `DEFERRED`, which takes it off the queue: no call is logged and no
-  follow-up is created. It's refused while a call for the task is live, and
+  follow-up is created. It's refused while any call for the task is live, and
   once the call was logged from the app (that task completes with its log).
   When a log or a dial and a Drop overlap, the call wins, as with Send and
-  Drop: Drop puts the task back (Completed if the log finished, else open).
+  Drop: Drop puts the task back (Completed for a log, the status the log
+  writes itself, so the two never fight over it; open for a dial).
   A dropped task is never dialled or logged: a dial reads the task again
   once it's recorded, before anything rings, and a log once its row is in
   D1, before its first HubSpot write. The call page of a dropped task says so,
