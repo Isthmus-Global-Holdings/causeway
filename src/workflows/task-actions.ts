@@ -126,7 +126,7 @@ interface DropCallStores {
 // starts between this check and the write, and once it's written they see
 // the task dropped and refuse.
 export async function dropCall(hs: HubSpot, stores: DropCallStores, taskId: string, nowSec: number): Promise<void> {
-  await withTaskLock(stores.locks, taskId, nowSec, async () => {
+  await withTaskLock(stores.locks, taskId, nowSec, async (beforeWrite) => {
     const started = await callStarted(stores, taskId, nowSec);
     if (started) throw new WorkflowError(started, 409);
     const task = await loadOpen(hs, taskId, 'CALL');
@@ -135,6 +135,7 @@ export async function dropCall(hs: HubSpot, stores: DropCallStores, taskId: stri
     if (status !== 'NOT_STARTED') {
       throw new WorkflowError('This call task is no longer open, so it wasn’t dropped.', 409);
     }
+    beforeWrite();
     await hs.updateObject('tasks', taskId, { hs_task_status: 'DEFERRED' });
   });
 }

@@ -185,6 +185,18 @@ test('dropCall refuses while a log or a dial holds the task, and frees it after'
   assert.equal(await locks.lockTask('c1', NOW_SEC, 60), NOW_SEC + 60, 'Drop released its lease');
 });
 
+test('dropCall stops before its write once slow reads used up the lock', async (t) => {
+  let clock = Date.now();
+  t.mock.method(Date, 'now', () => clock);
+  const get = hs.getObject.bind(hs);
+  hs.getObject = async (type, id, props) => {
+    clock += 90_000; // HubSpot slow to answer
+    return get(type, id, props);
+  };
+  await assert.rejects(dropCall(hs, callLogs(), 'c1', NOW_SEC), /too slow/);
+  assert.equal((await get('tasks', 'c1')).properties.hs_task_status, 'NOT_STARTED');
+});
+
 test('loadEmailQueue leaves out tasks the rep just closed, even if search still returns them', async () => {
   hs.put('tasks', 'e2', { hs_task_type: 'EMAIL', hs_task_status: 'NOT_STARTED', hs_task_subject: 'Email: B' });
   const queue = await loadEmailQueue(hs, ['e1']);

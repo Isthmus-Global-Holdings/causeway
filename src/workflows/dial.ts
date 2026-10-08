@@ -80,12 +80,13 @@ export interface DialOptions {
 export async function startDial(deps: DialDeps, taskId: string, field: PhoneField, opts: DialOptions): Promise<Dial> {
   // Under the task's lock from the status check to the dial's row: a Drop
   // waits for it and sees the dial live, or wrote DEFERRED first and is seen here.
-  return withTaskLock(deps.dials, taskId, Math.floor(opts.now / 1000), async () => {
+  return withTaskLock(deps.dials, taskId, Math.floor(opts.now / 1000), async (beforeWrite) => {
     const { task, contact, company } = await loadTask(deps.hs, taskId, 'CALL');
     if (task.properties.hs_task_status === 'COMPLETED') {
       throw new WorkflowError('This call task is already completed.', 409);
     }
     if (task.properties.hs_task_status === 'DEFERRED') throw new WorkflowError(DROPPED, 409);
+    beforeWrite();
     return beginDial(deps, { subject: 'task', id: taskId }, hubspotTarget({ contact, company }, field), opts);
   });
 }

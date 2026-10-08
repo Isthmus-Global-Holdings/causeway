@@ -800,11 +800,13 @@ export function d1DialStore(db: D1Database): DialStore {
     },
 
     async claimBrowserCall(id, callSid, at, notBeforeSec) {
-      // One statement, so it and endBrowserCall can't both win.
+      // One statement, so it and endBrowserCall can't both win. Strictly after,
+      // as dialState counts a dial live (age < DIAL_GUARD_SEC): one Drop sees
+      // as over is never claimed.
       return db
         .prepare(
           `UPDATE dials SET rep_call_sid = ?, connected_at = ?
-           WHERE id = ? AND mode = 'browser' AND connected_at IS NULL AND rep_status IS NULL AND started_sec >= ?
+           WHERE id = ? AND mode = 'browser' AND connected_at IS NULL AND rep_status IS NULL AND started_sec > ?
            RETURNING ${DIAL_COLUMNS}`
         )
         .bind(callSid, at, id, notBeforeSec)

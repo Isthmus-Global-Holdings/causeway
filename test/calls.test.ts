@@ -21,7 +21,7 @@ import {
 import { callNowHref, callPage, type CallPageState } from '../src/views/calls.ts';
 import { BOOKING_FIELDS, bookingFieldsOf, parseBookingForm } from '../src/workflows/book-interview.ts';
 import { loadCallContext, historyTimeline, type CallContext } from '../src/workflows/call-context.ts';
-import { dialState, startDial } from '../src/workflows/dial.ts';
+import { DIAL_GUARD_SEC, dialState, isLive, startDial } from '../src/workflows/dial.ts';
 import { dropCall } from '../src/workflows/task-actions.ts';
 import { loadCallQueue } from '../src/workflows/call-queue.ts';
 import { recordingState, runTranscription, type Transcriber } from '../src/workflows/transcribe.ts';
@@ -1069,6 +1069,15 @@ test('the browser call dials the prospect once, and only for a fresh browser dia
 
   const unknown = await (await post('/twilio/voice/client', { d: 'f'.repeat(32), CallSid: 'CA11' })).text();
   assert.match(unknown, /expired.*<Hangup\/>/);
+});
+
+test('a browser dial old enough for Drop to see as over is never claimed', async () => {
+  await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts(BROWSER));
+  const at = NOW_SEC + DIAL_GUARD_SEC;
+  assert.equal(isLive(dialState((await dials.get(DIAL_ID))!, at)), false);
+  const iso = new Date(at * 1000).toISOString();
+  assert.equal(await dials.claimBrowserCall(DIAL_ID, 'CA9', iso, at - DIAL_GUARD_SEC), null);
+  assert.ok(await dials.claimBrowserCall(DIAL_ID, 'CA9', iso, at - 1 - DIAL_GUARD_SEC), 'a second younger, it is');
 });
 
 test('the browser webhook refuses phone dials, stale dials and cancelled ones', async () => {

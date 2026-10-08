@@ -307,7 +307,7 @@ export async function prepareCallLog(
   if (!row) {
     // Under the task's lock from the status check to the row: a Drop waits for
     // it, sees the row and refuses, or wrote DEFERRED first and is seen here.
-    await withTaskLock(store, callTaskId, Math.floor(opts.now / 1000), async () => {
+    await withTaskLock(store, callTaskId, Math.floor(opts.now / 1000), async (beforeWrite) => {
       const { task, contact, company, related } = await loadTask(hs, callTaskId, 'CALL', ['tasks']);
       knownTaskIds = related?.tasks;
       // Completed in HubSpot but never logged here: probably logged by hand
@@ -333,6 +333,7 @@ export async function prepareCallLog(
         throw new WorkflowError('The follow-up call’s time has already passed.');
       }
       const bookedTimes = booking ? bookingTimes(booking, opts.timeZone, opts.now) : null;
+      beforeWrite();
       await store.create({
         call_task_id: callTaskId,
         contact_id: contact.id,

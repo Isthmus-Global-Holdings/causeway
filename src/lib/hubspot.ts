@@ -211,6 +211,10 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out;
 }
 
+// No request waits longer: a page never hangs on HubSpot, and a write under a
+// task's lock (withTaskLock) ends before the lock does.
+export const HUBSPOT_TIMEOUT_MS = 25_000;
+
 export function createHubSpot(token: string, fetchImpl: typeof fetch = fetch): HubSpot {
   async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
     const start = Date.now();
@@ -218,6 +222,7 @@ export function createHubSpot(token: string, fetchImpl: typeof fetch = fetch): H
       method,
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal: AbortSignal.timeout(HUBSPOT_TIMEOUT_MS),
     });
     const text = await res.text();
     // Every page waits on these, so each one's time goes to Workers Logs.
