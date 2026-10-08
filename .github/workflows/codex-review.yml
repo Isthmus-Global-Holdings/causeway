@@ -1,8 +1,11 @@
 name: Codex review
 
-# A required check that waits for Codex to review the PR's latest commit, so
-# "merge when ready" waits for it too. Passes anyway when Codex is out of
-# usage, hasn't answered in 15 minutes, or the PR has the skip-codex label.
+# A required check that waits for Codex to review the PR's latest commit,
+# then for every finding it left to be resolved, so "merge when ready" waits
+# for both. Codex out of usage, or no answer in 15 minutes, skips the wait for
+# the review; the skip-codex label passes it at once. Resolving a thread
+# starts no workflow, so the job stays running while findings are open (up to
+# its six hours, free on a public repo) and passes once they're resolved.
 # See scripts/codex-review-gate.mjs. Labels run it again both ways: taking
 # skip-codex off must replace the pass that putting it on left.
 on:
@@ -26,7 +29,7 @@ jobs:
     # it ready runs this again.
     if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

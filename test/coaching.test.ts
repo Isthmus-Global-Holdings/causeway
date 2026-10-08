@@ -194,6 +194,96 @@ test('talked with someone: a person past the menu, not a menu, transfer or voice
   );
 });
 
+test('talked with someone, on one channel (all “call”): never, who said what can’t be told', () => {
+  const call = (start: number, text: string) => ({ speaker: 'call' as const, start, text });
+  assert.equal(
+    talkedWithSomeone([
+      call(0, 'Thank you for calling Acme. Did you know you can pay bills online? For sales, press 1.'),
+    ]),
+    false,
+    'a menu with a question in it'
+  );
+  assert.equal(
+    talkedWithSomeone([call(0, 'Good morning, this is Dana. Hi Dana, is Ana in? She’s in a meeting.')]),
+    false,
+    'people talking, too: the transcript is kept, with no summary'
+  );
+});
+
+test('talked with someone: a person in the same turn as the menu, on their channel', () => {
+  const turn = (speaker: 'rep' | 'prospect', start: number, text: string) => ({ speaker, start, text });
+  assert.equal(
+    talkedWithSomeone([
+      turn('prospect', 0, 'For sales, press 2. For Grant, press 4. Hello, this is Grant.'),
+      turn('rep', 22, 'Hey Grant, this is Anel.'),
+    ]),
+    true
+  );
+  assert.equal(
+    talkedWithSomeone([
+      turn('prospect', 0, 'Thank you for calling Acme. Did you know you can pay bills online? For sales, press 1.'),
+      turn('rep', 9, 'One zero.'),
+    ]),
+    false,
+    'a menu that asks something, and keyed-in digits'
+  );
+  assert.equal(
+    talkedWithSomeone([
+      turn('prospect', 0, 'Hi, it’s Jesse at Ferris Freight.'),
+      turn('rep', 2, 'Hey Jesse, what’s up?'),
+    ]),
+    true,
+    'a caller first, then the rep'
+  );
+  assert.equal(
+    talkedWithSomeone([turn('rep', 0, 'Hi, John.'), turn('prospect', 1, 'Hey, yeah, we quote everything by hand.')]),
+    true,
+    'a two-word opener and an answer'
+  );
+  assert.equal(
+    talkedWithSomeone([
+      turn('rep', 0, 'Hi Ruth, this is Anel.'),
+      turn('prospect', 2, 'Sorry, I can’t take your call right now. Call me tomorrow.'),
+    ]),
+    true,
+    'a live reply that sounds like a greeting, after the rep spoke'
+  );
+  assert.equal(
+    talkedWithSomeone([
+      turn('rep', 0, 'Hi Ruth?'),
+      turn('prospect', 1, 'You’ve reached Ruth; please leave a message after the beep.'),
+    ]),
+    false,
+    'a real greeting the rep spoke over'
+  );
+});
+
+test('talked with someone: before the rep speaks, a voicemail greeting in their turn ends what counts', () => {
+  const turn = (speaker: 'rep' | 'prospect', start: number, text: string) => ({ speaker, start, text });
+  const message = turn('rep', 9, 'Hi Ruth, this is Anel, I’ll try you again tomorrow.');
+  for (const greeting of [
+    'Hey, it’s Ruth. Leave me a message.',
+    'Hello, this is Ruth from Acme Logistics Incorporated. I cannot take your call right now.',
+    'Did you know you can schedule online? You’ve reached Ruth. Please leave a message after the beep.',
+  ]) {
+    assert.equal(talkedWithSomeone([turn('prospect', 0, greeting), message]), false, greeting);
+  }
+  assert.equal(
+    talkedWithSomeone([
+      turn('prospect', 0, 'Acme, this is Dana.'),
+      turn('rep', 2, 'Hi Dana, is Ruth in today?'),
+      turn(
+        'prospect',
+        5,
+        'She’s out, let me send you to her voicemail. Hi, you’ve reached Ruth. Please leave a message after the beep.'
+      ),
+      message,
+    ]),
+    true,
+    'the front desk, then the greeting'
+  );
+});
+
 test('the front desk put them on hold and they never came on (Hugo)', () => {
   const read = heard(onHold);
   assert.equal(read.gate, 'gatekeeper');

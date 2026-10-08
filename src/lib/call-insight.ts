@@ -629,20 +629,64 @@ export function phoneTree(turns: Turn[], firstName: string | null): PhoneTree | 
   };
 }
 
-// The rep talked with someone: past any phone menu, the rep said something
-// and a person said a line that isn't the menu, a transfer notice or a
-// voicemail greeting. A call that only reached those didn't, and a summary
-// of it would be made up.
+// A phone system's own lines, beyond the menu's words above: keys to dial,
+// the directory, an extension that doesn't answer.
+const KEYPAD =
+  /\b((please )?dial (\d|one|two|three|four|five|six|seven|eight|nine|zero|star|pound)\b|dial by name|directory|for the operator|(extension|mailbox|party|\d+) is (unavailable|not available|busy))/i;
+const SWITCHBOARD = [MENU, TRANSFER, KEYPAD];
+// A voicemail greeting's opening, which reads like a person on its own.
+const GREETING =
+  /\b(you(['’]ve| have) reached|(can['’]?t|cannot|unable to|not able to) (take|answer|get to|come to) (your|the|my) (call|phone)|sorry (i|we) missed your call|leave (me )?(a|your) (message|name))/i;
+// What makes the words before a greeting, in its turn, a front desk's
+// rather than the greeting's own introduction ("Hello, this is Ruth from
+// Acme Logistics.", "Did you know you can schedule online?"): being put on
+// hold, through, or to voicemail.
+const EXCHANGE = /\b(voice ?mail|put you through|transfer)\b/i;
+
+const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+/);
+const switchboard = (sentence: string) => SWITCHBOARD.some((re) => re.test(sentence));
+const greets = (sentence: string) => VOICEMAIL.test(sentence) || GREETING.test(sentence);
+
+// The words a person said in a turn on their side. One turn can run a
+// menu's or a transfer notice's line into a person's, when they came on
+// within seconds of it, so those are dropped sentence by sentence. A
+// voicemail greeting ends what counts, and what came before it counts only
+// if it was an exchange (EXCHANGE, HOLD), not the greeting introducing
+// itself. Once the rep has said something, only a greeting's unmistakable
+// words (VOICEMAIL: "after the beep") mark one: they're answering the rep,
+// and "Sorry, I can't take your call right now" is a live reply.
+function personWords(text: string, answering: boolean): number {
+  const sentences = sentencesOf(text);
+  const at = sentences.findIndex(answering ? (s: string) => VOICEMAIL.test(s) : greets);
+  const before = (at < 0 ? sentences : sentences.slice(0, at)).filter((s) => !switchboard(s));
+  const said = before.reduce((n, sentence) => n + words(sentence), 0);
+  if (at < 0) return said;
+  return before.some((sentence) => EXCHANGE.test(sentence) || HOLD.test(sentence)) ? said : 0;
+}
+
+// Digits the rep said into a phone menu ("one zero", "four"), not to anyone.
+const KEYED = /^[\s.,!?]*((\d+|one|two|three|four|five|six|seven|eight|nine|zero|oh|star|pound)[\s.,!?]*)+$/i;
+
+// The rep talked with someone: one side spoke and the other answered, the
+// rep with two words or more that aren't digits keyed into a menu ("Hi,
+// John." counts, "One zero." doesn't) and their side with words
+// that aren't a phone menu, a transfer notice or a voicemail greeting. A
+// call that only reached those didn't, and a summary of it would be made up.
+// A recording Nova gave back as one channel (all 'call') can't tell the rep
+// from a machine's lines, and they read like a person's often enough that
+// it never counts: its transcript is kept, with no summary.
 export function talkedWithSomeone(turns: Turn[]): boolean {
-  const plain = plainTurns(turns);
-  const after = plain.slice(phoneTree(plain, null)?.end ?? 0);
-  const repWords = after.filter((t) => t.speaker === 'rep').reduce((n, t) => n + words(t.text), 0);
-  return (
-    repWords >= 2 &&
-    after.some(
-      (t) => far(t) && words(t.text) >= 2 && !MENU.test(t.text) && !TRANSFER.test(t.text) && !VOICEMAIL.test(t.text)
-    )
-  );
+  if (turns.every((t) => t.speaker === 'call')) return false;
+  let repSpoke = false;
+  const sides = turns.map((t) => {
+    if (t.speaker === 'rep') {
+      repSpoke ||= words(t.text) >= 2 && !KEYED.test(t.text);
+      return words(t.text) >= 2 && !KEYED.test(t.text) ? 'rep' : null;
+    }
+    return personWords(t.text, repSpoke) >= 2 ? 'them' : null;
+  });
+  const first = sides.findIndex(Boolean);
+  return first >= 0 && sides.some((side, i) => i > first && side && side !== sides[first]);
 }
 
 // Who answered and what happened, from the transcript alone. Null when no

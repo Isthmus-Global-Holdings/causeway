@@ -314,9 +314,11 @@ timeline like one made in HubSpot.
     connected: Twilio then records each side on its own channel. When the recording is in,
     Deepgram Nova-3 on Workers AI transcribes both channels, so every line is
     labelled You or Prospect, and a small Llama model writes a 3–4 line
-    summary. A call that only reached a phone menu, a transfer or a
-    voicemail greeting gets no summary (one would be made up), just its
-    transcript; a voicemail left for you always gets one.
+    summary when you talked with someone: one of you said something and
+    the other answered. A call that only reached a phone menu, a transfer or
+    a voicemail greeting gets no summary (one would be made up), just its
+    transcript, and so does a recording Nova returns as one channel, where
+    who said what can't be told. A voicemail left for you always gets one.
   - The call page shows "Transcribing…" and swaps in the summary, an audio
     player and the transcript when they're ready, without reloading the page
     (notes you're typing stay put). A failure shows why, with **Transcribe
@@ -1223,12 +1225,22 @@ npm run db:log     # last 20 audit rows (who changed what in HubSpot)
 ```
 
 A PR merges into `main` only when two checks pass: `check` (the same
-`npm run check`, plus `npm audit` on what ships) and `codex-review`, which
-waits until Codex has reviewed the PR's latest commit, so "merge when ready"
-waits for Codex too. It never holds a merge for long: if Codex is out of
-usage, or hasn't answered in 15 minutes, it passes with a warning, and the
-`skip-codex` label passes it at once. Codex's comments don't block: once it
-has reviewed, what to do with them is up to you.
+`npm run check`, plus `npm audit` on what ships) and `codex-review`, so
+"merge when ready" waits for Codex too. `codex-review` waits for two things:
+
+1. **Codex reviews the PR's latest commit.** If Codex is out of usage, or
+   hasn't answered in 15 minutes, it stops waiting for the review, with a
+   warning.
+2. **Every finding Codex left is resolved.** Each of its review threads
+   (the P1/P2 comments on a line) must be marked resolved: fix it and push,
+   or answer it in the thread if you disagree, then **Resolve conversation**.
+   The check stays running while any are open and passes within a minute of
+   the last one being resolved. Resolving a thread starts no workflow, so
+   that's how it notices. After five and a half hours it fails, listing
+   them; resolve them and re-run it (or push).
+
+Other reviewers' comments (Qodo's, CodeRabbit's) never hold a merge. The
+`skip-codex` label passes the check at once, findings or not.
 
 - **Lint** is only the type-aware promise rules (`no-floating-promises` and
   friends). On Workers, an un-awaited promise is work that silently never

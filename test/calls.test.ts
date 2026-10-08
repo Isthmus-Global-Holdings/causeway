@@ -655,7 +655,7 @@ test('refuses a task already completed in HubSpot, and a concurrent run', async 
 const NOVA = {
   results: {
     channels: [
-      { alternatives: [{ words: [{ word: 'Hi there.', start: 0.5, end: 0.8 }] }] },
+      { alternatives: [{ words: [{ word: 'Hi there, Ana.', start: 0.5, end: 0.8 }] }] },
       { alternatives: [{ words: [{ word: 'Send a quote.', start: 1.5, end: 2.5 }] }] },
     ],
   },
@@ -777,7 +777,7 @@ test('transcribes both channels, summarises, and stores who said what', async ()
   assert.deepEqual(recordings, [{ sid: 'RE1', channels: 2 }]);
   const dial = (await dials.get(DIAL_ID))!;
   assert.deepEqual(JSON.parse(dial.transcript_json!), [
-    { speaker: 'rep', start: 0.5, end: 0.8, text: 'Hi there.' },
+    { speaker: 'rep', start: 0.5, end: 0.8, text: 'Hi there, Ana.' },
     { speaker: 'prospect', start: 1.5, end: 2.5, text: 'Send a quote.' },
   ]);
   assert.equal(dial.summary, '- Wants a quote\n- Call back Monday');
@@ -815,6 +815,58 @@ test('a call that only reached the phone menu is transcribed with no summary: on
   const dial = (await dials.get(DIAL_ID))!;
   assert.equal(JSON.parse(dial.transcript_json!).length, 1, 'the transcript is kept');
   assert.equal(dial.summary, null);
+  assert.equal(ai.summarized, 0);
+});
+
+test('a recording Nova gave back as one channel gets no summary: who said what can’t be told', async () => {
+  class OneChannel extends FakeAi {
+    override async transcribe() {
+      return {
+        results: {
+          channels: [{ alternatives: [{ words: [{ word: 'Hi there. Send a quote.', start: 0.5, end: 2 }] }] }],
+        },
+      };
+    }
+  }
+  const { deps } = await recordedCall(new OneChannel());
+  assert.equal(await runTranscription(deps, DIAL_ID, { now: NOW, baseUrl: BASE }), 'done');
+  const dial = (await dials.get(DIAL_ID))!;
+  assert.equal(JSON.parse(dial.transcript_json!)[0].speaker, 'call', 'the transcript is kept');
+  assert.equal(dial.summary, null);
+});
+
+test('a one-channel recording of only a phone menu and a voicemail greeting gets no summary either', async () => {
+  class Automated extends FakeAi {
+    summarized = 0;
+    override async transcribe() {
+      const word = (w: string, start: number) => ({ word: w, start, end: start + 3 });
+      return {
+        results: {
+          channels: [
+            {
+              alternatives: [
+                {
+                  words: [
+                    word('If you know your party’s extension, please dial it now.', 0),
+                    word('Your call is being transferred.', 10),
+                    word('Extension 109 is unavailable. Please leave a message after the tone.', 20),
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      };
+    }
+    override async summarize() {
+      this.summarized += 1;
+      return '- They confirmed interest';
+    }
+  }
+  const ai = new Automated();
+  const { deps } = await recordedCall(ai);
+  assert.equal(await runTranscription(deps, DIAL_ID, { now: NOW, baseUrl: BASE }), 'done');
+  assert.equal((await dials.get(DIAL_ID))!.summary, null);
   assert.equal(ai.summarized, 0);
 });
 
