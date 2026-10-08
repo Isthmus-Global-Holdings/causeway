@@ -152,7 +152,10 @@ export async function finishEmailSent(
     const callTime = emailDue === null ? DEFAULT_CALL_TIME : timeOfDay(emailDue, opts.timeZone);
 
     const subject = followUpSubject(companyName(company), contactName(contact));
-    const followUpAt = nextCalendarDayAt(opts.now, opts.timeZone, callTime);
+    // From when step 1 landed, not this run: a retry on a later day lands
+    // the follow-up where the first run would have, and never moves it twice.
+    const sentAt = row.completed_at ? Date.parse(row.completed_at) : opts.now;
+    const followUpAt = nextCalendarDayAt(sentAt, opts.timeZone, callTime);
     const existing = await openCallTask(hs, contact.id, subject, knownTaskIds);
     if (existing && laterCall(existing, followUpAt)) {
       await hs.updateObject('tasks', existing.id, { hs_timestamp: new Date(followUpAt).toISOString() });
@@ -205,7 +208,12 @@ async function openCallTask(
     ])
   ).filter((t) => t.properties.hs_task_type === 'CALL');
   return (
-    calls.find((t) => t.properties.hs_task_status !== 'COMPLETED' && t.properties.hs_task_subject === subject) ??
+    calls.find(
+      (t) =>
+        t.properties.hs_task_status !== 'COMPLETED' &&
+        t.properties.hs_task_status !== 'DEFERRED' &&
+        t.properties.hs_task_subject === subject
+    ) ??
     calls.find((t) => t.properties.hs_task_status === 'NOT_STARTED') ??
     null
   );

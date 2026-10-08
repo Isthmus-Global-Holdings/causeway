@@ -112,13 +112,40 @@ test('an open CALL task at a set time, or due later, stays put', async () => {
 
 test('a completed or dropped CALL task is not reused', async () => {
   hs.put('tasks', '559', { hs_task_type: 'CALL', hs_task_status: 'COMPLETED', hs_task_subject: 'Call: Acme' });
-  hs.put('tasks', '560', { hs_task_type: 'CALL', hs_task_status: 'DEFERRED', hs_task_subject: 'Call: Acme' });
+  hs.put('tasks', '560', {
+    hs_task_type: 'CALL',
+    hs_task_status: 'DEFERRED',
+    hs_task_subject: followUpSubject('Acme', 'Ana Díaz'),
+  });
   hs.link('contacts', '10', 'tasks', '559');
   hs.link('contacts', '10', 'tasks', '560');
 
   const result = await runEmailSent(hs, store, '1', opts);
   assert.equal(result.callTaskCreated, true);
   assert.equal(hs.created.length, 1);
+});
+
+test('a retry on a later day puts the follow-up where the first run would have', async () => {
+  hs.put('tasks', '561', {
+    hs_task_type: 'CALL',
+    hs_task_status: 'NOT_STARTED',
+    hs_timestamp: '2026-09-24T13:00:00Z',
+  });
+  hs.link('contacts', '10', 'tasks', '561');
+  const setCallTask = store.setCallTask.bind(store);
+  store.setCallTask = async () => {
+    throw new Error('D1 down');
+  };
+  await assert.rejects(runEmailSent(hs, store, '1', opts), /D1 down/);
+  store.setCallTask = setCallTask;
+
+  const nextDay = { ...opts, now: NOW + 24 * 3600_000 };
+  assert.equal((await runEmailSent(hs, store, '1', nextDay)).callTaskId, '561');
+  assert.equal(
+    hs.objects.get('tasks/561')!.properties.hs_timestamp,
+    '2026-09-25T19:30:00.000Z',
+    'moved once, not again'
+  );
 });
 
 test('a concurrent run holding the lock is refused', async () => {
