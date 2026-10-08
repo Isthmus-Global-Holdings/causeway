@@ -10,11 +10,20 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { bookInterview, callsOverview, logCall, snoozeCallTask } from '../actions/calls';
-import { callCoaching, coachingOverview } from '../actions/coaching';
+import { callCoaching, callForReview, callsForReview, coachingOverview, saveCallReview } from '../actions/coaching';
 import { dropEmailTask, markEmailSent, saveEmailDraft } from '../actions/emails';
 import { latestMeetingDial, logMeeting, meetingsOverview } from '../actions/meetings';
 import { openContactTask, saveNumbers } from '../actions/records';
 import { loadAppSettings } from '../lib/app-settings';
+import {
+  GATEKEEPER_RESULTS,
+  GATES,
+  OBJECTION_KINDS,
+  parseUnsure,
+  REVIEWERS,
+  STAGES,
+  type ObjectionKind,
+} from '../lib/call-insight';
 import { fillScript } from '../lib/call-script';
 import { parseFitReason } from '../lib/fit';
 import { localDate, parseHubSpotTime } from '../lib/dates';
@@ -50,6 +59,8 @@ import { loadTodayCounts } from '../workflows/today';
 import {
   callRowSummary,
   afterCallSummary,
+  callInsightSummary,
+  callReviewSummary,
   beforeCallSummary,
   bookingSummary,
   coachingSummary,
@@ -450,6 +461,40 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
   );
 
   server.registerTool(
+    'calls_to_review',
+    {
+      title: 'Calls to review',
+      description:
+        'Logged calls worth a review, newest first: someone picked up (them or the front desk), and neither the rep nor Claude has reviewed it yet. Each with its tags as the rules read them and which they were unsure of. Review each with get_call_review, then review_call.',
+      inputSchema: { limit: z.number().int().min(1).max(25).default(10) },
+      annotations: READ,
+    },
+    ({ limit }) =>
+      run(async () => {
+        const { settings, calls } = await callsForReview(c, limit);
+        return {
+          timeZone: settings.timeZone,
+          calls: calls.map((call) => ({
+            ...callInsightSummary(call, settings.timeZone, origin),
+            unsure: parseUnsure(call.unsure),
+          })),
+        };
+      })
+  );
+
+  server.registerTool(
+    'get_call_review',
+    {
+      title: 'Call to review',
+      description:
+        "One logged call, to review it for coaching: the call (who, outcome, length, the rep's notes), its transcript turn by turn with times, the tags as read so far (reading: rules, with any reviews laid over them; unsure lists what nothing was sure of), the reviews so far, and the rules for reviewing it. Then save the review with review_call.",
+      inputSchema: { task_id: id },
+      annotations: READ,
+    },
+    ({ task_id }) => run(async () => callReviewSummary(await callForReview(c, task_id), origin))
+  );
+
+  server.registerTool(
     'get_meeting',
     {
       title: 'Interview',
@@ -788,6 +833,61 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
           { workflow: 'task-action', taskId: contact_id }
         );
         return { saved: changes, unchanged: Object.keys(changes).length === 0 };
+      })
+  );
+
+  server.registerTool(
+    'review_call',
+    {
+      title: 'Review a call',
+      description:
+        "Save a review of one logged call for coaching, after reading it with get_call_review and following its rules: corrections for only the tags that were wrong or unsure (the rest keep the rules' reading), what worked, and what to adjust next time. Saved in the app only (not HubSpot); reviewing again replaces this reviewer's earlier review. reviewer 'rep' when the rep says what happened; the rep's review wins over Claude's. leave_out: true for a test call, to leave it out of coaching (false puts it back).",
+      inputSchema: {
+        task_id: id,
+        reviewer: z.enum(REVIEWERS).default('claude'),
+        corrections: z
+          .object({
+            whoAnswered: z.enum(GATES).optional(),
+            frontDeskResult: z.enum(GATEKEEPER_RESULTS).nullable().optional(),
+            reachedThem: z.boolean().optional(),
+            stage: z.enum(STAGES).optional(),
+            objection: z
+              .object({
+                kind: z.enum(OBJECTION_KINDS as [ObjectionKind, ...ObjectionKind[]]).nullable(),
+                said: z.string().max(300).nullable().optional().describe('their words'),
+              })
+              .optional(),
+            nextStep: z
+              .object({
+                agreed: z.boolean(),
+                what: z.string().max(200).nullable().optional().describe('in a few words'),
+              })
+              .optional(),
+          })
+          .default({}),
+        what_worked: z.string().max(1_000).optional(),
+        adjust: z.string().max(1_000).optional(),
+        leave_out: z.boolean().optional(),
+      },
+      annotations: WRITE,
+    },
+    ({ task_id, reviewer, corrections, what_worked, adjust, leave_out }) =>
+      run(async () => {
+        const notes = await saveCallReview(c, task_id, {
+          reviewer,
+          corrections,
+          what_worked: what_worked ?? null,
+          adjust: adjust ?? null,
+          leave_out,
+        });
+        const log = await d1CallLogStore(env.DB).get(task_id);
+        const { timeZone } = await loadAppSettings(env);
+        return {
+          saved: true,
+          leftOut: leave_out ?? null,
+          reading: afterCallSummary(notes, log?.next_due ?? null, timeZone),
+          url: pageUrl(origin, `/calls/${task_id}`),
+        };
       })
   );
 }

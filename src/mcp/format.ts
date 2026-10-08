@@ -2,7 +2,7 @@
 // what a conversation needs, with times in the rep's time zone and a link to
 // each record's page (where the rep calls and sends). No I/O.
 
-import type { CallCoaching, CallNotes } from '../actions/coaching';
+import type { CallCoaching, CallForReview, CallNotes } from '../actions/coaching';
 import { formatAddress, zoneLabel } from '../lib/address';
 import { clock } from '../lib/call-history';
 import {
@@ -28,6 +28,8 @@ import {
 import { formatLocal, parseHubSpotTime } from '../lib/dates';
 import { sqliteTime, type CallInsight, type InboundCall, type RecentCallLog, type RecentSend } from '../lib/db';
 import { parseFitLabel } from '../lib/fit';
+import { SPEAKER_LABELS } from '../lib/transcript';
+import { CALL_REVIEW_RULES } from '../prompts/call-review';
 import type { HubSpotObject } from '../lib/hubspot';
 import { toE164 } from '../lib/phone';
 import { historyTimeline, type CallContext } from '../workflows/call-context';
@@ -329,8 +331,48 @@ export function afterCallSummary(after: CallNotes, nextDue: string | null, timeZ
     },
     sources: after.sources,
     unsure: after.unsure,
-    review: call.what_worked || call.adjust ? { whatWorked: call.what_worked, adjust: call.adjust, by: null } : null,
+    review:
+      call.what_worked || call.adjust
+        ? {
+            whatWorked: call.what_worked,
+            whatWorkedBy: after.feedbackBy.whatWorked,
+            adjust: call.adjust,
+            adjustBy: after.feedbackBy.adjust,
+          }
+        : null,
     notes: after.notes.map((n) => n.text),
+  };
+}
+
+// One logged call for a review (get_call_review): the call, its transcript
+// with times, the rules' tags (reviews laid over them), the reviews so far,
+// and how to review it.
+export function callReviewSummary(r: CallForReview, origin: string) {
+  const tz = r.settings.timeZone;
+  return {
+    timeZone: tz,
+    call: {
+      taskId: r.log.call_task_id,
+      with: r.notes.label,
+      channel: r.log.channel,
+      outcome: r.log.outcome,
+      lengthSec: r.log.duration_sec ?? r.notes.read.duration_sec,
+      repNotes: r.log.notes || null,
+      url: pageUrl(origin, `/calls/${r.log.call_task_id}`),
+    },
+    transcript: r.turns.length
+      ? r.turns.map((t) => `[${clock(Math.round(t.start))}] ${SPEAKER_LABELS[t.speaker]}: ${t.text}`)
+      : null,
+    autoSummary: r.summary.length ? r.summary : null,
+    reading: afterCallSummary(r.notes, r.log.next_due, tz),
+    reviews: r.reviews.map((v) => ({
+      by: v.reviewer,
+      corrections: v.corrections,
+      whatWorked: v.what_worked,
+      adjust: v.adjust,
+      at: localTime(Date.parse(v.reviewed_at), tz),
+    })),
+    rules: CALL_REVIEW_RULES,
   };
 }
 

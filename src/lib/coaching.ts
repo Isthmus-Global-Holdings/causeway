@@ -30,6 +30,10 @@ import type { BookedInterview, CallInsight } from './db';
 // Fewer calls than this in a group is too few to call it a pattern.
 export const MIN_SAMPLE = 3;
 
+// Comparing reached rates between hours takes far more: about this many calls
+// in each hour before a difference between them means anything.
+export const HOUR_SAMPLE = 30;
+
 export interface Rate {
   calls: number;
   reached: number; // spoke with the person they called for
@@ -113,7 +117,10 @@ export interface CoachingReport {
   fastNoNextStep: { connects: number; calls: CallInsight[] }; // newest first
   longConnects: CallInsight[]; // longest first
   style: { long: Style; short: Style };
+  talk: CallInsight[]; // the latest connects with a transcript (their share of the words), newest first
+  theyLed: { calls: number; of: number }; // every connect with a transcript: where they talked more than half
   recent: CallInsight[]; // the last calls read, newest first
+  nextStepCalls: ReadonlySet<string>; // the counted calls that agreed a next step
 }
 
 const QUOTES = 3;
@@ -246,6 +253,7 @@ export function coachingReport(rows: CallInsight[], repTimeZone: string): Coachi
 
   const connects = calls.filter((c) => c.reached);
   const long = connects.filter(isLongConnect);
+  const talked = newest.filter((c) => c.reached && c.prospect_talk_share !== null);
   return {
     calls: calls.length,
     reached: connects.length,
@@ -264,15 +272,83 @@ export function coachingReport(rows: CallInsight[], repTimeZone: string): Coachi
     fastNoNextStep: { connects: connects.length, calls: newest.filter(fastNoNextStep) },
     longConnects: [...long].sort((a, b) => (b.talk_sec ?? b.duration_sec ?? 0) - (a.talk_sec ?? a.duration_sec ?? 0)),
     style: { long: styleOf(long), short: styleOf(connects.filter((c) => (c.talk_sec ?? c.duration_sec ?? 0) < 120)) },
+    talk: talked.slice(0, RECENT),
+    theyLed: { calls: talked.filter((c) => (c.prospect_talk_share ?? 0) > 0.5).length, of: talked.length },
     recent: newest.slice(0, RECENT),
+    nextStepCalls: new Set(calls.filter((c) => c.stage === 'next_step').map((c) => c.call_task_id)),
   };
 }
 
-// The hour with the best rate, among those with enough calls.
+// --- The funnel: how far the calls get, step by step ---
+
+// Counts, not rates: honest at any number of calls. Each step is a subset of
+// the one before (a booked interview is a next step), except held, which
+// waits on the interviews still ahead. Interviews count by call, and only
+// on calls that agreed a next step: one booked from a task whose logged call
+// agreed none, on a call left out, or a second time on the same call, is no
+// step of theirs.
+export interface FunnelStep {
+  key: 'calls' | 'answered' | 'reached' | 'next_step' | 'booked' | 'held';
+  label: string;
+  count: number;
+}
+
+export interface Funnel {
+  steps: FunnelStep[];
+  // Booked interviews not counted held or missed yet: still ahead, or past
+  // with nothing logged (the bookings card lists those, to log).
+  upcoming: number;
+  // The step that loses the most calls, among the call's own steps (through
+  // booked), when it loses at least 40% of the one before: where to work.
+  leak: { from: FunnelStep; to: FunnelStep; advice: string } | null;
+}
+
+const LEAK_SHARE = 0.4;
+
+const LEAK_ADVICE: Record<string, string> = {
+  answered: 'Most calls aren’t picked up. Try another hour of their day, or their cell.',
+  reached:
+    'The front desk stops most calls. Ask for them by first name as if they expect you, and if they’re out, ask when to catch them or for their direct line.',
+  next_step: 'You reach them, then leave with nothing agreed. Before you hang up, leave with a time.',
+  booked: 'Next steps aren’t becoming interviews. Ask for the interview on the call, with a day and time.',
+};
+
+export function callFunnel(report: CoachingReport, booked: BookedInterview[], now: number): Funnel {
+  const theirs = booked.filter((b) => report.nextStepCalls.has(b.call_task_id));
+  const calls = (status?: BookingStatus[]) =>
+    new Set(theirs.filter((b) => !status || status.includes(bookingStatus(b, now))).map((b) => b.call_task_id)).size;
+  const steps: FunnelStep[] = [
+    { key: 'calls', label: 'Calls', count: report.calls },
+    { key: 'answered', label: 'Someone picked up', count: report.answered },
+    { key: 'reached', label: 'Reached them', count: report.reached },
+    {
+      key: 'next_step',
+      label: 'Next step agreed',
+      count: report.stages.find((s) => s.stage === 'next_step')?.count ?? 0,
+    },
+    { key: 'booked', label: 'Interview booked', count: calls() },
+    { key: 'held', label: 'Interview held', count: calls(['held']) },
+  ];
+  let leak: Funnel['leak'] = null;
+  let worst = 0;
+  for (let i = 1; i < steps.length - 1; i++) {
+    const [from, to] = [steps[i - 1], steps[i]];
+    const lost = from.count - Math.min(to.count, from.count);
+    if (from.count < MIN_SAMPLE || lost / from.count < LEAK_SHARE || lost <= worst) continue;
+    worst = lost;
+    leak = { from, to, advice: LEAK_ADVICE[to.key] };
+  }
+  return { steps, upcoming: calls(['upcoming', 'to_log']), leak };
+}
+
+// The hour with the best rate, among those with enough calls to beat
+// another (HOUR_SAMPLE), once at least two have: with fewer, there's nothing
+// to compare, and no hour is named anywhere.
 export function bestHour(rows: HourRow[]): HourRow | null {
+  const enough = rows.filter((row) => row.calls >= HOUR_SAMPLE);
+  if (enough.length < 2) return null;
   let best: HourRow | null = null;
-  for (const row of rows) {
-    if (row.calls < MIN_SAMPLE) continue;
+  for (const row of enough) {
     if (!best || (rateOf(row) ?? 0) > (rateOf(best) ?? 0)) best = row;
   }
   return best && best.reached > 0 ? best : null;

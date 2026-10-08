@@ -13,7 +13,7 @@ import type { CallTranscript, Turn } from './transcript';
 
 // Bump it when the rules change: every call is read again (for free, by the
 // cron sweep), and nothing read by older rules is left.
-export const RULES_VERSION = 2;
+export const RULES_VERSION = 3;
 
 // Who answered.
 export const GATES = ['owner', 'gatekeeper', 'voicemail', 'no_answer', 'wrong_number'] as const;
@@ -196,6 +196,101 @@ export function parseSources(json: string | null | undefined): TagSources {
   }
 }
 
+// --- Reviews: the rep's, or Claude's through the connector ---
+
+// Who reviewed a call. The rep's review wins over Claude's, and both over the rules.
+export const REVIEWERS = ['claude', 'rep'] as const;
+export type Reviewer = (typeof REVIEWERS)[number];
+
+// A review's answer for any of the tags; a tag left out keeps the rules'.
+export interface Corrections {
+  whoAnswered?: Gate;
+  frontDeskResult?: GatekeeperResult | null;
+  reachedThem?: boolean;
+  stage?: Stage;
+  objection?: { kind: ObjectionKind | null; said?: string | null };
+  nextStep?: { agreed: boolean; what?: string | null };
+}
+
+export interface CallReview {
+  reviewer: Reviewer;
+  corrections: Corrections;
+  what_worked: string | null;
+  adjust: string | null;
+  reviewed_at: string; // ISO
+}
+
+// call_reviews keeps corrections as JSON; a damaged value reads as none.
+export function parseCorrections(json: string | null | undefined): Corrections {
+  try {
+    const value: unknown = JSON.parse(json ?? '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Corrections) : {};
+  } catch {
+    return {};
+  }
+}
+
+// The tags a review answers.
+export const correctedTags = (c: Corrections): Tag[] => TAGS.filter((tag) => c[tag] !== undefined);
+
+// A call's reading with its reviews laid over it: Claude's, then the rep's,
+// so the rep's wins. Each tag a review answers takes its value, is no longer
+// unsure, and is marked as the reviewer's. What worked and what to adjust
+// are the last review's that says. Whether they got past the objection
+// follows from the result.
+export function withReviews<T extends InsightFields & { unsure: string; sources: string }>(
+  row: T,
+  reviews: CallReview[]
+): T {
+  if (!reviews.length) return row;
+  const out = { ...row };
+  const unsure = new Set(parseUnsure(row.unsure));
+  const sources = parseSources(row.sources);
+  const settle = (tag: Tag, by: Reviewer) => {
+    unsure.delete(tag);
+    sources[tag] = { by, p: null };
+  };
+  const ordered = [...reviews].sort((a, b) => REVIEWERS.indexOf(a.reviewer) - REVIEWERS.indexOf(b.reviewer));
+  for (const { reviewer, corrections: c, what_worked, adjust } of ordered) {
+    if (c.whoAnswered !== undefined) out.gate = c.whoAnswered;
+    if (c.frontDeskResult !== undefined) out.gatekeeper_result = c.frontDeskResult;
+    if (c.reachedThem !== undefined) out.reached = c.reachedThem ? 1 : 0;
+    if (c.stage !== undefined) out.stage = c.stage;
+    if (c.objection !== undefined) {
+      out.objection_kind = c.objection.kind;
+      out.objection = c.objection.kind ? (c.objection.said ?? out.objection) : null;
+    }
+    if (c.nextStep !== undefined) {
+      out.next_step = c.nextStep.agreed ? 1 : 0;
+      out.next_step_text = c.nextStep.agreed ? (c.nextStep.what ?? out.next_step_text) : null;
+      // How far it got follows, as the rules have it, unless the review says;
+      // a stage it moves is the review's too.
+      if (c.stage === undefined) {
+        const stage = out.stage;
+        if (!c.nextStep.agreed && out.stage === 'next_step') out.stage = 'conversation';
+        if (c.nextStep.agreed && out.reached) out.stage = 'next_step';
+        if (out.stage !== stage) settle('stage', reviewer);
+      }
+    }
+    for (const tag of correctedTags(c)) settle(tag, reviewer);
+    if (what_worked) out.what_worked = what_worked;
+    if (adjust) out.adjust = adjust;
+  }
+  out.got_past_objection =
+    out.objection_kind && out.reached && stageRank(out.stage) >= stageRank('conversation') ? 1 : 0;
+  out.unsure = JSON.stringify(TAGS.filter((t) => unsure.has(t)));
+  out.sources = JSON.stringify(sources);
+  return out;
+}
+
+// Who wrote the what-worked and the adjust that stand: the last review that
+// said (Claude's, then the rep's, as withReviews lays them). Null: no review did.
+export function feedbackBy(reviews: CallReview[]): { whatWorked: Reviewer | null; adjust: Reviewer | null } {
+  const last = (said: (r: CallReview) => string | null) =>
+    [...REVIEWERS].reverse().find((reviewer) => reviews.some((r) => r.reviewer === reviewer && said(r))) ?? null;
+  return { whatWorked: last((r) => r.what_worked), adjust: last((r) => r.adjust) };
+}
+
 // One call read by the rules, with the tags they only guessed at.
 export interface RuleReading extends InsightFields {
   unsure: Tag[];
@@ -224,6 +319,25 @@ export function firstNameOf(label: string): string | null {
     ?.replace(/[^\p{L}'-]/gu, '');
   return first || null;
 }
+
+// The rules were written for Nova-3's bare words (lowercase, no punctuation),
+// which is how the older transcripts are kept. Newer ones keep Nova's
+// punctuation for reading; the rules (ruleInsight, theirPart) read this plain
+// copy of either, so both read the same. A colon or point stays between
+// digits ("3:30").
+export function plainText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/’/g, "'")
+    .replace(/\b([ap])\.m\b\.?/g, '$1m')
+    .replace(/[^\p{L}\p{N}'\s:.-]/gu, ' ')
+    .replace(/(?<!\p{N})[:.]|[:.](?!\p{N})/gu, ' ')
+    .replace(/(^|\s)[-']+|[-']+(?=\s|$)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export const plainTurns = (turns: Turn[]): Turn[] => turns.map((t) => ({ ...t, text: plainText(t.text) }));
 
 export function callFacts(log: CallLog, dial: Dial | null, transcript: CallTranscript | null): CallFacts {
   const dialSec = dial?.prospect_status === 'completed' ? dial.prospect_duration_sec : null;
@@ -558,9 +672,13 @@ export function ruleInsight(facts: CallFacts): RuleReading {
   if (facts.outcome === 'wrong_number') return { ...none, gate: 'wrong_number' };
   if (facts.outcome === 'no_answer') return none;
   if (facts.outcome === 'left_voicemail') return { ...none, gate: 'voicemail', stage: 'voicemail' };
-  if (duration < ANSWERED_SEC && (facts.outcome === 'busy' || !facts.transcript)) return none;
+  // Too short to have been answered; a call logged with no length (from the
+  // connector) is read from its notes instead.
+  if (facts.durationSec !== null && duration < ANSWERED_SEC && (facts.outcome === 'busy' || !facts.transcript)) {
+    return none;
+  }
 
-  const turns = facts.transcript?.turns ?? [];
+  const turns = plainTurns(facts.transcript?.turns ?? []);
   const heard = insightSource(facts) === 'transcript' ? readTranscript(turns, facts.firstName) : null;
   const unsure: Tag[] = [];
   const tree = heard?.tree ?? null;
@@ -688,7 +806,7 @@ export function ruleInsight(facts: CallFacts): RuleReading {
 // The turns the person they called for was on, for the style stats: all of
 // them when it's not clear who that was.
 export function theirPart(turns: Turn[], firstName: string | null): Turn[] {
-  const heard = readTranscript(turns, firstName);
+  const heard = readTranscript(plainTurns(turns), firstName);
   if (heard?.ownerFrom != null) return turns.slice(heard.ownerFrom);
   return turns.slice(heard?.tree?.end ?? 0);
 }

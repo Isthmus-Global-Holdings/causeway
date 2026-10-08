@@ -115,10 +115,20 @@ test('it introduces itself and lists its tools, marked read-only or safe to repe
     'get_call_task',
     'drafting_rules',
     'call_coaching',
+    'calls_to_review',
+    'get_call_review',
   ]) {
     assert.equal(byName.get(name)?.annotations?.readOnlyHint, true, name);
   }
-  for (const name of ['save_draft', 'log_call', 'snooze_call', 'log_meeting', 'book_interview', 'mark_email_sent']) {
+  for (const name of [
+    'save_draft',
+    'log_call',
+    'snooze_call',
+    'log_meeting',
+    'book_interview',
+    'mark_email_sent',
+    'review_call',
+  ]) {
     assert.equal(byName.get(name)?.annotations?.idempotentHint, true, name);
   }
   assert.ok(!byName.has('send_email') && !byName.has('dial'), 'sending and dialling stay on the pages');
@@ -203,4 +213,61 @@ test('a video interview booked from here needs its join link, since no invite ma
   assert.equal(booked.isError, true);
   assert.match(booked.text, /needs its join link/);
   assert.equal(hs.meetings.length, 0, 'no meeting created');
+});
+
+test('calls are reviewed from here: the ones to review, one with its rules, and the review saved over the rules', async () => {
+  const logged = await callTool('log_call', {
+    task_id: '1',
+    outcome: 'connected',
+    notes: 'Talked with Ana. Busy at lunch, said call back tomorrow.',
+    next_type: 'CALL',
+    next_date: TOMORROW,
+  });
+  assert.equal(logged.isError, false, logged.text);
+  // Opening coaching reads the calls not read yet, after it answers.
+  await callTool('call_coaching');
+
+  const list = await callTool('calls_to_review');
+  assert.deepEqual(
+    list.data.calls.map((call: { taskId: string }) => call.taskId),
+    ['1']
+  );
+
+  const call = await callTool('get_call_review', { task_id: '1' });
+  assert.equal(call.isError, false, call.text);
+  assert.match(call.data.rules, /Correct the tags/);
+  assert.equal(call.data.call.repNotes, 'Talked with Ana. Busy at lunch, said call back tomorrow.');
+  assert.equal(call.data.transcript, null, 'logged by hand: no recording');
+  assert.deepEqual(call.data.reviews, []);
+
+  const reviewed = await callTool('review_call', {
+    task_id: '1',
+    corrections: { stage: 'conversation', nextStep: { agreed: true, what: 'Call back tomorrow' } },
+    what_worked: 'Asked about her week before anything else.',
+    adjust: 'Leave with a time, not “tomorrow”.',
+  });
+  assert.equal(reviewed.isError, false, reviewed.text);
+  assert.equal(reviewed.data.reading.sources.stage.by, 'claude');
+  assert.deepEqual(
+    [reviewed.data.reading.review.whatWorkedBy, reviewed.data.reading.review.adjustBy],
+    ['claude', 'claude']
+  );
+  assert.equal(reviewed.data.reading.review.adjust, 'Leave with a time, not “tomorrow”.');
+  assert.ok(!reviewed.data.reading.unsure.includes('stage'));
+
+  assert.deepEqual((await callTool('calls_to_review')).data.calls, [], 'reviewed: off the list');
+  const again = await callTool('get_call_review', { task_id: '1' });
+  assert.equal(again.data.reviews[0].by, 'claude');
+
+  const audit = await db
+    .prepare(`SELECT action FROM audit_log WHERE task_id = '1' AND action LIKE 'review%'`)
+    .all<{ action: string }>();
+  assert.deepEqual(
+    audit.results.map((r) => r.action),
+    ['review for coaching (claude)']
+  );
+
+  const none = await callTool('review_call', { task_id: '2', corrections: {} });
+  assert.equal(none.isError, true);
+  assert.match(none.text, /nothing to review/);
 });

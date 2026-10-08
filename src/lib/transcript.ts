@@ -20,7 +20,12 @@ export interface Turn {
 export interface NovaResult {
   results?: {
     channels?: {
-      alternatives?: { transcript?: string; words?: { word: string; start: number; end: number }[] }[];
+      alternatives?: {
+        transcript?: string;
+        // `word` is lowercase and bare; `punctuated_word` (with `punctuate`)
+        // is the same word as written, with its capital and punctuation.
+        words?: { word: string; punctuated_word?: string; start: number; end: number }[];
+      }[];
     }[];
   };
 }
@@ -43,12 +48,13 @@ export function turnsFromNova(result: NovaResult, speakers: Speaker[] = ['rep', 
 
   const turns: (Turn & { end: number })[] = [];
   for (const w of words) {
+    const word = w.punctuated_word || w.word;
     const last = turns[turns.length - 1];
     if (last && last.speaker === w.speaker && w.start - last.end < TURN_GAP_SEC) {
-      last.text += ` ${w.word}`;
+      last.text += ` ${word}`;
       last.end = w.end;
     } else {
-      turns.push({ speaker: w.speaker, start: w.start, end: w.end, text: w.word });
+      turns.push({ speaker: w.speaker, start: w.start, end: w.end, text: word });
     }
   }
   return turns.map(({ speaker, start, text }) => ({ speaker, start, text }));

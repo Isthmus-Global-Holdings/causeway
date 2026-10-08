@@ -2,7 +2,14 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { summaryLines, transcriptHtml, transcriptText, turnsFromNova, type NovaResult } from '../src/lib/transcript.ts';
 
-const words = (list: [string, number][]) => list.map(([word, start]) => ({ word, start, end: start + 0.4 }));
+// As Nova-3 gives them with `punctuate`: the bare word, and the word as written.
+const words = (list: [string, number][]) =>
+  list.map(([written, start]) => ({
+    word: written.toLowerCase().replace(/[^\p{L}']/gu, ''),
+    punctuated_word: written,
+    start,
+    end: start + 0.4,
+  }));
 
 // Channel 0 is the rep (the leg that dialled), channel 1 the prospect.
 const call: NovaResult = {
@@ -75,6 +82,26 @@ test('a long pause starts a new turn; one channel is labelled as the whole call'
     { speaker: 'call', start: 10, text: 'Later' },
   ]);
   assert.deepEqual(turnsFromNova({}), [], 'no speech');
+});
+
+test('without punctuated words (punctuate off), the bare words are used', () => {
+  const bare: NovaResult = {
+    results: {
+      channels: [
+        {
+          alternatives: [
+            {
+              words: [
+                { word: 'hello', start: 0, end: 0.4 },
+                { word: 'there', start: 0.5, end: 0.9 },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+  assert.deepEqual(turnsFromNova(bare), [{ speaker: 'call', start: 0, text: 'hello there' }]);
 });
 
 test('the HubSpot transcript escapes what was said and stops before the size limit', () => {
