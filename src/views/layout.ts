@@ -4,7 +4,7 @@ import { CONVERSATION_GOAL, firstLine, MAX_LEARNED } from '../lib/conversations'
 import { PROSPECT_ZONES, zoneLabel } from '../lib/address';
 import { TIME_PATTERN } from '../lib/dates';
 import type { TodayCounts } from '../workflows/today';
-import { FOLD_SCRIPT } from './sections';
+import { FOLD_SCRIPT, SUBMIT_ONCE_SCRIPT } from './sections';
 import { STYLES } from './styles';
 
 export type Html = HtmlEscapedString | Promise<HtmlEscapedString>;
@@ -62,7 +62,8 @@ const SPECULATION_RULES = JSON.stringify({
 // (Twilio's Voice SDK); the fields that show only when they apply
 // (booking an interview, an interview's new time); on a call page, the list
 // of today's calls scrolled to this one; and, on every page, the cards the
-// rep folded staying folded (FOLD_SCRIPT).
+// rep folded staying folded (FOLD_SCRIPT), and a log form sent only once
+// (SUBMIT_ONCE_SCRIPT).
 // `refreshSec` reloads the page, for an inbound call page waiting on Twilio,
 // and the calls queue when a set-time call comes on.
 export function layout(
@@ -93,7 +94,7 @@ export function layout(
           ${actor ? html`<span class="muted actor">${actor}</span>` : ''}
         </header>
         <main>${actor ? html`<div id="unfinished"></div><script>${raw(UNFINISHED_SCRIPT)}</script>` : ''}${body}</main>
-        <script>${raw(FOLD_SCRIPT)}</script>
+        <script>${raw(FOLD_SCRIPT)}</script><script>${raw(SUBMIT_ONCE_SCRIPT)}</script>
       </body>
     </html>`;
 }

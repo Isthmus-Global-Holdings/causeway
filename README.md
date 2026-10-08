@@ -189,7 +189,7 @@ timeline like one made in HubSpot.
   try again in a moment. The call page of a dropped task says so, without the
   log form.
 - **The call page** puts what you need on the call in one place, in this
-  order: script, numbers, coaching, recording, HubSpot history, about them,
+  order: last conversation, script, numbers, coaching, recording, HubSpot history, about them,
   and the log form beside them (below them on a phone). A bar of links to
   each, with an icon for each, stays at the top while the page scrolls and
   marks the one you're on. Each card's heading has the same icon. History,
@@ -201,6 +201,13 @@ timeline like one made in HubSpot.
     company has none), linked to Google Maps. The interview page shows it
     too. The map is Google's keyless embed, so it needs no API key and
     costs nothing.
+  - **Last conversation** comes first, and stays while the phone rings and
+    on the call: the last call you logged with them where someone picked up
+    (Connected, or a live message), on any task, with when it was and its
+    length, linked to its call page. Its parts are kept apart, each under
+    its own label: **Your notes**, the **Summary** (written by AI from the
+    recording, so check it against what was said) and **What was said**,
+    the transcript open, from where the phone menu ended.
   - **Call script** comes next: one script shared by every call, for the
     notes you prepare once and reuse. Edit it under **Edit script** on any
     call page. `{first_name}`, `{last_name}`, `{name}`, `{title}`,
@@ -319,7 +326,9 @@ timeline like one made in HubSpot.
     connected: Twilio then records each side on its own channel. When the recording is in,
     Deepgram Nova-3 on Workers AI transcribes both channels, so every line is
     labelled You or Prospect, and a small Llama model writes a 3–4 line
-    summary.
+    summary. A call that only reached a phone menu, a transfer or a
+    voicemail greeting gets no summary (one would be made up), just its
+    transcript; a voicemail left for you always gets one.
   - The call page shows "Transcribing…" and swaps in the summary, an audio
     player and the transcript when they're ready, without reloading the page
     (notes you're typing stay put). A failure shows why, with **Transcribe
@@ -356,7 +365,10 @@ are recorded), and write the rest to HubSpot afterwards (Cloudflare's
 `waitUntil`, up to 30 seconds after the response):
 
 - The lock is taken before the page answers, so a second click still gets
-  "already being logged".
+  "already being logged". The call and interview log forms grey out their
+  button ("Logging…") once pressed, so a second click doesn't send them
+  again; back to the page with the browser's Back button, they're ready
+  again.
 - Each HubSpot step is recorded as it lands, as before, so a failed or
   interrupted run is finished by running it again, never repeated.
 - A notice at the top of every page (fetched after the page shows) says

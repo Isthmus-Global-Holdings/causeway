@@ -1147,6 +1147,72 @@ export function d1CallLogStore(db: D1Database): CallLogStore {
   };
 }
 
+// The last call with the contact where someone picked up (connected, or a
+// live message left), from the calls the rep logged, with its dial: what the
+// call page shows from the moment Call is pressed, so the rep remembers it.
+export interface LastConversation {
+  call_task_id: string;
+  channel: CallChannel;
+  outcome: string;
+  notes: string;
+  duration_sec: number | null;
+  logged_at: number; // epoch ms
+  dial: Dial | null;
+}
+
+export async function lastConversation(
+  db: D1Database,
+  contactId: string,
+  exceptTaskId: string
+): Promise<LastConversation | null> {
+  const log = await db
+    .prepare(
+      `SELECT call_task_id, channel, outcome, notes, duration_sec, created_at, dial_id FROM call_logs
+       WHERE contact_id = ? AND call_task_id != ? AND channel != 'whatsapp_message'
+         AND outcome IN ('connected', 'left_live_message')
+       ORDER BY created_at DESC, rowid DESC LIMIT 1`
+    )
+    .bind(contactId, exceptTaskId)
+    .first<Omit<LastConversation, 'logged_at' | 'dial'> & { created_at: string; dial_id: string | null }>();
+  if (!log) return null;
+  const { created_at, dial_id, ...rest } = log;
+  return {
+    ...rest,
+    logged_at: sqliteTime(created_at) ?? 0,
+    dial: dial_id ? await d1DialStore(db).get(dial_id) : null,
+  };
+}
+
+// What the app kept of calls it logged in HubSpot, by the logged call's id:
+// the rep's notes (a call task's) and the recording's transcript. The
+// history card shows them apart, instead of the HubSpot body run together.
+export interface LoggedCallRecord {
+  call_id: string;
+  notes: string | null;
+  transcript_status: Dial['transcript_status'];
+  transcript_json: string | null;
+  summary: string | null;
+}
+
+export async function loggedCallRecords(db: D1Database, callIds: string[]): Promise<LoggedCallRecord[]> {
+  if (!callIds.length) return [];
+  const { results } = await db
+    .prepare(
+      `SELECT l.logged_call_id AS call_id, l.notes, d.transcript_status, d.transcript_json, d.summary
+         FROM call_logs l LEFT JOIN dials d ON d.id = l.dial_id
+         WHERE l.logged_call_id IN (SELECT value FROM json_each(?1))
+       UNION ALL
+       SELECT logged_call_id, NULL, transcript_status, transcript_json, summary FROM dials
+         WHERE logged_call_id IN (SELECT value FROM json_each(?1))
+       UNION ALL
+       SELECT logged_call_id, NULL, transcript_status, transcript_json, summary FROM inbound_calls
+         WHERE logged_call_id IN (SELECT value FROM json_each(?1))`
+    )
+    .bind(JSON.stringify(callIds))
+    .all<LoggedCallRecord>();
+  return results;
+}
+
 // A call the rep logged from the app, for the Claude connector's recently
 // logged calls, with its dial's transcript summary when there is one.
 export interface RecentCallLog {

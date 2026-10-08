@@ -257,7 +257,7 @@ function logForm(state: MeetingPageState, startAt: number | null): Html {
   const id = state.parties.meeting.id;
   const today = localDate(state.now, state.timeZone);
   const defaultNext = localDate(state.now + 86_400_000, state.timeZone);
-  return html`<form class="card" id="log-form" method="post" action="/meetings/${id}/log">
+  return html`<form class="card" id="log-form" method="post" action="/meetings/${id}/log" data-submit-once>
     <h2>How did it go?</h2>
     <input type="hidden" name="start" value="${startAt === null ? '' : String(startAt)}" />
     <div class="field">
@@ -326,7 +326,7 @@ function logForm(state: MeetingPageState, startAt: number | null): Html {
           )
         : ''
     }
-    <button type="submit" class="primary wide">Log interview</button>
+    <button type="submit" class="primary wide" data-busy="Logging…">Log interview</button>
   </form>`;
 }
 

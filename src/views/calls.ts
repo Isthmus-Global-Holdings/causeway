@@ -11,12 +11,22 @@ import {
 import { suggestConversation } from '../lib/conversations';
 import { partyTimeZone, zoneLabel } from '../lib/address';
 import { addDays, ago, formatClock, formatDay, formatLocal, localDate } from '../lib/dates';
-import { sqliteTime, type CallLog, type Dial, type DialMode, type InboundCall, type RecentSend } from '../lib/db';
+import { phoneTree, plainTurns } from '../lib/call-insight';
+import { clock } from '../lib/call-history';
+import {
+  sqliteTime,
+  type CallLog,
+  type Dial,
+  type DialMode,
+  type InboundCall,
+  type LastConversation,
+  type RecentSend,
+} from '../lib/db';
 import { extensionOf, formatPhone, toE164 } from '../lib/phone';
 import { askedFor, callableFrom } from '../lib/set-time';
 import type { PlanProgress } from '../lib/work-plan';
 import { htmlToText } from '../lib/richtext';
-import { dialTranscript, SPEAKER_LABELS, type Turn } from '../lib/transcript';
+import { dialTranscript, SPEAKER_LABELS, type CallTranscript, type Turn } from '../lib/transcript';
 import { historyTimeline, type CallContext, type HistoryItem } from '../workflows/call-context';
 import {
   CALL_OUTCOMES,
@@ -521,6 +531,58 @@ export function transcriptTurns(turns: Turn[]): Html {
     : html`<p class="muted">No speech was picked up on the recording.</p>`;
 }
 
+// A logged call, its parts kept apart: what the rep wrote, what Workers AI
+// made of the recording, and what was said, the phone menu left out. The
+// transcript is open where the call is the point (Last conversation), and
+// folded in a list of them (the history).
+export function callRecord(notes: string | null, transcript: CallTranscript | null, transcriptOpen: boolean): Html {
+  const turns = transcript?.turns ?? [];
+  const menu = turns.length ? phoneTree(plainTurns(turns), null) : null;
+  const said = menu && menu.end < turns.length ? turns.slice(menu.end) : turns;
+  return html`<div class="call-record">
+    ${notes ? html`<div class="part"><h3>Your notes</h3><pre class="notes">${notes}</pre></div>` : ''}
+    ${
+      transcript?.summary.length
+        ? html`<div class="part">
+            <h3>Summary <span class="muted">· by AI from the recording, check it against what was said</span></h3>
+            <ul class="summary">${transcript.summary.map((l) => html`<li>${l}</li>`)}</ul>
+          </div>`
+        : ''
+    }
+    ${
+      transcript
+        ? html`<details class="part said" ${transcriptOpen ? 'open' : ''}>
+            <summary><h3>What was said</h3>${
+              said !== turns
+                ? html` <span class="muted">· from ${clock(Math.round(said[0].start))}, after the phone menu</span>`
+                : ''
+            }</summary>
+            ${transcriptTurns(said)}
+          </details>`
+        : ''
+    }
+  </div>`;
+}
+
+// The last time someone picked up, at the top of the call page and there
+// while the phone rings, so the rep walks in remembering it.
+function lastConversationCard(last: LastConversation | null, timeZone: string, now: number): Html | '' {
+  if (!last) return '';
+  const transcript = last.dial ? dialTranscript(last.dial) : null;
+  const length = last.duration_sec ?? last.dial?.prospect_duration_sec ?? null;
+  const at = last.dial ? last.dial.started_sec * 1000 : last.logged_at;
+  const notes = last.notes.trim() || null;
+  return html`<div class="card last-talk" id="last-talk">
+    ${cardHead(
+      'history',
+      'Last conversation',
+      html`<a class="muted" href="/calls/${last.call_task_id}">${ago(at, now, timeZone)} · ${formatLocal(at, timeZone)}</a>`
+    )}
+    <p class="muted">${[OUTCOME_LABELS[last.outcome] ?? last.outcome, last.channel === 'whatsapp_call' ? 'on WhatsApp' : null, length ? clock(length) : null].filter(Boolean).join(' · ')}</p>
+    ${notes || transcript ? callRecord(notes, transcript, true) : html`<p class="muted">No notes or recording from that call.</p>`}
+  </div>`;
+}
+
 // Calling from the browser, with Twilio's Voice SDK. Pinned, and checked
 // against its hash, since it runs with the rep's Access session.
 const VOICE_SDK = {
@@ -796,6 +858,7 @@ export interface CallPageState {
   today: PlanProgress | null; // today's calls in order, for the list beside this one
   callNow: boolean; // opened with the queue's Call: start calling on load
   coaching: CallCoaching; // what to adjust after the last call, and what's worked on calls like this
+  lastConversation: LastConversation | null; // the contact's last logged call where someone picked up
 }
 
 // The shared script, filled in for this contact. Editing is hidden while a
@@ -966,14 +1029,16 @@ export function historyCard(state: Pick<CallPageState, 'context' | 'timeZone' | 
                   <span class="muted"><strong class="kind-label">${HISTORY_KIND[item.kind].label}</strong>${item.at === null ? '' : html` · ${ago(item.at, state.now, state.timeZone)} <span class="when">· ${formatLocal(item.at, state.timeZone)}</span>`}${item.detail ? ` · ${item.detail}` : ''}</span>
                   ${item.kind === 'note' ? '' : html`<strong>${item.title}</strong>`}
                   ${
-                    item.fullText
-                      ? html`<details class="clipped">
+                    item.recorded
+                      ? callRecord(item.recorded.notes, item.recorded.transcript, false)
+                      : item.fullText
+                        ? html`<details class="clipped">
                           <summary><pre>${item.text}</pre><span class="more">Show all</span><span class="less">Show less</span></summary>
                           <pre>${item.fullText}</pre>
                         </details>`
-                      : item.text
-                        ? html`<pre>${item.text}</pre>`
-                        : ''
+                        : item.text
+                          ? html`<pre>${item.text}</pre>`
+                          : ''
                   }
                 </div>
               </li>`
@@ -1342,7 +1407,7 @@ function logForm(state: CallPageState): Html {
   const defaultNext = localDate(state.now + 2 * 86_400_000, state.timeZone);
   const today = localDate(state.now, state.timeZone);
   const waFields = whatsappFields(state.parties.contact);
-  return html`<form class="card" id="log-form" method="post" action="/calls/${taskId}/log">
+  return html`<form class="card" id="log-form" method="post" action="/calls/${taskId}/log" data-submit-once>
     ${cardHead('log', 'Log the call')}
     ${state.dial ? html`<input type="hidden" name="dial_id" value="${state.dial.id}" />` : ''}
     ${
@@ -1428,7 +1493,7 @@ function logForm(state: CallPageState): Html {
           )
         : ''
     }
-    <button type="submit" class="primary wide">Log call &amp; complete task</button>
+    <button type="submit" class="primary wide" data-busy="Logging…">Log call &amp; complete task</button>
     <p class="muted">${state.dial ? '' : 'No call from this app yet: this logs a call you made another way, or a WhatsApp call or message.'}</p>
   </form>
   ${waFields.length ? html`<script>${raw(CHANNEL_SCRIPT)}</script>` : ''}`;
@@ -1485,6 +1550,7 @@ function showRecording(state: CallPageState, live: boolean): boolean {
 function jumpLinks(state: CallPageState, live: boolean): JumpLink[] {
   const coached = !live && (state.coaching.after !== null || state.coaching.before.length > 0);
   return [
+    ...(state.lastConversation ? [{ id: 'last-talk', icon: 'history', label: 'Last time' } as const] : []),
     { id: 'script', icon: 'script', label: 'Script' },
     { id: 'numbers', icon: 'phone', label: 'Numbers' },
     ...(coached ? [{ id: 'coaching', icon: 'coaching', label: 'Coaching' } as const] : []),
@@ -1613,6 +1679,7 @@ export function callPage(state: CallPageState, actor: string): Html {
       ${jumpBar(jumpLinks(state, live))}
       <div class="with-aside">
         <div class="stack">
+          ${lastConversationCard(state.lastConversation, state.timeZone, state.now)}
           ${scriptCard(state, live)}
           ${browserCalls ? browserCallPanel : ''}
           <div class="card" id="numbers">

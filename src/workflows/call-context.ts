@@ -3,8 +3,10 @@
 // HubSpot failure (a missing scope, say) leaves the others on the page.
 
 import { parseHubSpotTime } from '../lib/dates';
+import type { LoggedCallRecord } from '../lib/db';
 import { missingScopes, type HubSpot, type HubSpotObject } from '../lib/hubspot';
 import { htmlToText } from '../lib/richtext';
+import { dialTranscript, type CallTranscript } from '../lib/transcript';
 import { CALL_OUTCOMES } from './call-logged';
 import { loadContactNotes, type TaskParties } from './parties';
 
@@ -24,6 +26,9 @@ export interface HistoryItem {
   detail: string | null; // direction, outcome, length
   text: string; // clipped to a preview
   fullText: string | null; // the whole text, when the preview is clipped
+  // A call the app logged: the rep's notes and the transcript, shown apart
+  // rather than as the HubSpot body's text.
+  recorded?: { notes: string | null; transcript: CallTranscript | null };
 }
 
 export interface HistorySection {
@@ -44,9 +49,11 @@ export const HISTORY_LINKS = ['notes', 'calls', 'emails'] as const;
 
 // Also for an interview's prep page: only the contact is read. When the page
 // read the contact's links with it (`related`), those ids are used.
+// `records` reads what the app kept of the calls it logged (loggedCallRecords).
 export async function loadCallContext(
   hs: HubSpot,
-  parties: Pick<TaskParties, 'contact' | 'related'>
+  parties: Pick<TaskParties, 'contact' | 'related'>,
+  records?: (callIds: string[]) => Promise<LoggedCallRecord[]>
 ): Promise<CallContext> {
   const contactId = parties.contact.id;
   const known = parties.related ?? {};
@@ -72,7 +79,7 @@ export async function loadCallContext(
           'hs_timestamp',
         ])
       ).map(callItem)
-    ),
+    ).then((calls) => withRecords(calls, records)),
     section('emails', async () =>
       newest(
         await associated(hs, contactId, 'emails', known.emails, [
@@ -112,6 +119,28 @@ async function associated(
 ): Promise<HubSpotObject[]> {
   const ids = knownIds ?? (await hs.associatedIds('contacts', contactId, type));
   return ids.length ? hs.batchRead(type, ids, properties) : [];
+}
+
+// The calls the app logged, with its notes and transcript. Without them
+// (none kept, or D1 failed) the call shows as HubSpot has it.
+async function withRecords(
+  section: HistorySection,
+  records: ((callIds: string[]) => Promise<LoggedCallRecord[]>) | undefined
+): Promise<HistorySection> {
+  if (!records || !section.items.length) return section;
+  const found = await records(section.items.map((i) => i.id)).catch((err: unknown) => {
+    console.error('call context: the app’s records of logged calls', err);
+    return [];
+  });
+  const byId = new Map(found.map((r) => [r.call_id, r]));
+  return {
+    ...section,
+    items: section.items.map((item) => {
+      const r = byId.get(item.id);
+      const recorded = r ? { notes: r.notes?.trim() || null, transcript: dialTranscript(r) } : null;
+      return recorded && (recorded.notes || recorded.transcript) ? { ...item, recorded } : item;
+    }),
+  };
 }
 
 function newest(objects: HubSpotObject[]): HubSpotObject[] {

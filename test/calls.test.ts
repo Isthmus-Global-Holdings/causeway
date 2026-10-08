@@ -655,7 +655,7 @@ test('refuses a task already completed in HubSpot, and a concurrent run', async 
 const NOVA = {
   results: {
     channels: [
-      { alternatives: [{ words: [{ word: 'Hi', start: 0.5, end: 0.8 }] }] },
+      { alternatives: [{ words: [{ word: 'Hi there.', start: 0.5, end: 0.8 }] }] },
       { alternatives: [{ words: [{ word: 'Send a quote.', start: 1.5, end: 2.5 }] }] },
     ],
   },
@@ -777,7 +777,7 @@ test('transcribes both channels, summarises, and stores who said what', async ()
   assert.deepEqual(recordings, [{ sid: 'RE1', channels: 2 }]);
   const dial = (await dials.get(DIAL_ID))!;
   assert.deepEqual(JSON.parse(dial.transcript_json!), [
-    { speaker: 'rep', start: 0.5, end: 0.8, text: 'Hi' },
+    { speaker: 'rep', start: 0.5, end: 0.8, text: 'Hi there.' },
     { speaker: 'prospect', start: 1.5, end: 2.5, text: 'Send a quote.' },
   ]);
   assert.equal(dial.summary, '- Wants a quote\n- Call back Monday');
@@ -785,6 +785,37 @@ test('transcribes both channels, summarises, and stores who said what', async ()
 
   assert.equal(await runTranscription(deps, DIAL_ID, { now: NOW, baseUrl: BASE }), 'skipped', 'never twice');
   assert.equal(ai.transcribed, 1);
+});
+
+test('a call that only reached the phone menu is transcribed with no summary: one would be made up', async () => {
+  class MenuOnly extends FakeAi {
+    summarized = 0;
+    override async transcribe() {
+      return {
+        results: {
+          channels: [
+            { alternatives: [{ words: [] }] },
+            {
+              alternatives: [
+                { words: [{ word: 'If you know your party’s extension, please dial it now.', start: 0.2, end: 4 }] },
+              ],
+            },
+          ],
+        },
+      };
+    }
+    override async summarize() {
+      this.summarized += 1;
+      return '- They confirmed interest';
+    }
+  }
+  const ai = new MenuOnly();
+  const { deps } = await recordedCall(ai);
+  assert.equal(await runTranscription(deps, DIAL_ID, { now: NOW, baseUrl: BASE }), 'done');
+  const dial = (await dials.get(DIAL_ID))!;
+  assert.equal(JSON.parse(dial.transcript_json!).length, 1, 'the transcript is kept');
+  assert.equal(dial.summary, null);
+  assert.equal(ai.summarized, 0);
 });
 
 test('a failed transcription can be retried; a failed summary keeps the transcript', async () => {
@@ -949,6 +980,7 @@ test('a call log that stopped after completing the task still offers the form to
           today: null,
           callNow: false,
           coaching: { before: [], after: null },
+          lastConversation: null,
         },
         'rep@example.com'
       )
@@ -1228,6 +1260,7 @@ async function pageState(overrides: Partial<CallPageState> = {}): Promise<CallPa
     now: NOW,
     timeZone: TZ,
     coaching: { before: [], after: null },
+    lastConversation: null,
     justLogged: null,
     nextCallId: null,
     today: null,
@@ -1406,6 +1439,102 @@ test('the call page has a bar of its cards; history and about fold', async () =>
     assert.match(page, new RegExp(`<details class="card fold" id="${id}" data-fold open>`));
   assert.ok(page.indexOf('id="history"') < page.indexOf('id="about"'), 'history before who they are');
   assert.match(page, /<div id="log">/);
+});
+
+// The earlier call with the contact, a menu then the front desk.
+const EARLIER_TURNS = [
+  {
+    speaker: 'prospect' as const,
+    start: 0.2,
+    text: 'If you know your party’s extension, please dial it now. For customer service, press 1.',
+  },
+  { speaker: 'prospect' as const, start: 18.3, text: 'Thank you for calling Acme. This is Dana. How can I help you?' },
+  { speaker: 'rep' as const, start: 27.2, text: 'Hi Dana, this is Anel. Is Ana available?' },
+  { speaker: 'prospect' as const, start: 32.1, text: 'She’s in a meeting. Try her around two.' },
+];
+
+test('the last conversation is at the top, apart: notes, AI summary, what was said, and there while the phone rings', async () => {
+  const lastConversation = {
+    call_task_id: '7',
+    channel: 'phone' as const,
+    outcome: 'connected',
+    notes: 'Dana said to call back after 2.',
+    duration_sec: 127,
+    logged_at: NOW - 3 * 3_600_000,
+    dial: {
+      ...baseDial,
+      id: 'e'.repeat(32),
+      task_id: '7',
+      started_sec: NOW_SEC - 3 * 3600,
+      transcript_status: 'done' as const,
+      transcript_json: JSON.stringify(EARLIER_TURNS),
+      summary: '- Ana was in a meeting\n- Call around 2',
+    },
+  };
+  const page = String(await callPage(await pageState({ lastConversation }), 'rep@example.com'));
+  const card = page.slice(page.indexOf('id="last-talk"'), page.indexOf('id="script"'));
+  assert.ok(card.length > 0 && page.indexOf('id="last-talk"') < page.indexOf('id="script"'), 'before the script');
+  assert.match(card, /Last conversation/);
+  assert.match(card, /href="\/calls\/7"/);
+  assert.match(card, /Connected · 2:07/);
+  assert.match(card, /<h3>Your notes<\/h3><pre class="notes">Dana said to call back after 2\.<\/pre>/);
+  assert.match(card, /Summary <span class="muted">· by AI from the recording/);
+  assert.match(card, /<li>Call around 2<\/li>/);
+  assert.match(card, /<details class="part said" open>/, 'what was said is open, not to dig for');
+  assert.match(card, /from 0:18, after the phone menu/);
+  assert.doesNotMatch(card, /party’s extension/, 'the menu is left out');
+  assert.match(card, /This is Dana/);
+  const bar = page.slice(page.indexOf('<nav class="jump"'), page.indexOf('</nav>', page.indexOf('<nav class="jump"')));
+  assert.match(bar, /^[^]*href="#last-talk"[^]*href="#script"/, 'first in the bar');
+
+  const ringing = String(
+    await callPage(
+      await pageState({ lastConversation, dial: baseDial, dialState: { kind: 'on-call' } }),
+      'rep@example.com'
+    )
+  );
+  assert.match(ringing, /id="last-talk"/, 'on screen while the phone rings');
+  assert.match(ringing, /This is Dana/);
+
+  assert.doesNotMatch(String(await callPage(await pageState(), 'rep@example.com')), /id="last-talk"/);
+});
+
+test('a call the app logged shows in the history in its parts, the transcript folded', async () => {
+  const context: CallContext = {
+    ...EMPTY_CONTEXT,
+    calls: {
+      items: [
+        {
+          kind: 'call',
+          id: 'c1',
+          at: NOW - 3 * 3_600_000,
+          title: 'Call with Ana',
+          detail: 'Connected',
+          text: 'Dana said to call back after 2. Summary Ana was in a meeting Transcript Prospect: If you know…',
+          fullText: 'the HubSpot body, run together',
+          recorded: {
+            notes: 'Dana said to call back after 2.',
+            transcript: { turns: EARLIER_TURNS, summary: ['Ana was in a meeting'] },
+          },
+        },
+      ],
+      failed: false,
+      missingScopes: [],
+    },
+  };
+  const page = String(await callPage(await pageState({ context }), 'rep@example.com'));
+  const history = page.slice(page.indexOf('id="history"'), page.indexOf('id="about"'));
+  assert.match(history, /<h3>Your notes<\/h3>/);
+  assert.match(history, /<li>Ana was in a meeting<\/li>/);
+  assert.match(history, /<details class="part said" >/, 'folded in the list');
+  assert.doesNotMatch(history, /run together/, 'not the HubSpot body');
+});
+
+test('the log form is sent once: a second click while it saves does nothing', async () => {
+  const page = String(await callPage(await pageState(), 'rep@example.com'));
+  assert.match(page, /<form class="card" id="log-form" method="post" action="\/calls\/1\/log" data-submit-once>/);
+  assert.match(page, /data-busy="Logging…">Log call &amp; complete task/);
+  assert.match(page, /form\[data-submit-once\]/, 'the layout’s script');
 });
 
 test('history shows each kind with its icon and how long ago, with a filter when there are several kinds', async () => {

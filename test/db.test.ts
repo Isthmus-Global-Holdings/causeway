@@ -13,6 +13,8 @@ import {
   findLink,
   getSettings,
   insertAudit,
+  lastConversation,
+  loggedCallRecords,
   missingMigration,
   recentlyWorked,
   recentSends,
@@ -170,6 +172,101 @@ test('recentSends: the follow-up call task, and the latest call logged to the co
   assert.deepEqual(pick('2'), ['11', null, 'left_voicemail', 'call-4']);
   assert.equal(rows.get('2')?.called_at, '2026-09-27 15:00:00');
   assert.deepEqual(pick('3'), ['12', null, null, null], 'a call before the email is not a call back');
+});
+
+// --- calls: the last conversation, and what the app kept of logged calls ---
+
+async function callWithDial(
+  taskId: string,
+  contactId: string,
+  outcome: string,
+  at: string,
+  dial: { id: string; startedSec: number; transcript: string | null; summary: string | null } | null,
+  extra: { channel?: string; loggedCallId?: string; notes?: string } = {}
+) {
+  if (dial) {
+    await db
+      .prepare(
+        `INSERT INTO dials (id, task_id, contact_id, contact_label, to_number, from_number, rep_number, started_sec,
+                            transcript_status, transcript_json, summary)
+         VALUES (?, ?, ?, 'Ruth Avila at Mesa Freight', '+18015550100', '+13852557051', 'browser', ?, ?, ?, ?)`
+      )
+      .bind(dial.id, taskId, contactId, dial.startedSec, dial.transcript ? 'done' : null, dial.transcript, dial.summary)
+      .run();
+  }
+  await db
+    .prepare(
+      `INSERT INTO call_logs (call_task_id, contact_id, title, channel, outcome, notes, duration_sec, dial_id, logged_call_id, created_at)
+       VALUES (?, ?, 'Call', ?, ?, ?, 127, ?, ?, ?)`
+    )
+    .bind(
+      taskId,
+      contactId,
+      extra.channel ?? 'phone',
+      outcome,
+      extra.notes ?? `notes on ${taskId}`,
+      dial?.id ?? null,
+      extra.loggedCallId ?? null,
+      at
+    )
+    .run();
+}
+
+const SAID = JSON.stringify([{ speaker: 'prospect', start: 1, text: 'This is Dana at the front desk.' }]);
+
+test('lastConversation: the latest call where someone picked up, with its dial, never this task', async () => {
+  await callWithDial('t1', '10', 'connected', '2026-10-08 15:16:00', {
+    id: 'd1',
+    startedSec: 1_791_472_250,
+    transcript: SAID,
+    summary: '- Dana took a message',
+  });
+  await callWithDial('t2', '10', 'no_answer', '2026-10-08 18:05:00', null);
+  await callWithDial('t3', '10', 'replied', '2026-10-08 19:00:00', null, { channel: 'whatsapp_message' });
+  await callWithDial('t9', '11', 'connected', '2026-10-08 20:00:00', null);
+
+  const last = await lastConversation(db, '10', 't4');
+  assert.equal(last?.call_task_id, 't1', 'not a no answer, a WhatsApp message or another contact');
+  assert.equal(last?.notes, 'notes on t1');
+  assert.equal(last?.duration_sec, 127);
+  assert.equal(last?.logged_at, Date.parse('2026-10-08T15:16:00Z'));
+  assert.equal(last?.dial?.id, 'd1');
+  assert.equal(last?.dial?.summary, '- Dana took a message');
+
+  assert.equal(await lastConversation(db, '10', 't1'), null, 'the call page’s own task is left out');
+  await callWithDial('t5', '10', 'left_live_message', '2026-10-09 15:00:00', null);
+  const live = await lastConversation(db, '10', 't6');
+  assert.equal(live?.call_task_id, 't5', 'a live message is someone picking up');
+  assert.equal(live?.dial, null);
+});
+
+test('loggedCallRecords: notes and transcript by the logged HubSpot call, a call back’s too', async () => {
+  await callWithDial(
+    't1',
+    '10',
+    'connected',
+    '2026-10-08 15:16:00',
+    { id: 'd1', startedSec: 1, transcript: SAID, summary: '- Dana' },
+    { loggedCallId: 'hs-1' }
+  );
+  await callWithDial('t2', '10', 'no_answer', '2026-10-08 18:05:00', null, { loggedCallId: 'hs-2', notes: '' });
+  await db
+    .prepare(
+      `INSERT INTO dials (id, task_id, subject, contact_id, contact_label, to_number, from_number, rep_number, started_sec,
+                          transcript_status, transcript_json, logged_call_id)
+       VALUES ('d3', 'in-1', 'inbound', '10', 'Ruth', '+18015550100', '+13852557051', 'browser', 2, 'done', ?, 'hs-3')`
+    )
+    .bind(SAID)
+    .run();
+
+  const rows = new Map((await loggedCallRecords(db, ['hs-1', 'hs-2', 'hs-3', 'hs-4'])).map((r) => [r.call_id, r]));
+  assert.deepEqual([...rows.keys()].sort(), ['hs-1', 'hs-2', 'hs-3']);
+  assert.equal(rows.get('hs-1')?.notes, 'notes on t1');
+  assert.equal(rows.get('hs-1')?.transcript_json, SAID);
+  assert.equal(rows.get('hs-2')?.transcript_status, null, 'logged without a recording');
+  assert.equal(rows.get('hs-3')?.notes, null);
+  assert.equal(rows.get('hs-3')?.transcript_status, 'done');
+  assert.deepEqual(await loggedCallRecords(db, []), []);
 });
 
 // --- tracking ---

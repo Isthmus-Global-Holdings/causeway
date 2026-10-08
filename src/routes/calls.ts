@@ -9,7 +9,9 @@ import {
   d1DialStore,
   deleteSetting,
   insertAudit,
+  lastConversation,
   latestSendToContact,
+  loggedCallRecords,
   recentlyWorked,
   savePlan,
   setSetting,
@@ -110,8 +112,8 @@ callsRoute.get('/:id', async (c) => {
   ]);
   const today = localDate(now, settings.timeZone);
   const nextCall = nextInPlan(settings.callPlan ?? null, today, taskId, worked, { now });
-  const [context, meetings, lastEmail, coaching] = await Promise.all([
-    loadCallContext(hs, parties),
+  const [context, meetings, lastEmail, coaching, lastTalk] = await Promise.all([
+    loadCallContext(hs, parties, (ids) => loggedCallRecords(c.env.DB, ids)),
     // Only for the notice: the call page still works if meetings can't be read.
     contactMeetings(hs, parties.contact.id, now, settings.timeZone, parties.related?.meetings).catch((err: unknown) => {
       console.error('interviews for call page', err);
@@ -121,6 +123,11 @@ callsRoute.get('/:id', async (c) => {
     // After the call just logged (the previous one, or this task's own), and
     // before this one.
     callCoaching(c, parties, loggedId || (log ? taskId : null), settings, now),
+    // Only for its card: the page works without it.
+    lastConversation(c.env.DB, parties.contact.id, taskId).catch((err: unknown) => {
+      console.error('last conversation for call page', err);
+      return null;
+    }),
   ]);
   // A transcript that finished but never reached the logged HubSpot call
   // (HubSpot failed at the time) is written now. It's idempotent, and runs
@@ -156,6 +163,7 @@ callsRoute.get('/:id', async (c) => {
         today: planProgress(settings.callPlan ?? null, today, taskId, worked, { now }),
         callNow: c.req.query('call') === '1',
         coaching,
+        lastConversation: lastTalk,
       },
       c.get('actor')
     )
