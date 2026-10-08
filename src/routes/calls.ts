@@ -186,6 +186,8 @@ callsRoute.post('/:id/log', async (c) => {
       next_time: text('next_time'),
       book: text('book'),
       ...bookingFieldsOf(text),
+      conversation: text('conversation'),
+      learned: text('learned'),
     },
     text('dial_id') ?? null
   );

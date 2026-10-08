@@ -716,8 +716,8 @@ test('transcribes both channels, summarises, and stores who said what', async ()
   assert.deepEqual(recordings, [{ sid: 'RE1', channels: 2 }]);
   const dial = (await dials.get(DIAL_ID))!;
   assert.deepEqual(JSON.parse(dial.transcript_json!), [
-    { speaker: 'rep', start: 0.5, text: 'Hi' },
-    { speaker: 'prospect', start: 1.5, text: 'Send a quote.' },
+    { speaker: 'rep', start: 0.5, end: 0.8, text: 'Hi' },
+    { speaker: 'prospect', start: 1.5, end: 2.5, text: 'Send a quote.' },
   ]);
   assert.equal(dial.summary, '- Wants a quote\n- Call back Monday');
   assert.equal(recordingState(dial, NOW_SEC).kind, 'done');
@@ -1573,4 +1573,18 @@ test('late in the day the WhatsApp button warns about the hours', async () => {
   const late = Date.parse('2026-09-26T02:00:00Z'); // 21:00 in Panama
   assert.match(String(await callPage(await pageState({ now: late }), 'rep@example.com')), /outside 8am to 8pm/);
   assert.doesNotMatch(String(await callPage(await pageState(), 'rep@example.com')), /outside 8am to 8pm/);
+});
+
+test('the log form offers a real conversation on a connect, ticked after a long one', async () => {
+  const box = (page: string) =>
+    /<input type="checkbox" id="conversation" name="conversation" value="1" ?(checked)? \/>/.exec(page);
+  const short = String(await callPage(await pageState(), 'rep@example.com'));
+  assert.ok(box(short), 'the box is there');
+  assert.equal(box(short)![1], undefined, 'not ticked without a long call');
+  assert.match(short, /data-outcomes="connected replied"/);
+  const long = { ...baseDial, prospect_status: 'completed', prospect_duration_sec: 543 };
+  const ticked = String(
+    await callPage(await pageState({ dial: long, dialState: { kind: 'ended' } as never }), 'rep@example.com')
+  );
+  assert.equal(box(ticked)?.[1], 'checked');
 });

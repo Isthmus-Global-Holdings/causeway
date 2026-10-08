@@ -295,8 +295,8 @@ test('an answered call has the caller on the first channel; the transcript lands
 
   const call = (await calls.get(ID))!;
   assert.deepEqual(JSON.parse(call.transcript_json!), [
-    { speaker: 'prospect', start: 0.5, text: 'Hi, it is Jesse.' },
-    { speaker: 'rep', start: 1.5, text: 'Hey Jesse.' },
+    { speaker: 'prospect', start: 0.5, end: 1.2, text: 'Hi, it is Jesse.' },
+    { speaker: 'rep', start: 1.5, end: 2, text: 'Hey Jesse.' },
   ]);
   const body = hs.objects.get('calls/call-1')!.properties.hs_call_body!;
   assert.match(body, /<li>Wants a quote<\/li>/);
@@ -313,7 +313,9 @@ test('a voicemail is all the caller', async () => {
   ai.result = { results: { channels: [NOVA.results.channels[0]] } };
   await runInboundTranscription(transcribeDeps(ai), ID, OPTS);
   const call = (await calls.get(ID))!;
-  assert.deepEqual(JSON.parse(call.transcript_json!), [{ speaker: 'prospect', start: 0.5, text: 'Hi, it is Jesse.' }]);
+  assert.deepEqual(JSON.parse(call.transcript_json!), [
+    { speaker: 'prospect', start: 0.5, end: 1.2, text: 'Hi, it is Jesse.' },
+  ]);
   // Logged after the transcript: it goes in with the call.
   await logInboundCall(hs, calls, ID, OPTS);
   assert.match(hs.calls[0].call.bodyHtml, /Hi, it is Jesse\./);

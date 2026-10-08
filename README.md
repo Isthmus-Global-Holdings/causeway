@@ -427,7 +427,9 @@ weeks ahead.
    first, or the browser), recorded and transcribed when recording is on.
    For a phone interview there's no Join, and **Call them** comes first.
 4. **Log it.** After it: It happened, No show, Moved to another time, or
-   Canceled, your notes, and an optional follow-up task. Like `call_logs`,
+   Canceled (and who canceled: they did, or you did; kept in D1 only, since
+   HubSpot's outcome is Canceled either way), your notes, and an optional
+   follow-up task. Like `call_logs`,
    each write is recorded in `meeting_logs` as it lands, so a retry resumes:
    1. the meeting gets the outcome, and your notes (and the call's summary
       and transcript, if you called from its page) are added to its internal
@@ -459,6 +461,17 @@ not Claude, and the draft page leaves Claude out for them.
    doesn't reach them, the log form's follow-up is already on **Email: last
    try**, created with the "closing the loop" draft: you'll leave it here, and
    they can reply whenever. After that, let it rest.
+
+### When they cancel
+
+A cancel is a reply: they told you ahead instead of leaving you waiting, so
+the line is open. Log it as **Canceled**, with **They did** under who
+canceled (the default). The follow-up switches to an **Email** due today,
+drafted from the same templates: "thanks for letting me know", another time
+(a phone interview: "tell me a time and I'll give you a call"), or 3 quick
+questions by email. Before your next call to them, the call page's coaching
+says they canceled and the line is open. Coaching counts their cancels apart
+from no-shows, and leaves the ones you canceled out of the held rate.
 
 Times are in your time zone, picked on /settings (the `TZ` var until then).
 
@@ -545,13 +558,44 @@ available and "connected" only as someone picked up, both marked unsure. The
 outcome settles no answer, voicemail and a wrong number. The auto-summary is
 never used: it often gets who said what wrong. Each reading lists the tags
 the rules only guessed at (`unsure`) and who decided each (`sources`), for
-Jev and reviews to settle later.
+a review to settle (below). A transcript keeps Nova-3's punctuation, which
+is how your questions are counted; the rules read a plain copy of it, the
+same as transcripts from before it was kept.
+
+**Reviews, from a Claude chat.** Ask Claude to review your calls: it lists
+the ones worth a review with `calls_to_review` (someone picked up, nobody
+reviewed it yet), reads each with `get_call_review` (the transcript with
+times, your notes, the tags so far, and the rules for reviewing it, in
+`src/prompts/call-review.ts`), and saves what it found with `review_call`:
+corrections for the tags that were wrong or unsure, the Mom Test on the call
+(did you ask about a specific last time, did you pitch, their longest story
+in seconds, did you catch the fluff and bring it back to a real instance,
+what they gave up at the end: their time, an intro, money), what worked, and
+what to adjust. The rules take a first pass at the Mom Test from the words
+(a question about the last time, a pitch, how long they talked, a time or an
+intro agreed) and mark the rest unsure; whether you caught the fluff only a
+review can say. A call reviewed before the review rules could answer a tag
+(`REVIEW_RULES_VERSION`, bumped when `review_call` gains one) comes back to
+`calls_to_review` for it. Your recorded interviews are read and reviewed the same way
+(`calls_to_review` lists them as `kind: interview`; the id is the meeting's):
+the call made from the interview's page, once it ended, with how you logged
+the interview (its outcome, and your notes when there's no recording). They
+sit apart from the cold calls in coaching's counts, and the interview's page
+shows the same Coaching card for its call. On your Claude plan, so it costs nothing extra. A review is kept in
+`call_reviews` (one per reviewer, replaced whole) and laid over the rules'
+reading every time the call is read, so the sweep never undoes it; yours
+(`reviewer: 'rep'`, when you tell Claude what happened) wins over Claude's.
 
 Nothing interrupts a call. The notes sit in a **Coaching** card on the call
 page, under the script:
 
 - **After the call with …**: when you log a call and land on the next one,
-  the tags in a line (with what it wasn't sure of), then what to adjust from
+  the call drawn to scale (a strip: the phone menu, the front desk, the hold
+  and them underneath, your turns ticking above the middle and theirs below,
+  a taller tick for a story of a minute or more, dots for your opening, their
+  objection and the next step, and the same in words after it; from the
+  transcript, or one segment as long as the call without one), the tags in a
+  line (with what it wasn't sure of), then what to adjust from
   the last: a connect under 1:30 of talk that left with no next step ("leave
   with a time"), stopping at the front desk (by name, what they did, and what
   to try for that), the menu digit for next time, an objection it didn't get
@@ -560,33 +604,91 @@ page, under the script:
 - **Before this call**: what time it is for them and how that hour has gone
   (and your best hour), how the last call with them went, the front desk at
   their company by name with the line that has got you through before, the
-  objection to expect with an opening that got past it, rushed connects
-  piling up lately, and what your longest connect did.
+  objection to expect with an opening that got past it, their last
+  interview if it was canceled (by them: the line is open, offer another
+  time), rushed connects piling up lately, and what your longest connect did.
 
-**Coaching** in the navbar has the patterns across every call:
+**Coaching** in the navbar has the patterns across every call, in two halves,
+with the tables that need more calls parked under them:
 
+**Earning the conversation**: getting past the menu and the front desk to the
+person, and leaving with a next step.
+
+- How far your calls get, as bars: calls, someone picked up, reached them, a
+  next step agreed, an interview booked on one of those calls (counted by
+  call), an interview held. Counts, not
+  rates, so they hold at any number of calls, and the step that loses the
+  most (at least 40% of the one before) is named with what to try.
+- The interviews your calls booked, followed to how each turned out: held,
+  no-show, canceled by them (they told you ahead: a reply, unlike a no-show)
+  or by you, still ahead, or past its time with nothing logged (listed, to
+  log on Interviews), and how many were moved. By how far ahead it was
+  booked, with a calendar invite or not, and how long you talked on the call
+  that booked it, each with the share held (your own cancels left out). From the outcomes logged on
+  Interviews (`meeting_logs`); one set straight in HubSpot isn't seen.
 - The front desk as its own category: how often it put you through, what it
-  did otherwise, by name, and what you said when it put you through.
-- Rushed connects: under 1:30 of talk with no next step, listed.
+  did otherwise (as bars), by name, and what you said when it put you through.
+- Objections, most common first, in their words, with the openings that got
+  past them.
+- Your last twenty calls drawn to scale, one above the other on one scale
+  (the longest is the full width), each linking its page: where each call
+  went and where it ended, at a glance.
+
+**The conversation**: once you reach them, the Mom Test.
+
+- The Mom Test, call by call: on every call and interview that reached them,
+  newest first, whether you asked about a specific last time, whether you
+  pitched, their longest story (a minute or more is a story), whether you
+  caught the fluff, and what they gave up at the end (their time, an intro,
+  money), with the counts above the table and the longest story named. A
+  dash is nothing said yet, not a no: the rules hear some of it on a
+  transcript, a review settles the rest.
+- Who did the talking: on each recorded call that reached them, their share
+  of the words against half (on an interview they should do most of it).
 - Long connects (5 minutes or more of talk): what worked, the opening, what
   was agreed, and how you talked on recorded ones against short ones (their
   share of the talking, your questions, "you" over "we"), from their part of
   the call.
-- Objections, most common first, in their words, with the openings that got
-  past them.
-- Reached rate by hour of their day and by their time zone (from the
-  contact's state, or their company's; unknown counts in yours), with groups
-  under three calls marked as too few.
-- Follow-up timing: by the gap since the last call, how often the next call
-  reached them, after a connect (a second connect) and before one.
-- Average length by outcome, how far calls get, and your last calls with
-  their tags and what to adjust on each.
+- Rushed connects: under 1:30 of talk with no next step, listed.
+- What to adjust, call by call: your last calls with their tags and the
+  notes on each.
 
-On **Calls**, each logged call shows its tags too, with **Leave out of
-coaching** for a test call (and **Put back in coaching**).
+**When there are enough calls** (folded away until then): reached rate by
+hour of their day (in the contact's time zone, from their state or their
+company's; unknown counts in yours), with groups under three calls marked as
+too few; until two hours have about 30 calls each it says it's too early to
+pick one, and no best hour is named, here or before a call. And follow-up
+timing: by the gap since the last call, how often the next call reached
+them, after a connect (a second connect) and before one.
+
+**What you've heard**, Coaching's second tab, is the point of the calls: what
+they've told you, across every call and interview that reached them, read by
+rules from their part of each recording and from your notes on the call or
+the interview.
+
+- The software they use: named tools of the trade (McLeod, TMW, Truckstop,
+  DAT, Samsara, Motive, QuickBooks, spreadsheets and the rest) and the ways
+  of working that stand in for one (a load board, a TMS, an ELD, something
+  in-house, paper, phone and text), each with how many calls named it and
+  the newest quotes.
+- What they said about their work, by theme: quoting and rates, dispatch and
+  loads, invoicing and getting paid, drivers and people, compliance and
+  safety, the software they use. Each with how many calls touched it, how
+  many of those hurt (a line that names a problem, time lost, a mess), and
+  the quotes, the ones that hurt first. Your notes count when they report
+  what they said or do ("He said they use QuickBooks"), not your own plans.
+- Call by call, newest first.
+
+Counts of calls, never rates, and every quote links its call. The synthesis
+(what keeps coming up, what to ask next, whether to narrow the segment) is
+yours to do with Claude: `what_you_heard` hands it the same.
+
+On **Calls**, each logged call shows its strip and its tags too, with **Leave
+out of coaching** for a test call (and **Put back in coaching**).
 
 It reads only D1 (`call_insights`, one row per logged call, replaced when a
-better source arrives or the rules change), so it never waits on HubSpot and
+better source arrives or the rules change; the bookings from `call_logs`,
+`meeting_bookings` and `meeting_logs` as they are), so it never waits on HubSpot and
 writes nothing to it. A **cron sweep** every 10 minutes keeps it read: it
 runs again any transcription that died (stuck "transcribing" for over 5
 minutes, or never started), then reads up to ten calls not read yet, read
@@ -601,7 +703,7 @@ sources, what's unsure, and what to adjust).
 ### Today's counts
 
 The Queue, Calls and Interviews pages open with three counts for today
-(midnight to midnight in your time zone):
+(midnight to midnight in your time zone), and a fourth that isn't today's:
 
 - **Emails sent**: sent from Gmail through the app, plus those you marked sent
   after sending from HubSpot. An email sent from HubSpot and never marked sent
@@ -612,6 +714,33 @@ The Queue, Calls and Interviews pages open with three counts for today
   Inbound calls aren't counted.
 - **Interviews**: today's HubSpot meetings logged as Completed, with how many
   are still scheduled. It shows "—" if HubSpot's meetings can't be read.
+- **Real conversations**: every one so far, out of 100, with the last thing
+  you learned under it (see below).
+
+### Real conversations
+
+The goal is 100 people who told you about their work: what they do, what it
+costs them, what's hard. A pick-up isn't one, and neither is a friendly no.
+You decide which calls count; the app only keeps the tally.
+
+- **On the log form.** A call that connected (or a WhatsApp message they
+  replied to) and an interview that happened have a box: *Real conversation:
+  they talked about their work, and you learned something*, and one line,
+  *What you learned*. The box comes ticked for an interview that happened and
+  for a call that connected and ran 5 minutes or more; untick it if it wasn't.
+  Left blank, the line is your notes' first sentence.
+- **On Coaching.** The **Real conversations** card, at the top, lists each
+  one: who, when, the line, and Uncount. Under it, **Reached them, not
+  counted yet**: the calls coaching heard reach the person, each with its
+  notes' first sentence ready to keep or change, and Count. That's how a call
+  logged before the box existed gets counted.
+- **The pace.** How many logged calls it has taken per conversation, and
+  about how many more calls the rest will take at that rate.
+
+People, not calls: a second conversation with someone already counted adds
+nothing to the number. D1 only (`conversations`); nothing goes to HubSpot.
+The connector's `log_call` and `log_meeting` take `real_conversation` and
+`learned`, and `today` returns the count.
 
 ### Claude connector
 
@@ -627,10 +756,14 @@ as the pages.
   `get_company`, `get_email_task` (with the research context),
   `drafting_rules` (the same rules as Draft with Claude), `get_call_task`
   (the call script filled in, history, coaching), `call_coaching` (the
-  patterns across every call), `get_meeting` (prep and the interview
+  patterns across every call), `calls_to_review` and `get_call_review` (a
+  logged call to review, with its transcript and the review rules),
+  `what_you_heard` (the software they use and what they said about their
+  work, by theme, with every quote), `get_meeting` (prep and the interview
   questions), `recent_inbound_calls` and `unfinished`.
 - **Writes:** `save_draft`, `mark_email_sent`, `drop_email_task`, `log_call`,
-  `snooze_call`, `book_interview` (never with a calendar invite: send one from
+  `snooze_call`, `review_call` (a call's review for coaching, in the app
+  only), `book_interview` (never with a calendar invite: send one from
   the interview's page), `log_meeting`, `open_task_for_contact` and
   `save_contact_numbers` (phone and mobile, with extensions). Each is
   safe to repeat, like the pages' buttons, and each is in the audit log under
@@ -719,7 +852,7 @@ src/
   prompts/               draft-system (Claude's drafting rules), interview-questions (the prep page)
   lib/                   hubspot, twilio (fetch wrappers), ai (Workers AI), twiml, phone, transcript,
                          voice-token, call-script, fit, richtext, dates, prompt, work-plan, upwork, background, db,
-                         call-insight (one call), coaching (the patterns)
+                         call-insight (one call), coaching (the patterns), conversations (the 100)
   views/                 hono/html templates
 migrations/              plain SQL for D1
 test/                    node:test via tsx
@@ -1010,7 +1143,7 @@ wrangler secret put HUBSPOT_ACCESS_TOKEN
 # the same Bypass for /mcp, /oauth/mcp/* and /.well-known/*: Claude's servers
 # call them directly, and the Worker checks the connector's OAuth token
 # instead (/authorize stays behind Access: that's where you approve it).
-npm run deploy   # applies the remote D1 migrations, then deploys
+npm run deploy   # applies any new migrations to remote D1 first
 ```
 
 Workers Builds (the Worker's Settings → Builds, connected to the GitHub repo)
@@ -1031,6 +1164,14 @@ npm test           # 388 tests: pure logic, Access token checks, the real SQL on
 npm run format     # apply Prettier
 npm run db:log     # last 20 audit rows (who changed what in HubSpot)
 ```
+
+A PR merges into `main` only when two checks pass: `check` (the same
+`npm run check`, plus `npm audit` on what ships) and `codex-review`, which
+waits until Codex has reviewed the PR's latest commit, so "merge when ready"
+waits for Codex too. It never holds a merge for long: if Codex is out of
+usage, or hasn't answered in 15 minutes, it passes with a warning, and the
+`skip-codex` label passes it at once. Codex's comments don't block: once it
+has reviewed, what to do with them is up to you.
 
 - **Lint** is only the type-aware promise rules (`no-floating-promises` and
   friends). On Workers, an un-awaited promise is work that silently never

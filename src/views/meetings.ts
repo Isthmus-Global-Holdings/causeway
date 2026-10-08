@@ -1,4 +1,5 @@
 import { html, raw } from 'hono/html';
+import type { CallNotes } from '../actions/coaching';
 import { formatLocal, localDate, saidAhead } from '../lib/dates';
 import type { Dial, MeetingLog, RecentSend } from '../lib/db';
 import type { MeetingOutcome } from '../lib/hubspot';
@@ -27,7 +28,8 @@ import {
   type DialView,
   type WhatsAppDraft,
 } from './calls';
-import { LOGGABLE_OUTCOMES, meetingLogDone } from '../workflows/meeting-logged';
+import { suggestConversation } from '../lib/conversations';
+import { CANCELED_BY, LOGGABLE_OUTCOMES, meetingLogDone } from '../workflows/meeting-logged';
 import {
   isOpen,
   meetingRow,
@@ -37,8 +39,9 @@ import {
 } from '../workflows/meeting-queue';
 import { companyName, contactName } from '../workflows/parties';
 import type { TodayCounts } from '../workflows/today';
+import { coachingCard } from './coaching';
 import { whereTheyAre } from './facts';
-import { flash as flashBox, layout, recordUrl, timeInput, todayStrip, type Html } from './layout';
+import { conversationBox, flash as flashBox, layout, recordUrl, timeInput, todayStrip, type Html } from './layout';
 
 export const OUTCOME_LABELS: Record<MeetingOutcome, string> = {
   SCHEDULED: 'Scheduled',
@@ -174,6 +177,7 @@ export interface MeetingPageState {
   dial: Dial | null; // the latest call made from this page
   dialState: DialState | null;
   recordingState: RecordingState | null;
+  coaching: CallNotes | null; // what coaching read from that call, once it ended
   setup: CallsSetup;
   portalId: string;
   now: number;
@@ -200,28 +204,41 @@ function lastEmailBox(email: RecentSend | null, timeZone: string): Html {
   </div>`;
 }
 
-// Shows the new-time fields only when "Moved to another time" is picked.
-// Picking "No show" sets up the follow-up: an email today, drafted from the
-// missed-interview template.
+// Shows the new-time fields only when "Moved to another time" is picked, and
+// who canceled only when "Canceled" is. Picking "No show", or "Canceled" by
+// them, sets up the follow-up: an email today, drafted from the missed- or
+// canceled-interview template.
 const RESCHEDULE_SCRIPT = `(() => {
   const outcome = document.getElementById('outcome');
   const moved = document.getElementById('new-time');
+  const canceled = document.getElementById('canceled-by');
+  const by = document.getElementById('canceled_by');
   const next = document.getElementById('next_type');
   const nextDate = document.getElementById('next_date');
   const hint = document.getElementById('no-show-hint');
+  const cancelHint = document.getElementById('canceled-hint');
   if (!outcome || !moved) return;
+  const theyCanceled = () => outcome.value === 'CANCELED' && (!by || by.value === 'them');
   const sync = () => {
     const on = outcome.value === 'RESCHEDULED';
     moved.hidden = !on;
     for (const input of moved.querySelectorAll('input')) input.required = on;
+    if (canceled) canceled.hidden = outcome.value !== 'CANCELED';
     if (hint) hint.hidden = outcome.value !== 'NO_SHOW';
+    if (cancelHint) cancelHint.hidden = !theyCanceled();
+  };
+  const emailToday = () => {
+    if (!next || !nextDate) return;
+    next.value = 'EMAIL';
+    nextDate.value = nextDate.min;
   };
   outcome.addEventListener('change', () => {
     sync();
-    if (outcome.value === 'NO_SHOW' && next && nextDate) {
-      next.value = 'EMAIL';
-      nextDate.value = nextDate.min;
-    }
+    if (outcome.value === 'NO_SHOW' || theyCanceled()) emailToday();
+  });
+  if (by) by.addEventListener('change', () => {
+    sync();
+    if (theyCanceled()) emailToday();
   });
   sync();
 })();`;
@@ -239,6 +256,13 @@ function logForm(state: MeetingPageState, startAt: number | null): Html {
         ${LOGGABLE_OUTCOMES.map((o) => html`<option value="${o.value}">${o.label}</option>`)}
       </select>
     </div>
+    <div class="field" id="canceled-by" hidden>
+      <label for="canceled_by">Who canceled?</label>
+      <select id="canceled_by" name="canceled_by">
+        ${CANCELED_BY.map((c) => html`<option value="${c.value}">${c.label}</option>`)}
+      </select>
+      <p class="muted">When they cancel, they told you rather than not turning up: a reply, so the line is open. Coaching counts it apart from a no-show.</p>
+    </div>
     <div class="grid-2" id="new-time">
       <div class="field">
         <label for="new_date">New date</label>
@@ -253,6 +277,7 @@ function logForm(state: MeetingPageState, startAt: number | null): Html {
       <label for="notes">Interview notes</label>
       <textarea id="notes" name="notes" class="mono" placeholder="What they told you, in their words. What they do today, what it costs them, who else to talk to."></textarea>
     </div>
+    ${conversationBox(['COMPLETED'], suggestConversation({ kind: 'interview', outcome: LOGGABLE_OUTCOMES[0].value }))}
     <div class="grid-2">
       <div class="field">
         <label for="next_type">Follow-up task</label>
@@ -262,6 +287,7 @@ function logForm(state: MeetingPageState, startAt: number | null): Html {
           <option value="CALL">Call</option>
         </select>
         <p class="muted" id="no-show-hint" hidden>After a no-show, the email comes drafted: sorry we missed each other, another time, or 3 questions by email. Sending it sets up tomorrow's call.</p>
+        <p class="muted" id="canceled-hint" hidden>When they canceled, the email comes drafted: thanks for letting me know, another time, or 3 questions by email. Sending it sets up tomorrow's call.</p>
       </div>
       <div class="field">
         <label for="next_date">On</label>
@@ -271,7 +297,7 @@ function logForm(state: MeetingPageState, startAt: number | null): Html {
     <ol class="consequences">
       <li>The meeting in HubSpot gets this outcome, and your notes go in its internal notes. Moved: it moves to the new time instead.</li>
       <li>If you sent them a calendar invite from here, moving or canceling updates it, and Google emails them.</li>
-      <li>The follow-up task, if any, is created for that day at 9:00. After a no-show, an email follow-up comes with its draft written.</li>
+      <li>The follow-up task, if any, is created for that day at 9:00. After a no-show, or when they canceled, an email follow-up comes with its draft written.</li>
       <li>If it happened or was moved, their Lead Status moves to Connected, unless you've already set it further along.</li>
     </ol>
     ${
@@ -381,6 +407,7 @@ export function meetingPage(state: MeetingPageState, actor: string): Html {
           ${open && row.phoneCall ? callCard(view, canDial, true) : ''}
           ${browserCalls ? browserCallPanel : ''}
           ${recording}
+          ${!live && state.coaching ? coachingCard({ before: [], brief: null, after: state.coaching }) : ''}
           ${questionsCard()}
           ${historyCard(state)}
           ${lastEmailBox(state.lastEmail, state.timeZone)}

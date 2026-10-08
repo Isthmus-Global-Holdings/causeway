@@ -73,7 +73,11 @@ section { display: flex; flex-direction: column; gap: var(--space-2); margin-top
 .next-up { padding: var(--space-6); }
 .next-up .next-company { font-size: 1.35rem; font-weight: 700; line-height: 1.25; margin-top: var(--space-1); }
 .row > p.muted { max-width: 36rem; }
-dl.today { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-3); margin: 0; }
+dl.today { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); margin: 0; }
+dl.today .goal { border-color: var(--accent); }
+dl.today .goal .of { font-size: 1rem; font-weight: 400; color: var(--muted); }
+dl.today .learned { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+dl.today .learned a { color: inherit; }
 dl.today .stat { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: var(--space-3) var(--space-4); }
 dl.today dt { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
 dl.today dd { margin: 0; }
@@ -85,6 +89,8 @@ dl.today dd:not(.muted) { font-size: 1.75rem; font-weight: 700; line-height: 1.2
 .flash.warn { background: var(--warn-bg); color: var(--warn-fg); }
 .flash a { color: inherit; text-decoration: underline; font-weight: 600; }
 form.inline { display: inline; }
+#conversations form.row { margin-top: var(--space-2); align-items: center; }
+#conversations form.row input[type=text] { flex: 1; min-width: 12rem; }
 #unfinished { display: grid; gap: var(--space-2); }
 #unfinished:empty { display: none; }
 #unfinished .saving { margin: 0; }
@@ -126,6 +132,47 @@ ul.coach { list-style: none; margin: 0; padding: 0; display: flex; flex-directio
 ul.coach li { padding-left: var(--space-3); border-left: 2px solid var(--line); }
 ul.coach li.flag { border-left-color: var(--warn-fg); }
 ul.coach li.bright { border-left-color: var(--accent); }
+/* Coaching's charts: a bar as wide as its share (--w, set by the view), its count beside it */
+dl.bars { display: grid; grid-template-columns: minmax(7rem, 15rem) minmax(0, 1fr) 3.5rem; gap: var(--space-2) var(--space-3); align-items: center; margin: 0; }
+dl.bars dt { overflow-wrap: anywhere; }
+dl.bars dd { margin: 0; }
+dl.bars .track { position: relative; height: 0.8rem; background: var(--line); border-radius: var(--radius-sm); }
+dl.bars .fill { display: block; width: var(--w); height: 100%; background: var(--accent); border-radius: var(--radius-sm); }
+dl.bars .fill.quiet { background: var(--muted); }
+dl.bars .fill.warn { background: var(--warn-fg); }
+dl.bars .half { position: absolute; left: 50%; top: -3px; bottom: -3px; border-left: 2px solid var(--fg); }
+dl.bars .n { text-align: right; font-variant-numeric: tabular-nums; }
+/* Coaching's timelines: one call to scale (--w: its share of the row's scale). The phases run
+   underneath, your turns tick above the middle, theirs below (taller for a story), the moments are
+   dots on top. Every position is a custom property set by the view; the text alternative follows. */
+dl.strips { display: grid; grid-template-columns: minmax(7rem, 15rem) minmax(0, 1fr) 3.5rem; gap: var(--space-2) var(--space-3); align-items: center; margin: 0; }
+dl.strips dt { overflow-wrap: anywhere; }
+dl.strips dd { margin: 0; }
+dl.strips .n { text-align: right; font-variant-numeric: tabular-nums; }
+.strip { position: relative; height: 1.5rem; width: var(--w, 100%); border-radius: var(--radius-sm); background: var(--line); }
+.strip .phase { position: absolute; top: 0.6rem; bottom: 0; left: var(--l); width: var(--w); }
+.strip .phase.menu { background: var(--line); }
+.strip .phase.desk { background: var(--muted); opacity: 0.45; }
+.strip .phase.hold { background: var(--warn-bg); border-top: 1px dashed var(--warn-fg); }
+.strip .phase.them, .strip .phase.call { background: var(--accent); opacity: 0.3; }
+.strip .phase.voicemail { background: var(--muted); opacity: 0.25; }
+.strip .tick { position: absolute; left: var(--l); width: max(var(--w), 2px); }
+.strip .tick.rep { top: 0.6rem; height: 0.4rem; background: var(--fg); }
+.strip .tick.prospect { bottom: 0; height: 0.5rem; background: var(--accent); }
+.strip .tick.prospect.story { height: 0.9rem; }
+.strip .mark { position: absolute; top: 0; left: var(--l); width: 0.5rem; height: 0.5rem; margin-left: -0.25rem; border-radius: 50%; background: var(--fg); }
+.strip .mark.objection { background: var(--warn-fg); }
+.strip .mark.next_step, .strip .mark.last_time { background: var(--accent); }
+.strip .mark.pitch { background: var(--warn-fg); }
+.strip-text { margin: 0; font-size: 0.9em; }
+/* Coaching's two halves, and the tables parked until there are enough calls */
+section.half { gap: var(--space-4); }
+section.half > h2 { margin: 0; }
+section.half > h2 + p { margin: 0; }
+details.card > summary { font-weight: 600; }
+details.card > section { gap: var(--space-2); margin-top: var(--space-3); }
+/* Read out, not shown: the words behind a picture */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 ol.consequences { margin: 0; padding-left: var(--space-5); display: flex; flex-direction: column; gap: var(--space-1); }
 
 /* Tables */
@@ -198,6 +245,9 @@ dl.headers dd { margin: 0; overflow-wrap: anywhere; }
   button, .button { padding: 0.6rem 0.9rem; }
   input[type=text], input[type=search], input[type=date], input[type=time], input[type=url], textarea, select { font-size: 16px; }
   .matches { grid-template-columns: minmax(0, 1fr); }
+  dl.bars { grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3rem; }
+  dl.strips { grid-template-columns: minmax(0, 1fr) 3rem; }
+  dl.strips dt { grid-column: 1 / -1; }
   .waiting { grid-template-columns: minmax(0, 1fr); }
   table.stacked thead { display: none; }
   table.stacked, table.stacked tbody, table.stacked tr, table.stacked td { display: block; }
@@ -208,7 +258,8 @@ dl.headers dd { margin: 0; overflow-wrap: anywhere; }
   table.stacked td.row-actions { width: auto; }
   table.stacked td.row-actions .actions { justify-content: flex-start; flex-wrap: wrap; }
   td.fit-cell { width: auto; }
-  dl.today { gap: var(--space-2); }
+  dl.today { gap: var(--space-2); grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  dl.today .goal { grid-column: 1 / -1; }
   dl.today .stat { padding: var(--space-2) var(--space-3); }
   dl.today dt { font-size: 0.7rem; }
   .call-dock { left: 0; right: 0; bottom: 0; width: auto; max-height: 75vh; border-width: 1px 0 0;

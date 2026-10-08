@@ -10,11 +10,28 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Context } from 'hono';
 import { z } from 'zod';
 import { bookInterview, callsOverview, logCall, snoozeCallTask } from '../actions/calls';
-import { callCoaching, coachingOverview } from '../actions/coaching';
+import {
+  callCoaching,
+  callForReview,
+  callsForReview,
+  coachingOverview,
+  heardOverview,
+  saveCallReview,
+} from '../actions/coaching';
 import { dropEmailTask, markEmailSent, saveEmailDraft } from '../actions/emails';
 import { latestMeetingDial, logMeeting, meetingsOverview } from '../actions/meetings';
 import { openContactTask, saveNumbers } from '../actions/records';
 import { loadAppSettings } from '../lib/app-settings';
+import {
+  COMMITMENTS,
+  GATEKEEPER_RESULTS,
+  GATES,
+  OBJECTION_KINDS,
+  parseUnsure,
+  REVIEWERS,
+  STAGES,
+  type ObjectionKind,
+} from '../lib/call-insight';
 import { fillScript } from '../lib/call-script';
 import { parseFitReason } from '../lib/fit';
 import { localDate, parseHubSpotTime } from '../lib/dates';
@@ -50,7 +67,11 @@ import { loadTodayCounts } from '../workflows/today';
 import {
   callRowSummary,
   afterCallSummary,
+  callInsightSummary,
+  callReviewSummary,
+  heardSummary,
   beforeCallSummary,
+  bookingSummary,
   coachingSummary,
   companySummary,
   contactSummary,
@@ -120,7 +141,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Today',
       description:
-        "Today at a glance: emails sent and people called today, today's interviews, the next email and the next call (as the app ranks them), and any HubSpot writes that didn't finish.",
+        "Today at a glance: emails sent and people called today, today's interviews, the real conversations so far (people who told the rep about their work, toward 100, and the newest), the next email and the next call (as the app ranks them), and any HubSpot writes that didn't finish.",
       annotations: READ,
     },
     () =>
@@ -434,14 +455,68 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Call coaching',
       description:
-        "Patterns across every call the rep logged (test calls left out), each read from its transcript or notes: the phone menu, who answered (them, the front desk, voicemail), how far calls get, reached rate by hour of the contact's day and by time zone, average length by outcome, the front desk (by name, and the lines that got the rep put through), objections and the openings that got past them, which follow-up gaps led to another connect, rushed connects (under 1:30) that left with no next step, and what the long connects did. Groups smaller than minCallsForAPattern are too small to call a pattern.",
+        "Patterns across every call the rep logged (test calls left out), each read from its transcript or notes: the phone menu, who answered (them, the front desk, voicemail), how far calls get, momTest (on the calls and interviews that reached them: how many asked about a specific last time, pitched, got a story of a minute or more, caught the fluff, and what they committed: counts of what the rules and reviews have said), reached rate by hour of the contact's day and by time zone, average length by outcome, the front desk (by name, and the lines that got the rep put through), objections and the openings that got past them, which follow-up gaps led to another connect, rushed connects (under 1:30) that left with no next step, and what the long connects did. bookedInterviews: the interviews those calls booked, followed to how each turned out (held, no-show, canceled by them or by the rep, still ahead, or past with nothing logged: toLog, each in toLogInterviews with the url to log it on), by how far ahead it was booked, calendar invite or not, and how long they talked on the call that booked it; one they canceled is a reply (they told the rep), a no-show isn't, and the rep's own cancels are left out of the groups. Groups smaller than minCallsForAPattern are too small to call a pattern.",
       annotations: READ,
     },
     () =>
       run(async () => {
-        const { settings, report, unread } = await coachingOverview(c);
-        return { ...coachingSummary(report, settings.timeZone, origin), callsNotReadYet: unread > 0 };
+        const { settings, report, bookings, momTest, unread } = await coachingOverview(c);
+        return {
+          ...coachingSummary(report, settings.timeZone, origin, momTest),
+          bookedInterviews: bookingSummary(bookings, settings.timeZone, origin),
+          callsNotReadYet: unread > 0,
+        };
       })
+  );
+
+  server.registerTool(
+    'what_you_heard',
+    {
+      title: 'What you’ve heard',
+      description:
+        "What prospects have told the rep across every call and interview that reached them, read by rules from their part of each transcript and from the rep's notes: the software they use (named tools, or a load board, a TMS, spreadsheets, paper, phone and text), with how many calls named each and the newest quotes; what they said about their work by theme (quoting and rates, dispatch and loads, invoicing and getting paid, drivers and people, compliance, the software they use), with how many calls touched each, how many of those hurt, and the quotes; and call by call. Counts of calls, never rates. This is the record: the synthesis (what keeps coming up, what to ask next, which segment to narrow to) is yours to do with the rep from it.",
+      inputSchema: {},
+      annotations: READ,
+    },
+    () =>
+      run(async () => {
+        const { settings, report } = await heardOverview(c);
+        return heardSummary(report, settings.timeZone, origin);
+      })
+  );
+
+  server.registerTool(
+    'calls_to_review',
+    {
+      title: 'Calls to review',
+      description:
+        'Logged calls and recorded interviews worth a review, newest first: someone picked up (them or the front desk), and neither the rep nor Claude has reviewed it yet. Each with its kind (call or interview), its tags as the rules read them and which they were unsure of. Review each with get_call_review, then review_call.',
+      inputSchema: { limit: z.number().int().min(1).max(25).default(10) },
+      annotations: READ,
+    },
+    ({ limit }) =>
+      run(async () => {
+        const { settings, calls } = await callsForReview(c, limit);
+        return {
+          timeZone: settings.timeZone,
+          calls: calls.map((call) => ({
+            ...callInsightSummary(call, settings.timeZone, origin),
+            unsure: parseUnsure(call.unsure),
+          })),
+        };
+      })
+  );
+
+  server.registerTool(
+    'get_call_review',
+    {
+      title: 'Call to review',
+      description:
+        "One logged call or recorded interview (task_id: the CALL task id, or the interview's meeting id from calls_to_review), to review it for coaching: the call (who, outcome, length, the rep's notes), its transcript turn by turn with times, the tags as read so far (reading: rules, with any reviews laid over them; unsure lists what nothing was sure of), the reviews so far, and the rules for reviewing it. Then save the review with review_call.",
+      inputSchema: { task_id: id },
+      annotations: READ,
+    },
+    ({ task_id }) => run(async () => callReviewSummary(await callForReview(c, task_id), origin))
   );
 
   server.registerTool(
@@ -607,10 +682,32 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
           .describe(
             'only when the contact asked to be called at a time: a set-time call, with a HubSpot reminder, that becomes the next call then'
           ),
+        real_conversation: z
+          .boolean()
+          .optional()
+          .describe(
+            "only when the rep says so: they talked about their work and the rep learned something. Counts toward the rep's 100 real conversations (by person)"
+          ),
+        learned: z
+          .string()
+          .max(280)
+          .optional()
+          .describe('with real_conversation: what the rep learned, one line, their words'),
       },
       annotations: WRITE,
     },
-    ({ task_id, channel, outcome, notes, whatsapp_field, next_type, next_date, next_time }) =>
+    ({
+      task_id,
+      channel,
+      outcome,
+      notes,
+      whatsapp_field,
+      next_type,
+      next_date,
+      next_time,
+      real_conversation,
+      learned,
+    }) =>
       run(async () => {
         const logged = await logCall(
           c,
@@ -623,6 +720,8 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
             next_type: next_type ?? '',
             next_date: next_date ?? '',
             next_time: next_time ?? '',
+            conversation: real_conversation ? '1' : '',
+            learned: learned ?? '',
           },
           null
         );
@@ -695,25 +794,59 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Log interview',
       description:
-        'Log how an interview went: the outcome and notes on the meeting (or its new time, for RESCHEDULED), Lead Status, and a follow-up task if asked. If the app sent the contact a calendar invite, rescheduling or canceling updates it (Google emails them). start_at comes from get_meeting.',
+        "Log how an interview went: the outcome and notes on the meeting (or its new time, for RESCHEDULED), Lead Status, and a follow-up task if asked. CANCELED takes canceled_by: 'them' (they told the rep ahead: a reply, counted apart from a no-show; an EMAIL follow-up comes drafted, offering another time) or 'rep'. If the app sent the contact a calendar invite, rescheduling or canceling updates it (Google emails them). start_at comes from get_meeting.",
       inputSchema: {
         meeting_id: id,
         start_at: z.string().min(1).describe("the meeting's start_at from get_meeting"),
         outcome: z.enum(LOGGABLE_OUTCOMES.map((o) => o.value) as [string, ...string[]]),
         notes: z.string().max(10_000).default(''),
+        canceled_by: z.enum(['them', 'rep']).optional().describe("CANCELED only: who called it off (default 'them')"),
         new_date: date.optional().describe('RESCHEDULED only'),
         new_time: time.optional().describe('RESCHEDULED only'),
         next_type: z.enum(['CALL', 'EMAIL']).optional().describe('the follow-up task, if any'),
         next_date: date.optional().describe("the follow-up's day, YYYY-MM-DD"),
+        real_conversation: z
+          .boolean()
+          .optional()
+          .describe(
+            "only when the rep says so: they talked about their work and the rep learned something. Counts toward the rep's 100 real conversations (by person). COMPLETED only"
+          ),
+        learned: z
+          .string()
+          .max(280)
+          .optional()
+          .describe('with real_conversation: what the rep learned, one line, their words'),
       },
       annotations: WRITE,
     },
-    ({ meeting_id, start_at, outcome, notes, new_date, new_time, next_type, next_date }) =>
+    ({
+      meeting_id,
+      start_at,
+      outcome,
+      canceled_by,
+      notes,
+      new_date,
+      new_time,
+      next_type,
+      next_date,
+      real_conversation,
+      learned,
+    }) =>
       run(async () => {
         const result = await logMeeting(
           c,
           meeting_id,
-          { outcome, notes, new_date, new_time, next_type: next_type ?? '', next_date: next_date ?? '' },
+          {
+            outcome,
+            canceled_by,
+            notes,
+            new_date,
+            new_time,
+            next_type: next_type ?? '',
+            next_date: next_date ?? '',
+            conversation: real_conversation ? '1' : '',
+            learned: learned ?? '',
+          },
           start_at
         );
         const { timeZone } = await loadAppSettings(env);
@@ -782,6 +915,80 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
           { workflow: 'task-action', taskId: contact_id }
         );
         return { saved: changes, unchanged: Object.keys(changes).length === 0 };
+      })
+  );
+
+  server.registerTool(
+    'review_call',
+    {
+      title: 'Review a call',
+      description:
+        "Save a review of one logged call or recorded interview (task_id as in calls_to_review) for coaching, after reading it with get_call_review and following its rules: corrections for only the tags that were wrong or unsure (the rest keep the rules' reading), the Mom Test on it (asked about the last time, pitched, their longest story, fluff caught, what they committed), what worked, and what to adjust next time. Saved in the app only (not HubSpot); reviewing again replaces this reviewer's earlier review. reviewer 'rep' when the rep says what happened; the rep's review wins over Claude's. leave_out: true for a test call, to leave it out of coaching (false puts it back).",
+      inputSchema: {
+        task_id: id,
+        reviewer: z.enum(REVIEWERS).default('claude'),
+        corrections: z
+          .object({
+            whoAnswered: z.enum(GATES).optional(),
+            frontDeskResult: z.enum(GATEKEEPER_RESULTS).nullable().optional(),
+            reachedThem: z.boolean().optional(),
+            stage: z.enum(STAGES).optional(),
+            objection: z
+              .object({
+                kind: z.enum(OBJECTION_KINDS as [ObjectionKind, ...ObjectionKind[]]).nullable(),
+                said: z.string().max(300).nullable().optional().describe('their words'),
+              })
+              .optional(),
+            nextStep: z
+              .object({
+                agreed: z.boolean(),
+                what: z.string().max(200).nullable().optional().describe('in a few words'),
+              })
+              .optional(),
+            askedAboutLastTime: z.boolean().optional().describe('asked about a specific past instance'),
+            pitched: z.boolean().optional().describe('described the idea or the product'),
+            longestStorySec: z
+              .number()
+              .int()
+              .min(0)
+              .max(3600)
+              .nullable()
+              .optional()
+              .describe('their longest uninterrupted stretch, from the stamps'),
+            fluffCaught: z.boolean().optional().describe('brought "usually" / "I would" back to a past instance'),
+            commitment: z.enum(COMMITMENTS).nullable().optional().describe('what they gave up: time, intro, money'),
+          })
+          .default({}),
+        what_worked: z.string().max(1_000).optional(),
+        adjust: z.string().max(1_000).optional(),
+        leave_out: z.boolean().optional(),
+      },
+      annotations: WRITE,
+    },
+    ({ task_id, reviewer, corrections, what_worked, adjust, leave_out }) =>
+      run(async () => {
+        const notes = await saveCallReview(c, task_id, {
+          reviewer,
+          corrections,
+          what_worked: what_worked ?? null,
+          adjust: adjust ?? null,
+          leave_out,
+        });
+        const log = await d1CallLogStore(env.DB).get(task_id);
+        // An interview's follow-up is on its latest log.
+        const nextDue = log
+          ? log.next_due
+          : await (async () => {
+              const dial = await d1DialStore(env.DB).latestForTask(task_id);
+              return (await d1MeetingLogStore(env.DB).latest(task_id, dial?.started_sec ?? null))?.next_due ?? null;
+            })();
+        const { timeZone } = await loadAppSettings(env);
+        return {
+          saved: true,
+          leftOut: leave_out ?? null,
+          reading: afterCallSummary(notes, nextDue, timeZone),
+          url: pageUrl(origin, log ? `/calls/${task_id}` : `/meetings/${task_id}`),
+        };
       })
   );
 }

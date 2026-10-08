@@ -1,10 +1,11 @@
 // The counts at the top of the Queue, Calls and Interviews pages: emails sent,
-// people called and interviews had today, in the rep's time zone. Emails and
-// calls come from D1 (what the rep did through the app); interviews from the
-// HubSpot meetings that start today.
+// people called and interviews had today, in the rep's time zone, and the
+// real conversations so far, toward 100. Emails, calls and conversations come
+// from D1 (what the rep did through the app); interviews from the HubSpot
+// meetings that start today.
 
 import { dayBounds, parseHubSpotTime } from '../lib/dates';
-import { dayActivity } from '../lib/db';
+import { d1ConversationStore, dayActivity, type ConversationSummary } from '../lib/db';
 import type { HubSpot } from '../lib/hubspot';
 import { isOpen, meetingOutcome, type MeetingRow } from './meeting-queue';
 
@@ -13,6 +14,7 @@ export interface TodayCounts {
   peopleCalled: number;
   // null when HubSpot's meetings couldn't be read: a 0 would read as "none".
   interviews: { had: number; open: number } | null;
+  conversations: ConversationSummary; // every one so far, not just today's
 }
 
 type MeetingTimes = Pick<MeetingRow, 'startAt' | 'outcome'>;
@@ -54,8 +56,9 @@ export async function loadTodayCounts(
   meetings?: MeetingTimes[] | null
 ): Promise<TodayCounts> {
   const bounds = dayBounds(now, timeZone);
-  const [activity, rows] = await Promise.all([
+  const [activity, conversations, rows] = await Promise.all([
     dayActivity(db, Math.floor(bounds.startMs / 1000), Math.floor(bounds.endMs / 1000)),
+    d1ConversationStore(db).summary(),
     meetings === undefined
       ? todaysMeetings(hs, bounds).catch((err: unknown) => {
           console.error('meetings for today’s counts', err);
@@ -63,5 +66,5 @@ export async function loadTodayCounts(
         })
       : meetings,
   ]);
-  return { ...activity, interviews: rows ? countInterviews(rows, bounds) : null };
+  return { ...activity, interviews: rows ? countInterviews(rows, bounds) : null, conversations };
 }

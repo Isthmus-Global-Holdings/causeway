@@ -5,11 +5,12 @@
 
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
-import { d1CallLogStore, setSetting } from '../src/lib/db.ts';
+import { d1CallLogStore, d1ConversationStore, d1DialStore, d1MeetingLogStore, setSetting } from '../src/lib/db.ts';
 import { mcpApp } from '../src/mcp/app.ts';
 import type { AppEnv } from '../src/types.ts';
 import { callLogDone } from '../src/workflows/call-logged.ts';
 import { loadCallQueue, planCalls } from '../src/workflows/call-queue.ts';
+import { putThrough } from './call-fixtures.ts';
 import { FakeHubSpot, hubspotApi } from './fakes.ts';
 import { sqliteD1 } from './sqlite-d1.ts';
 
@@ -115,10 +116,21 @@ test('it introduces itself and lists its tools, marked read-only or safe to repe
     'get_call_task',
     'drafting_rules',
     'call_coaching',
+    'what_you_heard',
+    'calls_to_review',
+    'get_call_review',
   ]) {
     assert.equal(byName.get(name)?.annotations?.readOnlyHint, true, name);
   }
-  for (const name of ['save_draft', 'log_call', 'snooze_call', 'log_meeting', 'book_interview', 'mark_email_sent']) {
+  for (const name of [
+    'save_draft',
+    'log_call',
+    'snooze_call',
+    'log_meeting',
+    'book_interview',
+    'mark_email_sent',
+    'review_call',
+  ]) {
     assert.equal(byName.get(name)?.annotations?.idempotentHint, true, name);
   }
   assert.ok(!byName.has('send_email') && !byName.has('dial'), 'sending and dialling stay on the pages');
@@ -203,4 +215,188 @@ test('a video interview booked from here needs its join link, since no invite ma
   assert.equal(booked.isError, true);
   assert.match(booked.text, /needs its join link/);
   assert.equal(hs.meetings.length, 0, 'no meeting created');
+});
+
+test('log_call counts a real conversation when the rep says so, and only on a call that reached them', async () => {
+  const counted = await callTool('log_call', {
+    task_id: '1',
+    outcome: 'connected',
+    notes: 'Ana said quoting takes her an hour a load. Call back Thursday.',
+    next_type: 'CALL',
+    next_date: TOMORROW,
+    real_conversation: true,
+    learned: 'Quoting takes an hour a load',
+  });
+  assert.equal(counted.isError, false, counted.text);
+  const row = await d1ConversationStore(db).get('call', '1');
+  assert.equal(row?.contact_id, '10');
+  assert.equal(row?.who, 'Ana Díaz at Acme');
+  assert.equal(row?.learned, 'Quoting takes an hour a load');
+
+  const voicemail = await callTool('log_call', {
+    task_id: '3',
+    outcome: 'left_voicemail',
+    next_type: 'CALL',
+    next_date: TOMORROW,
+    real_conversation: true,
+  });
+  assert.equal(voicemail.isError, false, voicemail.text);
+  assert.equal(await d1ConversationStore(db).get('call', '3'), null, 'a voicemail isn’t a conversation');
+
+  const { data } = await callTool('today');
+  assert.equal(data.counts.conversations.people, 1);
+  assert.equal(data.counts.conversations.latest.learned, 'Quoting takes an hour a load');
+});
+
+test('calls are reviewed from here: the ones to review, one with its rules, and the review saved over the rules', async () => {
+  const logged = await callTool('log_call', {
+    task_id: '1',
+    outcome: 'connected',
+    notes: 'Talked with Ana. Busy at lunch, said call back tomorrow.',
+    next_type: 'CALL',
+    next_date: TOMORROW,
+  });
+  assert.equal(logged.isError, false, logged.text);
+  // A recorded interview, its call over an hour ago, is reviewed from here too.
+  const dials = d1DialStore(db);
+  const nowSec = Math.floor(Date.now() / 1000);
+  await dials.begin(
+    {
+      id: 'dm',
+      task_id: 'm1',
+      subject: 'meeting',
+      contact_id: '10',
+      contact_label: putThrough.label,
+      to_number: '+13855550100',
+      to_extension: null,
+      from_number: '+13852557051',
+      rep_number: '+18085550199',
+      mode: 'phone',
+      started_sec: nowSec - 3600,
+      record: 1,
+    },
+    120
+  );
+  await dials.setRepStatus('dm', 'completed', nowSec - 3000);
+  await dials.setProspectResult('dm', { sid: 'CA9', status: 'completed', durationSec: 543 });
+  await dials.setRecording('dm', { sid: 'RE9', durationSec: 543, channels: 2 });
+  await dials.beginTranscript('dm', nowSec - 3000, 300);
+  await dials.saveTranscript('dm', JSON.stringify(putThrough.turns), null);
+  // Opening coaching reads the calls not read yet, after it answers.
+  await callTool('call_coaching');
+
+  const list = await callTool('calls_to_review');
+  assert.deepEqual(
+    list.data.calls.map((call: { taskId: string; kind: string }) => [call.taskId, call.kind]),
+    [
+      ['1', 'call'],
+      ['m1', 'interview'],
+    ]
+  );
+
+  const call = await callTool('get_call_review', { task_id: '1' });
+  assert.equal(call.isError, false, call.text);
+  assert.match(call.data.rules, /Correct the tags/);
+  assert.equal(call.data.call.repNotes, 'Talked with Ana. Busy at lunch, said call back tomorrow.');
+  assert.equal(call.data.transcript, null, 'logged by hand: no recording');
+  assert.match(call.data.rules, /stamped \[start–end\]/);
+  assert.deepEqual(call.data.reviews, []);
+
+  assert.match(call.data.rules, /## The Mom Test/);
+  assert.deepEqual(call.data.reading.tags.momTest, {
+    askedAboutLastTime: null,
+    pitched: null,
+    longestStorySec: null,
+    fluffCaught: null,
+    commitment: null,
+  });
+
+  const reviewed = await callTool('review_call', {
+    task_id: '1',
+    corrections: {
+      stage: 'conversation',
+      nextStep: { agreed: true, what: 'Call back tomorrow' },
+      askedAboutLastTime: false,
+      fluffCaught: false,
+      commitment: 'time',
+    },
+    what_worked: 'Asked about her week before anything else.',
+    adjust: 'Leave with a time, not “tomorrow”.',
+  });
+  assert.equal(reviewed.isError, false, reviewed.text);
+  assert.equal(reviewed.data.reading.sources.stage.by, 'claude');
+  assert.deepEqual(reviewed.data.reading.tags.momTest, {
+    askedAboutLastTime: false,
+    pitched: null,
+    longestStorySec: null,
+    fluffCaught: false,
+    commitment: 'time',
+  });
+  assert.equal(reviewed.data.reading.sources.commitment.by, 'claude');
+  assert.deepEqual(
+    [reviewed.data.reading.review.whatWorkedBy, reviewed.data.reading.review.adjustBy],
+    ['claude', 'claude']
+  );
+  assert.equal(reviewed.data.reading.review.adjust, 'Leave with a time, not “tomorrow”.');
+  assert.ok(!reviewed.data.reading.unsure.includes('stage'));
+
+  const interview = await callTool('get_call_review', { task_id: 'm1' });
+  assert.equal(interview.isError, false, interview.text);
+  assert.equal(interview.data.call.kind, 'interview');
+  assert.match(interview.data.call.url, /\/meetings\/m1$/);
+  assert.ok(interview.data.transcript.length > 10, 'turn by turn, with stamps');
+  assert.equal(interview.data.reading.tags.reachedThem, true);
+  // The interview logged with a follow-up: the review's answer keeps its time.
+  await d1MeetingLogStore(db).create({
+    log_id: 'm1@log',
+    meeting_id: 'm1',
+    contact_id: '10',
+    company_id: '20',
+    owner_id: null,
+    outcome: 'COMPLETED',
+    canceled_by: null,
+    notes: '',
+    internal_notes_html: '',
+    new_start: null,
+    new_end: null,
+    next_type: 'CALL',
+    next_subject: null,
+    next_due: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+    next_body: null,
+    calendar_event_id: null,
+  });
+  const saved = await callTool('review_call', {
+    task_id: 'm1',
+    corrections: { commitment: 'time' },
+    adjust: 'Ask about the last load before anything else.',
+  });
+  assert.equal(saved.isError, false, saved.text);
+  assert.equal(saved.data.reading.tags.momTest.commitment, 'time');
+  assert.ok(saved.data.reading.tags.nextStep.when, 'the follow-up’s time, from the interview’s log');
+  assert.match(saved.data.url, /\/meetings\/m1$/);
+
+  assert.deepEqual((await callTool('calls_to_review')).data.calls, [], 'both reviewed: off the list');
+
+  const heard = await callTool('what_you_heard');
+  assert.equal(heard.isError, false, heard.text);
+  assert.equal(heard.data.ofCallsThatReachedThem, 2, 'the call and the interview');
+  assert.ok(
+    heard.data.byTheme.some((t: { theme: string }) => t.theme === 'software'),
+    'Lyle on software, twice over'
+  );
+  assert.match(heard.data.callByCall[0].url, /\/meetings\/m1$/);
+  const again = await callTool('get_call_review', { task_id: '1' });
+  assert.equal(again.data.reviews[0].by, 'claude');
+
+  const audit = await db
+    .prepare(`SELECT action FROM audit_log WHERE task_id = '1' AND action LIKE 'review%'`)
+    .all<{ action: string }>();
+  assert.deepEqual(
+    audit.results.map((r) => r.action),
+    ['review for coaching (claude)']
+  );
+
+  const none = await callTool('review_call', { task_id: '2', corrections: {} });
+  assert.equal(none.isError, true);
+  assert.match(none.text, /nothing to review/);
 });

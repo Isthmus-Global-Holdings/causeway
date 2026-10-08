@@ -15,6 +15,7 @@ import {
 import { formatLocal } from '../lib/dates';
 import type { CallInsight, DialSubject, InboundCall } from '../lib/db';
 import { parseUnsure } from '../lib/call-insight';
+import { parseTimeline } from '../lib/call-timeline';
 import { formatPhone } from '../lib/phone';
 import { dialTranscript, SPEAKER_LABELS, type CallTranscript } from '../lib/transcript';
 import { dialState, formatDuration, isLive } from '../workflows/dial';
@@ -33,6 +34,7 @@ import { humanize } from './facts';
 import { LIVE_REFRESH_SEC, setupNote, type InboundSetup } from './inbound';
 import { callTags } from './coaching';
 import { layout, type Html } from './layout';
+import { timelineStrip } from './timeline';
 
 export interface HistoryPageState {
   page: HistoryPage;
@@ -44,9 +46,10 @@ export interface HistoryPageState {
   back: string; // this page, to come back to after a button
 }
 
-// The CALL task whose logged call coaching reads, for a call made from one.
+// What coaching reads this call under: the CALL task for a call made from
+// one or logged by hand, the meeting for an interview's call.
 export function coachedTaskId(item: HistoryItem): string | null {
-  if (item.kind === 'dial') return item.dial.subject === 'task' ? item.dial.task_id : null;
+  if (item.kind === 'dial') return item.dial.subject === 'inbound' ? null : item.dial.task_id;
   return item.kind === 'logged' ? item.log.call_task_id : null;
 }
 
@@ -161,17 +164,28 @@ function entryOf(item: HistoryItem, nowSec: number, insights: Map<string, CallIn
         ? inboundEntry(item.call, nowSec)
         : loggedEntry(item.log);
   const taskId = coachedTaskId(item);
-  const logged = item.kind === 'logged' || (item.kind === 'dial' && item.dial.log_outcome !== null);
+  // A call from a task once the rep logged it; an interview's once the call ended.
+  const logged =
+    item.kind === 'logged' ||
+    (item.kind === 'dial' &&
+      (item.dial.subject === 'meeting' ? !isLive(dialState(item.dial, nowSec)) : item.dial.log_outcome !== null));
   const coached = taskId && logged && !(item.kind === 'logged' && item.log.channel === 'whatsapp_message');
-  return { ...entry, coaching: coached ? { taskId, insight: insights.get(taskId) ?? null } : null };
+  const insight = taskId ? (insights.get(taskId) ?? null) : null;
+  // An interview's reading is of its latest call: an earlier attempt from the
+  // same page shows nothing rather than another call's coaching.
+  const theirs =
+    item.kind !== 'dial' || item.dial.subject !== 'meeting' || !insight || insight.dial_id === item.dial.id;
+  return { ...entry, coaching: coached && theirs ? { taskId, insight } : null };
 }
 
-// What coaching read from the call, and the button that leaves it out (a
-// test call) or puts it back.
+// What coaching read from the call (drawn to scale, then its tags), and the
+// button that leaves it out (a test call) or puts it back.
 function coachingPart(coaching: NonNullable<Entry['coaching']>, back: string): Html {
   const { insight } = coaching;
   const excluded = insight?.excluded === 1;
-  return html`<div class="row">
+  const timeline = insight && !excluded ? parseTimeline(insight.timeline_json) : null;
+  return html`${timeline && insight ? timelineStrip(timeline, { outcome: outcomeLabel(insight.outcome) }) : ''}
+    <div class="row">
     ${
       excluded
         ? html`<p class="muted">Left out of coaching.</p>`

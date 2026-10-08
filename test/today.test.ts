@@ -165,7 +165,12 @@ test('loadTodayCounts searches HubSpot for today’s meetings, and shows none wh
   hs.put('meetings', '500', { hs_meeting_start_time: '2026-09-25T15:00:00Z', hs_meeting_outcome: 'COMPLETED' });
   hs.put('meetings', '501', { hs_meeting_start_time: '2026-09-26T15:00:00Z', hs_meeting_outcome: 'COMPLETED' });
   const counts = await loadTodayCounts(db, hs, NOW, TZ);
-  assert.deepEqual(counts, { emailsSent: 0, peopleCalled: 0, interviews: { had: 1, open: 0 } });
+  assert.deepEqual(counts, {
+    emailsSent: 0,
+    peopleCalled: 0,
+    interviews: { had: 1, open: 0 },
+    conversations: { people: 0, latest: null },
+  });
 
   hs.searchMeetings = async () => {
     throw new Error('HubSpot 403');

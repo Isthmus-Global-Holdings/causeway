@@ -23,8 +23,9 @@ export interface QueueRow {
 
 // The subjects the app gives follow-up EMAIL tasks: after a call
 // (nextTaskSubject), an interview (interviewFollowUpSubject), a no-show
-// (missedInterviewSubject) and the last try (lastTrySubject).
-const WARM_SUBJECT = /— (follow up on call|follow up on interview|missed interview|close the loop)$/;
+// (missedInterviewSubject), a cancel (canceledInterviewSubject) and the last
+// try (lastTrySubject).
+const WARM_SUBJECT = /— (follow up on call|follow up on interview|missed interview|canceled interview|close the loop)$/;
 
 export function isWarmFollowUp(subject: string): boolean {
   return WARM_SUBJECT.test(subject.trim());
@@ -32,7 +33,7 @@ export function isWarmFollowUp(subject: string): boolean {
 
 // Follow-ups drafted from the rep's templates (prompts/follow-up-emails.ts),
 // not by Claude: Claude's drafting rules are for cold emails.
-const TEMPLATED_SUBJECT = /— (missed interview|close the loop)$/;
+const TEMPLATED_SUBJECT = /— (missed interview|canceled interview|close the loop)$/;
 
 export function isTemplatedFollowUp(subject: string | null | undefined): boolean {
   return TEMPLATED_SUBJECT.test((subject ?? '').trim());

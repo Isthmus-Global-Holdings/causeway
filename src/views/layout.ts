@@ -1,5 +1,6 @@
 import { html, raw } from 'hono/html';
 import type { HtmlEscapedString } from 'hono/utils/html';
+import { CONVERSATION_GOAL, firstLine, MAX_LEARNED } from '../lib/conversations';
 import { TIME_PATTERN } from '../lib/dates';
 import type { TodayCounts } from '../workflows/today';
 import { STYLES } from './styles';
@@ -103,6 +104,16 @@ export function queueTabs(current: 'emails' | 'calls', waiting: number): Html {
   </nav>`;
 }
 
+// Coaching's two tabs: the patterns across the calls, and what they've said.
+export function coachingTabs(current: 'patterns' | 'heard'): Html {
+  const tab = (href: string, label: string, on: boolean) =>
+    on ? html`<a href="${href}" aria-current="page">${label}</a>` : html`<a href="${href}">${label}</a>`;
+  return html`<nav class="tabs" aria-label="Coaching">
+    ${tab('/coaching', 'Your calls', current === 'patterns')}
+    ${tab('/coaching/heard', 'What you’ve heard', current === 'heard')}
+  </nav>`;
+}
+
 // "1. Draft · 2. Preview & send", with the current step in bold.
 export function steps(current: 'draft' | 'send'): Html {
   const step = (label: string, on: boolean) => (on ? html`<strong>${label}</strong>` : html`${label}`);
@@ -143,9 +154,12 @@ export function flash(kind: FlashKind, body: Html | string): Html {
   return html`<div class="flash ${kind}">${body}</div>`;
 }
 
-// Today's counts, at the top of the Queue, Calls and Interviews pages.
+// Today's counts, at the top of the Queue, Calls and Interviews pages, and
+// the real conversations so far, toward 100, with the last thing learned.
 export function todayStrip(today: TodayCounts): Html {
-  const { interviews } = today;
+  const { interviews, conversations } = today;
+  const latest = conversations.latest;
+  const line = latest ? (latest.learned ?? firstLine(latest.notes)) : null;
   const stat = (label: string, value: number | string, note: Html | string = '') =>
     html`<div class="stat"><dt>${label}</dt><dd>${value}</dd>${note ? html`<dd class="muted">${note}</dd>` : ''}</div>`;
   return html`<dl class="today" aria-label="Today">
@@ -156,5 +170,53 @@ export function todayStrip(today: TodayCounts): Html {
         ? stat('Interviews today', interviews.had, interviews.open ? `${interviews.open} more scheduled` : '')
         : stat('Interviews today', '—', 'couldn’t read HubSpot')
     }
+    <div class="stat goal">
+      <dt>Real conversations</dt>
+      <dd>${conversations.people}<span class="of"> / ${CONVERSATION_GOAL}</span></dd>
+      <dd class="muted learned">
+        <a href="/coaching#conversations">${
+          latest
+            ? html`${latest.who.split(' at ')[0]}${line ? html`: “${line}”` : ''}`
+            : 'None counted yet. Keep going.'
+        }</a>
+      </dd>
+    </div>
   </dl>`;
 }
+
+// The log form's "real conversation" box: shown for the outcomes that can
+// count (data-outcomes, read by CONVERSATION_SCRIPT), ticked when the call
+// or interview looks like one, with the one line learned.
+export function conversationBox(outcomes: readonly string[], ticked: boolean): Html {
+  return html`<div class="tight" id="conversation-box" data-outcomes="${outcomes.join(' ')}">
+    <label class="check"><input type="checkbox" id="conversation" name="conversation" value="1" ${ticked ? 'checked' : ''} />
+      Real conversation: they talked about their work, and you learned something</label>
+    <div class="field check-help" id="learned-field">
+      <label for="learned">What you learned <span class="muted">(one line, optional)</span></label>
+      <input type="text" id="learned" name="learned" maxlength="${MAX_LEARNED}" placeholder="The problem is people, not software" />
+      <p class="muted">It counts toward your ${CONVERSATION_GOAL}, by person. Leave it blank and your notes’ first sentence stands in.</p>
+    </div>
+  </div>
+  <script>${raw(CONVERSATION_SCRIPT)}</script>`;
+}
+
+// Shows the box only for an outcome that can count (and leaves it out of
+// the form otherwise), and the line only once it's ticked.
+const CONVERSATION_SCRIPT = `(() => {
+  const box = document.getElementById('conversation-box');
+  const outcome = document.getElementById('outcome');
+  const tick = document.getElementById('conversation');
+  const line = document.getElementById('learned-field');
+  if (!box || !outcome || !tick) return;
+  const outcomes = box.dataset.outcomes.split(' ');
+  const sync = () => {
+    const on = outcomes.includes(outcome.value);
+    box.hidden = !on;
+    tick.disabled = !on;
+    line.hidden = !on || !tick.checked;
+  };
+  outcome.addEventListener('change', sync);
+  tick.addEventListener('change', sync);
+  for (const el of document.querySelectorAll('#channel')) el.addEventListener('change', () => setTimeout(sync));
+  sync();
+})();`;

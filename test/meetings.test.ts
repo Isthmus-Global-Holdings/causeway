@@ -5,6 +5,8 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import { inviteDescription, isTimeZone } from '../src/lib/app-settings.ts';
+import { adjustNotes, ruleInsight, type CallFacts } from '../src/lib/call-insight.ts';
+import { callTimeline } from '../src/lib/call-timeline.ts';
 import { d1CallLogStore, d1DialStore, d1MeetingBookingStore, d1MeetingLogStore } from '../src/lib/db.ts';
 import type { NewCall, Twilio } from '../src/lib/twilio.ts';
 import { meetingPage } from '../src/views/meetings.ts';
@@ -198,12 +200,15 @@ test('logging an interview sets its outcome and notes, creates the follow-up, an
     nextTaskCreated: true,
     leadStatus: 'CONNECTED',
     inviteUpdated: false,
+    contactId: '10',
+    who: 'Sam Granger at Granger Hauling',
   });
 
   // A second submission, even with different values, writes nothing more.
   const again = await runMeetingLogged(hs, store, 'm1', START, { ...COMPLETED, notes: 'other' }, OPTS);
   assert.equal(hs.created.length, 1);
   assert.equal(again.nextTaskCreated, false);
+  assert.equal(again.who, null, 'not read again');
   assert.match(hs.objects.get('meetings/m1')!.properties.hs_internal_meeting_notes!, /QuickBooks/);
 });
 
@@ -280,6 +285,7 @@ test('parseMeetingLogForm checks the outcome, the new time and the follow-up', (
   const today = '2026-09-25';
   assert.deepEqual(parseMeetingLogForm({ outcome: 'COMPLETED', notes: 'a\r\nb', next_type: '' }, today), {
     outcome: 'COMPLETED',
+    canceledBy: null,
     notes: 'a\nb',
     newStart: null,
     next: null,
@@ -289,6 +295,10 @@ test('parseMeetingLogForm checks the outcome, the new time and the follow-up', (
     { date: '2026-09-29', time: { hour: 14, minute: 5 } }
   );
   assert.throws(() => parseMeetingLogForm({ outcome: 'SCHEDULED' }, today), /Pick how/);
+  assert.equal(parseMeetingLogForm({ outcome: 'CANCELED', canceled_by: 'rep' }, today).canceledBy, 'rep');
+  assert.equal(parseMeetingLogForm({ outcome: 'CANCELED' }, today).canceledBy, 'them', 'theirs unless said');
+  assert.equal(parseMeetingLogForm({ outcome: 'COMPLETED', canceled_by: 'rep' }, today).canceledBy, null);
+  assert.throws(() => parseMeetingLogForm({ outcome: 'CANCELED', canceled_by: 'boss' }, today), /who canceled/);
   assert.throws(() => parseMeetingLogForm({ outcome: 'RESCHEDULED', new_date: '2026-09-29' }, today), /new date/);
   assert.throws(
     () => parseMeetingLogForm({ outcome: 'RESCHEDULED', new_date: '2026-09-24', new_time: '10:00' }, today),
@@ -401,6 +411,54 @@ const SETUP = {
   fromName: 'Anel Canto',
 };
 
+test('the prep page shows what coaching read from the call made from it', async () => {
+  const facts: CallFacts = {
+    label: 'Ana Díaz at Acme',
+    firstName: 'Ana',
+    outcome: 'connected',
+    channel: 'phone',
+    durationSec: 600,
+    notes: 'She walked me through last week’s quote.',
+    transcript: null,
+    setTime: false,
+    booked: false,
+  };
+  const reading = ruleInsight(facts);
+  const read = { ...reading, duration_sec: 600, label: facts.label };
+  const page = String(
+    await meetingPage(
+      {
+        parties: await loadMeeting(hs, 'm1'),
+        context: { notes: EMPTY_SECTION, calls: EMPTY_SECTION, emails: EMPTY_SECTION },
+        lastEmail: null,
+        log: null,
+        booked: false,
+        dial: null,
+        dialState: null,
+        recordingState: null,
+        coaching: {
+          label: facts.label,
+          outcome: 'connected',
+          read,
+          unsure: [],
+          sources: {},
+          notes: adjustNotes(read),
+          feedbackBy: { whatWorked: null, adjust: null },
+          timeline: callTimeline(facts, reading),
+        },
+        setup: SETUP,
+        portalId: '1',
+        now: NOW,
+        timeZone: TZ,
+      },
+      'rep@example.com'
+    )
+  );
+  assert.match(page, /After the call with Ana Díaz at Acme/);
+  assert.match(page, /<div class="strip" aria-hidden="true"/, 'the interview drawn to scale');
+  assert.match(page, /Long connect \(10:00\)/);
+});
+
 test('the prep page shows the join link, the questions and the log form', async () => {
   const parties = await loadMeeting(hs, 'm1');
   const page = String(
@@ -432,6 +490,7 @@ test('the prep page shows the join link, the questions and the log form', async 
         dial: null,
         dialState: null,
         recordingState: null,
+        coaching: null,
         setup: SETUP,
         portalId: '1',
         now: NOW,
@@ -460,6 +519,7 @@ test('the prep page shows the join link, the questions and the log form', async 
         dial: null,
         dialState: null,
         recordingState: null,
+        coaching: null,
         setup: SETUP,
         portalId: '1',
         now: NOW,
@@ -829,6 +889,7 @@ test('a phone interview’s page leads with calling them, not Join', async () =>
         dial: null,
         dialState: null,
         recordingState: null,
+        coaching: null,
         setup: SETUP,
         portalId: '1',
         now: NOW,
@@ -866,6 +927,48 @@ test('a no-show with an email follow-up creates the task with its draft written,
   assert.match(draft.body, /happy to just give you a call instead/i, 'a video interview offers a call instead');
   assert.match(draft.body, /3 quick questions by email/);
   assert.equal(hs.objects.get('contacts/10')!.properties.hs_lead_status, 'NEW');
+});
+
+test('canceled by them: the email follow-up comes drafted, and who canceled is kept in D1', async () => {
+  const store = d1MeetingLogStore(db);
+  await runMeetingLogged(
+    hs,
+    store,
+    'm1',
+    START,
+    {
+      outcome: 'CANCELED',
+      canceledBy: 'them',
+      notes: 'Texted that a truck broke down',
+      newStart: null,
+      next: { type: 'EMAIL', date: '2026-09-25' },
+    },
+    OPTS
+  );
+  assert.equal(hs.objects.get('meetings/m1')!.properties.hs_meeting_outcome, 'CANCELED');
+  const task = hs.created[0].properties;
+  assert.equal(task.hs_task_subject, 'Email: Granger Hauling (Sam Granger) — canceled interview');
+  const draft = parseTaskBody(task.hs_task_body!)!;
+  assert.equal(draft.subject, 'thanks for letting me know');
+  assert.match(draft.body, /^Hi Sam,\n\nThanks for letting me know\./);
+  const row = await db
+    .prepare(`SELECT canceled_by FROM meeting_logs WHERE meeting_id = 'm1'`)
+    .first<{ canceled_by: string }>();
+  assert.equal(row?.canceled_by, 'them');
+});
+
+test('canceled by the rep: a plain follow-up, no draft', async () => {
+  await runMeetingLogged(
+    hs,
+    d1MeetingLogStore(db),
+    'm1',
+    START,
+    { outcome: 'CANCELED', canceledBy: 'rep', notes: '', newStart: null, next: { type: 'EMAIL', date: '2026-09-25' } },
+    OPTS
+  );
+  const task = hs.created[0].properties;
+  assert.equal(task.hs_task_subject, 'Email: Granger Hauling (Sam Granger) — follow up on interview');
+  assert.ok(!task.hs_task_body, 'no template for the rep’s own cancel');
 });
 
 test('a no-show from a phone interview offers another time for the call', async () => {

@@ -8,12 +8,20 @@
 // workflows/call-insight.ts reads and saves.
 
 import { clock } from './call-history';
-import type { CallChannel, CallLog, Dial } from './db';
-import type { CallTranscript, Turn } from './transcript';
+import { parseTimeline, timelineJson, withReviewedTags } from './call-timeline';
+import type { CallChannel, CallLog, Dial, MeetingLog } from './db';
+import { turnSpan, type CallTranscript, type Turn } from './transcript';
 
 // Bump it when the rules change: every call is read again (for free, by the
 // cron sweep), and nothing read by older rules is left.
-export const RULES_VERSION = 2;
+export const RULES_VERSION = 5;
+
+// The review rules' version (prompts/call-review.ts, review_call's tags):
+// bump it when a review can answer something it couldn't before, and every
+// call reviewed under older rules comes back to calls_to_review for it.
+// 1: the Mom Test (asked about the last time, pitched, their longest story,
+// fluff caught, what they committed).
+export const REVIEW_RULES_VERSION = 1;
 
 // Who answered.
 export const GATES = ['owner', 'gatekeeper', 'voicemail', 'no_answer', 'wrong_number'] as const;
@@ -161,11 +169,46 @@ export interface InsightFields {
   gatekeeper_line: string | null;
   what_worked: string | null;
   adjust: string | null;
+  // The Mom Test, on a call that reached them: null when nothing could say
+  // (no transcript, never reached). The rules give a first pass from the
+  // transcript; a review settles them.
+  asked_last_time: number | null; // 1: asked about a specific past instance, not habits or hypotheticals
+  pitched: number | null; // 1: described the idea or the product
+  longest_story_sec: number | null; // their longest uninterrupted turn once they came on
+  fluff_caught: number | null; // 1: brought "usually" / "I would" back to a past instance
+  commitment: Commitment | null; // what they gave up at the end
 }
 
+// What they gave up at the end of a call: their time (a set time, an
+// interview), their reputation (an intro to someone), or money (a paid
+// pilot, a pre-order). A friendly call with none is a failure, Mom Test-wise.
+export const COMMITMENTS = ['time', 'intro', 'money'] as const;
+export type Commitment = (typeof COMMITMENTS)[number];
+export const COMMITMENT_LABELS: Record<Commitment, string> = { time: 'their time', intro: 'an intro', money: 'money' };
+
 // The tags a reading can be unsure of, by the names the connector shows.
-export const TAGS = ['whoAnswered', 'frontDeskResult', 'reachedThem', 'stage', 'objection', 'nextStep'] as const;
+export const TAGS = [
+  'whoAnswered',
+  'frontDeskResult',
+  'reachedThem',
+  'stage',
+  'objection',
+  'nextStep',
+  'askedAboutLastTime',
+  'pitched',
+  'longestStorySec',
+  'fluffCaught',
+  'commitment',
+] as const;
 export type Tag = (typeof TAGS)[number];
+// The tags that only mean something once they were reached.
+export const MOM_TEST_TAGS: readonly Tag[] = [
+  'askedAboutLastTime',
+  'pitched',
+  'longestStorySec',
+  'fluffCaught',
+  'commitment',
+];
 
 // Who decided each tag, and how sure it was (null: the rules don't say).
 export interface TagSource {
@@ -196,9 +239,162 @@ export function parseSources(json: string | null | undefined): TagSources {
   }
 }
 
+// --- Reviews: the rep's, or Claude's through the connector ---
+
+// Who reviewed a call. The rep's review wins over Claude's, and both over the rules.
+export const REVIEWERS = ['claude', 'rep'] as const;
+export type Reviewer = (typeof REVIEWERS)[number];
+
+// A review's answer for any of the tags; a tag left out keeps the rules'.
+export interface Corrections {
+  whoAnswered?: Gate;
+  frontDeskResult?: GatekeeperResult | null;
+  reachedThem?: boolean;
+  stage?: Stage;
+  objection?: { kind: ObjectionKind | null; said?: string | null };
+  nextStep?: { agreed: boolean; what?: string | null };
+  // The Mom Test
+  askedAboutLastTime?: boolean;
+  pitched?: boolean;
+  longestStorySec?: number | null;
+  fluffCaught?: boolean;
+  commitment?: Commitment | null;
+}
+
+export interface CallReview {
+  reviewer: Reviewer;
+  corrections: Corrections;
+  what_worked: string | null;
+  adjust: string | null;
+  reviewed_at: string; // ISO
+  dial_id?: string | null; // the call it's of; null: the call whatever its dial (see migration 0029)
+}
+
+// call_reviews keeps corrections as JSON; a damaged value reads as none.
+export function parseCorrections(json: string | null | undefined): Corrections {
+  try {
+    const value: unknown = JSON.parse(json ?? '{}');
+    return value && typeof value === 'object' && !Array.isArray(value) ? (value as Corrections) : {};
+  } catch {
+    return {};
+  }
+}
+
+// The tags a review answers.
+export const correctedTags = (c: Corrections): Tag[] => TAGS.filter((tag) => c[tag] !== undefined);
+
+// A call's reading with its reviews laid over it: Claude's, then the rep's,
+// so the rep's wins. Each tag a review answers takes its value, is no longer
+// unsure, and is marked as the reviewer's. What worked and what to adjust
+// are the last review's that says. Whether they got past the objection
+// follows from the result.
+export function withReviews<T extends InsightFields & { unsure: string; sources: string }>(
+  row: T,
+  reviews: CallReview[]
+): T {
+  if (!reviews.length) return row;
+  const out = { ...row };
+  const unsure = new Set(parseUnsure(row.unsure));
+  const sources = parseSources(row.sources);
+  const settle = (tag: Tag, by: Reviewer) => {
+    unsure.delete(tag);
+    sources[tag] = { by, p: null };
+  };
+  const ordered = [...reviews].sort((a, b) => REVIEWERS.indexOf(a.reviewer) - REVIEWERS.indexOf(b.reviewer));
+  for (const { reviewer, corrections: c, what_worked, adjust } of ordered) {
+    if (c.whoAnswered !== undefined) out.gate = c.whoAnswered;
+    if (c.frontDeskResult !== undefined) out.gatekeeper_result = c.frontDeskResult;
+    if (c.reachedThem !== undefined) out.reached = c.reachedThem ? 1 : 0;
+    if (c.stage !== undefined) out.stage = c.stage;
+    if (c.objection !== undefined) {
+      out.objection_kind = c.objection.kind;
+      out.objection = c.objection.kind ? (c.objection.said ?? out.objection) : null;
+    }
+    if (c.nextStep !== undefined) {
+      out.next_step = c.nextStep.agreed ? 1 : 0;
+      out.next_step_text = c.nextStep.agreed ? (c.nextStep.what ?? out.next_step_text) : null;
+      // How far it got follows, as the rules have it, unless the review says;
+      // a stage it moves is the review's too.
+      if (c.stage === undefined) {
+        const stage = out.stage;
+        if (!c.nextStep.agreed && out.stage === 'next_step') out.stage = 'conversation';
+        if (c.nextStep.agreed && out.reached) out.stage = 'next_step';
+        if (out.stage !== stage) settle('stage', reviewer);
+      }
+    }
+    if (c.askedAboutLastTime !== undefined) out.asked_last_time = c.askedAboutLastTime ? 1 : 0;
+    if (c.pitched !== undefined) out.pitched = c.pitched ? 1 : 0;
+    if (c.longestStorySec !== undefined) out.longest_story_sec = c.longestStorySec;
+    if (c.fluffCaught !== undefined) out.fluff_caught = c.fluffCaught ? 1 : 0;
+    if (c.commitment !== undefined) out.commitment = c.commitment;
+    for (const tag of correctedTags(c)) settle(tag, reviewer);
+    if (what_worked) out.what_worked = what_worked;
+    if (adjust) out.adjust = adjust;
+  }
+  out.got_past_objection =
+    out.objection_kind && out.reached && stageRank(out.stage) >= stageRank('conversation') ? 1 : 0;
+  // Never reached (a review took back what the rules took for them): the
+  // Mom Test has nothing to judge, whatever the rules heard.
+  if (!out.reached) {
+    out.asked_last_time = null;
+    out.pitched = null;
+    out.longest_story_sec = null;
+    out.fluff_caught = null;
+    out.commitment = null;
+    for (const tag of MOM_TEST_TAGS) unsure.delete(tag);
+  }
+  // The drawing, when the row carries one, follows the reviewed tags.
+  const drawn = out as { timeline_json?: string | null };
+  if (typeof drawn.timeline_json === 'string') {
+    const t = parseTimeline(drawn.timeline_json);
+    if (t) drawn.timeline_json = timelineJson(withReviewedTags(t, out));
+  }
+  out.unsure = JSON.stringify(TAGS.filter((t) => unsure.has(t)));
+  out.sources = JSON.stringify(sources);
+  return out;
+}
+
+// Who wrote the what-worked and the adjust that stand: the last review that
+// said (Claude's, then the rep's, as withReviews lays them). Null: no review did.
+export function feedbackBy(reviews: CallReview[]): { whatWorked: Reviewer | null; adjust: Reviewer | null } {
+  const last = (said: (r: CallReview) => string | null) =>
+    [...REVIEWERS].reverse().find((reviewer) => reviews.some((r) => r.reviewer === reviewer && said(r))) ?? null;
+  return { whatWorked: last((r) => r.what_worked), adjust: last((r) => r.adjust) };
+}
+
+// Where in the transcript each thing happened, as turn indices (null: it
+// didn't, or there's no transcript): what the call's timeline is drawn from
+// (lib/call-timeline.ts). Never stored as such.
+export interface TurnMarks {
+  menuEnd: number | null; // the first turn after the phone menu
+  ownerFrom: number | null; // where the person they called for came on
+  holdFrom: number | null; // where the front desk put them on hold
+  deskBackAt: number | null; // where the front desk came back after the hold, with an answer
+  voicemailFrom: number | null; // where a voicemail greeting started
+  openingAt: number | null; // the rep's first line to them
+  objectionAt: number | null; // their objection
+  nextStepAt: number | null; // where the next step was agreed, or their number given
+  lastTimeAt: number[]; // the rep asking about a specific past instance
+  pitchAt: number[]; // the rep describing the idea or the product
+}
+
+export const NO_MARKS: TurnMarks = {
+  menuEnd: null,
+  ownerFrom: null,
+  holdFrom: null,
+  deskBackAt: null,
+  voicemailFrom: null,
+  openingAt: null,
+  objectionAt: null,
+  nextStepAt: null,
+  lastTimeAt: [],
+  pitchAt: [],
+};
+
 // One call read by the rules, with the tags they only guessed at.
 export interface RuleReading extends InsightFields {
   unsure: Tag[];
+  marks: TurnMarks;
 }
 
 // What a call's reading starts from.
@@ -225,6 +421,25 @@ export function firstNameOf(label: string): string | null {
   return first || null;
 }
 
+// The rules were written for Nova-3's bare words (lowercase, no punctuation),
+// which is how the older transcripts are kept. Newer ones keep Nova's
+// punctuation for reading; the rules (ruleInsight, theirPart) read this plain
+// copy of either, so both read the same. A colon or point stays between
+// digits ("3:30").
+export function plainText(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/’/g, "'")
+    .replace(/\b([ap])\.m\b\.?/g, '$1m')
+    .replace(/[^\p{L}\p{N}'\s:.-]/gu, ' ')
+    .replace(/(?<!\p{N})[:.]|[:.](?!\p{N})/gu, ' ')
+    .replace(/(^|\s)[-']+|[-']+(?=\s|$)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export const plainTurns = (turns: Turn[]): Turn[] => turns.map((t) => ({ ...t, text: plainText(t.text) }));
+
 export function callFacts(log: CallLog, dial: Dial | null, transcript: CallTranscript | null): CallFacts {
   const dialSec = dial?.prospect_status === 'completed' ? dial.prospect_duration_sec : null;
   const label = dial?.contact_label || log.title;
@@ -238,6 +453,34 @@ export function callFacts(log: CallLog, dial: Dial | null, transcript: CallTrans
     transcript,
     setTime: log.next_set_time === 1,
     booked: Boolean(log.book_start),
+  };
+}
+
+// An interview's facts, from the call made from its page (dials, subject
+// 'meeting') and how the rep logged it (meeting_logs): read with the same
+// rules as a cold call. Completed → connected; a no-show or a cancel → no
+// answer; moved, or not logged yet → whatever the call itself says. Without
+// a transcript the rep's notes on the interview are read.
+export function interviewFacts(dial: Dial, log: MeetingLog | null, transcript: CallTranscript | null): CallFacts {
+  const answered = dial.prospect_status === 'completed';
+  const outcome =
+    log?.outcome === 'COMPLETED'
+      ? 'connected'
+      : log?.outcome === 'NO_SHOW' || log?.outcome === 'CANCELED'
+        ? 'no_answer'
+        : answered
+          ? 'connected'
+          : 'no_answer';
+  return {
+    label: dial.contact_label,
+    firstName: firstNameOf(dial.contact_label),
+    outcome,
+    channel: 'phone',
+    durationSec: answered ? dial.prospect_duration_sec : null,
+    notes: log?.notes.trim() ?? '',
+    transcript,
+    setTime: false,
+    booked: false,
   };
 }
 
@@ -336,6 +579,16 @@ const WHEN =
   /\b(in (about )?(maybe )?(a |an )?(half (an )?hour|hour|\d+ minutes)|later (today|this (morning|afternoon|evening))|this (morning|afternoon|evening)|tomorrow|tonight|next week|(on )?(monday|tuesday|wednesday|thursday|friday)|(at|about) \d{1,2}(:\d{2})?|\d{1,2}:\d{2}|\d{1,2} ?(am|pm|o'?clock))\b/i;
 const NUMBER_WORDS = /\b(cell|number|direct (line|number)|mobile)\b/i;
 
+// The Mom Test, as far as words can tell. Asking about a specific past
+// instance; describing the idea or the product (the one-line "I'm a
+// founder, not selling anything" isn't a pitch); them offering someone else.
+const LAST_TIME =
+  /\b(last time|the last (one|load|quote|invoice|week|month)|walk me through|what did you do|tell me about (the|a|that) time|when (did|was) (that|it) last|how did (you|that) (handle|go|end)|what happened (when|the))\b/i;
+const PITCH =
+  /\b(we('re| are)? (build|building|offer|offering|help|helping|provide|providing)|our (product|software|tool|platform|solution|app)|i('m| am) building (a|an|the|software|something)|what we do is|it (lets|helps|allows|would let) you|(my|our) (startup|company) (does|makes|builds))\b/i;
+const INTRO =
+  /\b(talk to (my|our|the) \w+|introduce you|put you in touch|give you (his|her|their) (number|email|cell)|(he|she|they) (handles?|does|runs) (that|all of that|the \w+)|reach out to (my|our))\b/i;
+
 const far = (t: Turn) => t.speaker !== 'rep';
 
 export interface PhoneTree {
@@ -382,8 +635,12 @@ export interface TranscriptReading {
   name: string | null; // the front desk's
   tree: PhoneTree | null;
   ownerFrom: number | null; // the turn where the person they called for came on
+  holdFrom: number | null; // the turn where the front desk put them on hold
+  deskBackAt: number | null; // the turn where the front desk came back after the hold, with an answer
+  voicemailFrom: number | null; // the turn where a voicemail greeting started
   deskLine: string | null; // the rep's line to the front desk
   opening: string | null; // the rep's first line to them
+  openingAt: number | null; // its turn
 }
 
 export function readTranscript(turns: Turn[], firstName: string | null): TranscriptReading | null {
@@ -391,8 +648,21 @@ export function readTranscript(turns: Turn[], firstName: string | null): Transcr
   const start = tree?.end ?? 0;
   const firstFar = turns.findIndex((t, i) => i >= start && far(t));
   if (firstFar < 0) return null;
-  const base = { tree, name: null, result: null, deskLine: null, opening: null, ownerFrom: null };
-  if (VOICEMAIL.test(turns[firstFar].text)) return { ...base, gate: 'voicemail', gateSure: true };
+  const base = {
+    tree,
+    name: null,
+    result: null,
+    deskLine: null,
+    opening: null,
+    openingAt: null,
+    ownerFrom: null,
+    holdFrom: null,
+    deskBackAt: null,
+    voicemailFrom: null,
+  };
+  if (VOICEMAIL.test(turns[firstFar].text)) {
+    return { ...base, gate: 'voicemail', gateSure: true, voicemailFrom: firstFar };
+  }
 
   // The rep's first lines, and what the person who answered said before them.
   const repLines = turns
@@ -409,8 +679,9 @@ export function readTranscript(turns: Turn[], firstName: string | null): Transcr
   const saidName = (said?.[1] ?? said?.[2] ?? null)?.toLowerCase() ?? null;
   const deskName = saidName && !NOT_A_NAME.has(saidName) && !sameName(saidName, firstName) ? saidName : null;
   const ask = repLines.find(({ t }) => ASK.test(t.text))?.i ?? -1;
-  const firstLine = (i: number) =>
-    clip(turns.find((t, j) => j >= i && t.speaker === 'rep' && words(t.text) >= 4)?.text, 240);
+  const firstLineAt = (i: number) => turns.findIndex((t, j) => j >= i && t.speaker === 'rep' && words(t.text) >= 4);
+  const firstLine = (i: number) => clip(turns[firstLineAt(i)]?.text, 240);
+  const at = (i: number) => (i >= 0 ? i : null);
 
   const owner = (sure: boolean): TranscriptReading => ({
     ...base,
@@ -418,6 +689,7 @@ export function readTranscript(turns: Turn[], firstName: string | null): Transcr
     gateSure: sure,
     ownerFrom: firstFar,
     opening: firstLine(firstFar),
+    openingAt: at(firstLineAt(firstFar)),
   });
   if (sameName(saidName, firstName)) return owner(true);
   if (ask < 0 && !deskName) return owner(repLines.length > 0 && nameIn(turns[repFirst].text, firstName));
@@ -453,6 +725,15 @@ export function readTranscript(turns: Turn[], firstName: string | null): Transcr
   // Nobody came on after the hold: everything they said since is the hold.
   const heldOnly =
     hold >= 0 && farLater.filter(({ i }) => i > hold).every(({ t }) => HOLD.test(t.text) || words(t.text) <= 2);
+  // Else the front desk came back with an answer (not available, a message,
+  // "I'll put you through now"): the hold ended there, whatever came next.
+  const deskBack =
+    hold >= 0 && !heldOnly
+      ? (farLater.find(
+          ({ t, i }) =>
+            i > hold && !HOLD.test(t.text) && words(t.text) > 2 && (vm < 0 || i < vm) && (through < 0 || i < through)
+        )?.i ?? -1)
+      : -1;
 
   const result: GatekeeperResult | null =
     vm >= 0 && (!theyTalked || vm < through)
@@ -475,8 +756,12 @@ export function readTranscript(turns: Turn[], firstName: string | null): Transcr
     result,
     name: deskName ? capitalized(deskName) : null,
     ownerFrom: result === 'put_through' ? through : null,
+    holdFrom: at(hold),
+    deskBackAt: at(deskBack),
+    voicemailFrom: at(vm),
     deskLine: clip(turns[from]?.text, 240),
     opening: result === 'put_through' ? firstLine(through) : null,
+    openingAt: result === 'put_through' ? at(firstLineAt(through)) : null,
   };
 }
 
@@ -552,15 +837,25 @@ export function ruleInsight(facts: CallFacts): RuleReading {
     gatekeeper_line: null,
     what_worked: null,
     adjust: null,
+    asked_last_time: null,
+    pitched: null,
+    longest_story_sec: null,
+    fluff_caught: null,
+    commitment: null,
     unsure: [],
+    marks: NO_MARKS,
   };
   // The outcome settles a call nobody (or the wrong person) answered.
   if (facts.outcome === 'wrong_number') return { ...none, gate: 'wrong_number' };
   if (facts.outcome === 'no_answer') return none;
   if (facts.outcome === 'left_voicemail') return { ...none, gate: 'voicemail', stage: 'voicemail' };
-  if (duration < ANSWERED_SEC && (facts.outcome === 'busy' || !facts.transcript)) return none;
+  // Too short to have been answered; a call logged with no length (from the
+  // connector) is read from its notes instead.
+  if (facts.durationSec !== null && duration < ANSWERED_SEC && (facts.outcome === 'busy' || !facts.transcript)) {
+    return none;
+  }
 
-  const turns = facts.transcript?.turns ?? [];
+  const turns = plainTurns(facts.transcript?.turns ?? []);
   const heard = insightSource(facts) === 'transcript' ? readTranscript(turns, facts.firstName) : null;
   const unsure: Tag[] = [];
   const tree = heard?.tree ?? null;
@@ -572,6 +867,7 @@ export function ruleInsight(facts: CallFacts): RuleReading {
       stage: 'voicemail',
       phone_tree_sec: tree?.sec ?? null,
       phone_tree_digit: tree?.digit ?? null,
+      marks: { ...NO_MARKS, menuEnd: tree?.end ?? null, voicemailFrom: heard.voicemailFrom },
     };
   }
 
@@ -631,6 +927,10 @@ export function ruleInsight(facts: CallFacts): RuleReading {
       ? objectionIn(facts.notes, (p) => sentenceAround(facts.notes, p))
       : null;
   if (reached && !heard && !objection) unsure.push('objection');
+  const objectionPattern = objection ? OBJECTIONS.find((o) => o.kind === objection.kind)?.pattern : undefined;
+  const objectionTurn = objectionPattern
+    ? (reached ? theirTurns : turns.filter(far)).find((t) => objectionPattern.test(t.text))
+    : undefined;
 
   // A next step: a booked interview or a set time, else a time to talk or
   // their number, from them.
@@ -663,6 +963,55 @@ export function ruleInsight(facts: CallFacts): RuleReading {
   if (unsure.includes('reachedThem') || (!heard && reached)) unsure.push('stage');
   if (reached && !heard && !nextStep) unsure.push('nextStep');
 
+  // The Mom Test, on a call that reached them with a transcript: a first
+  // pass for the review to settle. The rules can hear a question about the
+  // last time, a pitch, how long they talked and a time or an intro agreed;
+  // whether fluff was caught, never. Not asking isn't proof of not asking.
+  const judged = Boolean(heard) && reached;
+  const repTurns = judged ? ownerTurns.filter((t) => t.speaker === 'rep') : [];
+  const lastTimeTurns = repTurns.filter((t) => LAST_TIME.test(t.text));
+  const pitchTurns = repTurns.filter((t) => PITCH.test(t.text));
+  let longestStory: number | null = null;
+  if (judged && ownerFrom !== null) {
+    longestStory = 0;
+    turns.forEach((t, i) => {
+      if (i < ownerFrom || t.speaker !== 'prospect') return;
+      const { from, to } = turnSpan(turns, i, facts.durationSec ?? lastAt);
+      longestStory = Math.max(longestStory ?? 0, Math.round(to - from));
+    });
+  }
+  const commitment: Commitment | null = !judged
+    ? null
+    : facts.booked || facts.setTime || agreedAt
+      ? 'time'
+      : theirTurns.some((t) => INTRO.test(t.text))
+        ? 'intro'
+        : null;
+  if (judged) {
+    if (!lastTimeTurns.length) unsure.push('askedAboutLastTime');
+    if (!pitchTurns.length) unsure.push('pitched');
+    if (commitment !== 'time') unsure.push('commitment');
+    unsure.push('fluffCaught');
+  }
+
+  // Where each of those happened, for the timeline.
+  const indexOf = (turn: Turn | undefined) => (turn ? turns.indexOf(turn) : null);
+  const numberTurn = gaveNumber ? theirTurns.find((t) => t.text.replace(/\D/g, '').length >= 7) : undefined;
+  const marks: TurnMarks = heard
+    ? {
+        menuEnd: tree?.end ?? null,
+        ownerFrom: reached ? ownerFrom : null,
+        holdFrom: heard.holdFrom,
+        deskBackAt: heard.deskBackAt,
+        voicemailFrom: heard.voicemailFrom,
+        openingAt: reached ? heard.openingAt : null,
+        objectionAt: indexOf(objectionTurn),
+        nextStepAt: indexOf(agreedAt ?? numberTurn),
+        lastTimeAt: lastTimeTurns.map((t) => turns.indexOf(t)),
+        pitchAt: pitchTurns.map((t) => turns.indexOf(t)),
+      }
+    : NO_MARKS;
+
   return {
     gate,
     gatekeeper_result: gate === 'gatekeeper' ? result : null,
@@ -681,14 +1030,20 @@ export function ruleInsight(facts: CallFacts): RuleReading {
     gatekeeper_line: gate === 'gatekeeper' ? (heard?.deskLine ?? null) : null,
     what_worked: null,
     adjust: null,
+    asked_last_time: judged ? (lastTimeTurns.length ? 1 : 0) : null,
+    pitched: judged ? (pitchTurns.length ? 1 : 0) : null,
+    longest_story_sec: longestStory,
+    fluff_caught: null,
+    commitment,
     unsure: [...new Set(unsure)],
+    marks,
   };
 }
 
 // The turns the person they called for was on, for the style stats: all of
 // them when it's not clear who that was.
 export function theirPart(turns: Turn[], firstName: string | null): Turn[] {
-  const heard = readTranscript(turns, firstName);
+  const heard = readTranscript(plainTurns(turns), firstName);
   if (heard?.ownerFrom != null) return turns.slice(heard.ownerFrom);
   return turns.slice(heard?.tree?.end ?? 0);
 }

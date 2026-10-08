@@ -4,7 +4,8 @@
 //
 // The cadence around them:
 //   1. Logging an interview as No show with an Email follow-up drafts
-//      missedInterviewEmail, due today.
+//      missedInterviewEmail, due today. Logging it as Canceled by them (they
+//      told you ahead) drafts canceledInterviewEmail instead.
 //   2. Sending it creates tomorrow's CALL task, as any send does.
 //   3. If that call gets nowhere, "Email: last try" on its log form drafts
 //      closeTheLoopEmail, a few days out.
@@ -31,6 +32,24 @@ export function missedInterviewEmail(input: { firstName: string | null; when: st
     body: [
       greeting(input.firstName),
       `I think we missed each other ${input.when}. No worries at all, I know things come up.`,
+      ask,
+      "Or if it's easier, I can send over 3 quick questions by email and you can answer whenever you have a minute.",
+      'Thanks,',
+    ].join('\n\n'),
+  };
+}
+
+// They called it off ahead: they replied, so thank them and offer another
+// time. `phone`: it was booked as a phone call.
+export function canceledInterviewEmail(input: { firstName: string | null; phone: boolean }): FollowUpEmail {
+  const ask = input.phone
+    ? "Is there another day this week or next that works better? Tell me a time and I'll give you a call then."
+    : "Is there another day this week or next that works better? Happy to just give you a call instead if that's easier than a video call.";
+  return {
+    subject: 'thanks for letting me know',
+    body: [
+      greeting(input.firstName),
+      'Thanks for letting me know. No worries at all.',
       ask,
       "Or if it's easier, I can send over 3 quick questions by email and you can answer whenever you have a minute.",
       'Thanks,',

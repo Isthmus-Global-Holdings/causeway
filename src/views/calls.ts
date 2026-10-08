@@ -1,6 +1,7 @@
 import { html, raw } from 'hono/html';
 import type { CallCoaching } from '../actions/coaching';
 import { fillScript, MAX_SCRIPT, SCRIPT_PLACEHOLDERS } from '../lib/call-script';
+import { suggestConversation } from '../lib/conversations';
 import { parseFitReason } from '../lib/fit';
 import { addDays, formatLocal, localDate } from '../lib/dates';
 import { sqliteTime, type CallLog, type Dial, type DialMode, type InboundCall, type RecentSend } from '../lib/db';
@@ -48,7 +49,16 @@ import type { TodayCounts } from '../workflows/today';
 import type { Recorded, RecordingState } from '../workflows/transcribe';
 import { coachingCard } from './coaching';
 import { address, companyLinks, contactLinks, facts, humanize, lifecycle, website, whereTheyAre } from './facts';
-import { flash as flashBox, layout, queueTabs, recordUrl, timeInput, todayStrip, type Html } from './layout';
+import {
+  conversationBox,
+  flash as flashBox,
+  layout,
+  queueTabs,
+  recordUrl,
+  timeInput,
+  todayStrip,
+  type Html,
+} from './layout';
 
 // While a call is live, the page checks its status this often (just the
 // status, from D1: see LIVE_STATUS_SCRIPT).
@@ -1235,6 +1245,10 @@ function logForm(state: CallPageState): Html {
       <label for="notes">Notes</label>
       <textarea id="notes" name="notes" class="mono" placeholder="What they said, what's next. For a WhatsApp message, the message you sent."></textarea>
     </div>
+    ${conversationBox(
+      ['connected', 'replied'],
+      suggestConversation({ kind: 'call', outcome: suggested, durationSec: state.dial?.prospect_duration_sec })
+    )}
     <div class="tight">
       <label class="check"><input type="checkbox" id="book" name="book" value="1" /> Booked an interview</label>
       <div id="book-fields" class="stack" hidden>${bookingFields('log', state, false)}</div>

@@ -26,6 +26,7 @@ import { callableFrom } from '../lib/set-time';
 import { dialTranscript } from '../lib/transcript';
 import type { AppEnv } from '../types';
 import { parseBookingForm, runBooking } from '../workflows/book-interview';
+import { whoFromTitle } from '../lib/conversations';
 import { readCall } from '../workflows/call-insight';
 import {
   doneResult,
@@ -50,6 +51,7 @@ import { loadMeetings, type MeetingRow } from '../workflows/meeting-queue';
 import { WorkflowError } from '../workflows/parties';
 import { snoozeCall } from '../workflows/task-actions';
 import { syncTranscript } from '../workflows/transcribe';
+import { countFromLog } from './coaching';
 
 // How many of the calls logged from the app the connector's call overview lists.
 const RECENTLY_LOGGED = 15;
@@ -191,6 +193,17 @@ export async function logCall(
     await auditFailure(err);
     throw err;
   }
+  // A real conversation, if the rep ticked it: D1 only, before the answer.
+  // It's checked against the outcome first logged, so a retry can't count a
+  // voicemail; ticked on a retry, it counts, as on Coaching. A failure here
+  // only logs: the call's own steps go on, and Coaching's Count is the way back.
+  await countFromLog(c, form, {
+    kind: 'call',
+    refId: taskId,
+    contactId: prepared.row.contact_id,
+    who: dial?.contact_label ?? whoFromTitle(prepared.row.title),
+    outcome: prepared.row.outcome,
+  }).catch((err: unknown) => console.error('counting the call as a real conversation', err));
 
   // Usually the HubSpot steps run after the response, and the rep moves on.
   // A call that books an interview is finished first, so the answer can
