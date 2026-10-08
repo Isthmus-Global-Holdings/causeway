@@ -201,6 +201,14 @@ export const TAGS = [
   'commitment',
 ] as const;
 export type Tag = (typeof TAGS)[number];
+// The tags that only mean something once they were reached.
+export const MOM_TEST_TAGS: readonly Tag[] = [
+  'askedAboutLastTime',
+  'pitched',
+  'longestStorySec',
+  'fluffCaught',
+  'commitment',
+];
 
 // Who decided each tag, and how sure it was (null: the rules don't say).
 export interface TagSource {
@@ -324,6 +332,16 @@ export function withReviews<T extends InsightFields & { unsure: string; sources:
   }
   out.got_past_objection =
     out.objection_kind && out.reached && stageRank(out.stage) >= stageRank('conversation') ? 1 : 0;
+  // Never reached (a review took back what the rules took for them): the
+  // Mom Test has nothing to judge, whatever the rules heard.
+  if (!out.reached) {
+    out.asked_last_time = null;
+    out.pitched = null;
+    out.longest_story_sec = null;
+    out.fluff_caught = null;
+    out.commitment = null;
+    for (const tag of MOM_TEST_TAGS) unsure.delete(tag);
+  }
   // The drawing, when the row carries one, follows the reviewed tags.
   const drawn = out as { timeline_json?: string | null };
   if (typeof drawn.timeline_json === 'string') {
