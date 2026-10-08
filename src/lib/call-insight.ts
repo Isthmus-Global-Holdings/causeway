@@ -643,11 +643,26 @@ const GREETING =
 const EXCHANGE = /\?|\b(voice ?mail|put you through|transfer)\b/i;
 
 // A business's welcome, which a phone menu opens with and a front desk
-// answers with alike: the menu's when its next sentence is the switchboard.
+// answers with alike. From one to the switchboard's next line in its turn
+// ("Thank you for calling Acme. Your call is important to us. If you know
+// your party's extension…") is the menu's, unless someone in it says who
+// they are or asks something: a front desk.
 const WELCOME = /\b(thanks?( you)? for calling|welcome to)\b/i;
 
 const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+/);
 const switchboard = (sentence: string) => SWITCHBOARD.some((re) => re.test(sentence));
+
+// The sentences without a menu's welcome and what it says before the menu.
+function machineIntro(sentences: string[]): string[] {
+  const kept: string[] = [];
+  for (let i = 0; i < sentences.length; i++) {
+    const menuAt = WELCOME.test(sentences[i]) ? sentences.findIndex((s, j) => j > i && switchboard(s)) : -1;
+    const intro = menuAt < 0 ? [] : sentences.slice(i, menuAt);
+    if (intro.length && !intro.some((s) => s.includes('?') || SAID_NAME.test(s))) i = menuAt - 1;
+    else kept.push(sentences[i]);
+  }
+  return kept;
+}
 const greets = (sentence: string) => VOICEMAIL.test(sentence) || GREETING.test(sentence);
 
 // The words a person said in a turn, and whether a voicemail greeting
@@ -659,9 +674,7 @@ const greets = (sentence: string) => VOICEMAIL.test(sentence) || GREETING.test(s
 function personWords(text: string): { words: number; greeting: boolean } {
   const sentences = sentencesOf(text);
   const at = sentences.findIndex(greets);
-  const before = (at < 0 ? sentences : sentences.slice(0, at)).filter(
-    (sentence, i, all) => !switchboard(sentence) && !(WELCOME.test(sentence) && all[i + 1] && switchboard(all[i + 1]))
-  );
+  const before = machineIntro(at < 0 ? sentences : sentences.slice(0, at)).filter((s) => !switchboard(s));
   const said = before.reduce((n, sentence) => n + words(sentence), 0);
   if (at < 0) return { words: said, greeting: false };
   const exchange = before.some((sentence) => EXCHANGE.test(sentence) || HOLD.test(sentence));

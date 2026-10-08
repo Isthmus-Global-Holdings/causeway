@@ -281,6 +281,20 @@ test('talked with someone, on one channel (all “call”): words past the menu 
     true,
     'a front desk that answers with one'
   );
+  assert.equal(
+    talkedWithSomeone([
+      call(0, 'Thank you for calling Acme. Your call is important to us. If you know your party’s extension, press 1.'),
+    ]),
+    false,
+    'a welcome, an announcement, then the menu'
+  );
+  assert.equal(
+    talkedWithSomeone([
+      call(0, 'Thank you for calling Acme, this is Dana. Hi Dana, is Ruth in? Your call is being transferred.'),
+    ]),
+    true,
+    'a front desk, then the phone system putting the call through'
+  );
 });
 
 test('talked with someone: a person in the same turn as the menu, on their channel', () => {
