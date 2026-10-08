@@ -20,6 +20,7 @@ import {
   ruleInsight,
   rulesSources,
   RULES_VERSION,
+  withReviews,
   type CallReview,
   type CoachNote,
   type Corrections,
@@ -170,14 +171,25 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
   const dial = log.dial_id ? await d1DialStore(db).get(log.dial_id) : null;
   const facts = callFacts(log, dial, dial ? dialTranscript(dial) : null);
   const { unsure, ...fields } = ruleInsight(facts);
-  const read = { ...fields, duration_sec: facts.durationSec, label: facts.label };
+  // Its reviews too: one saved before the call's reading was (a read that
+  // failed after review_call) still stands.
+  const read = withReviews(
+    {
+      ...fields,
+      duration_sec: facts.durationSec,
+      label: facts.label,
+      unsure: JSON.stringify(unsure),
+      sources: JSON.stringify(rulesSources()),
+    },
+    reviews
+  );
   return {
     label: facts.label,
     read,
-    unsure,
-    sources: rulesSources(),
+    unsure: parseUnsure(read.unsure),
+    sources: parseSources(read.sources),
     notes: adjustNotes(read),
-    feedbackBy: feedbackBy([]),
+    feedbackBy: feedbackBy(reviews),
   };
 }
 

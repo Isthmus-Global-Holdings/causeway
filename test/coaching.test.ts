@@ -1654,3 +1654,21 @@ test('the hours note stays until two hours have enough calls to compare', async 
   );
   assert.doesNotMatch(await page([...at(10, HOUR_SAMPLE), ...at(14, HOUR_SAMPLE)]), /Too few calls to pick an hour/);
 });
+
+test('a review saved before the call was read still shows, read from the rules on the spot', async () => {
+  await logCall('t1');
+  await d1CallReviewStore(db).save('t1', {
+    reviewer: 'rep',
+    corrections: { stage: 'conversation' },
+    what_worked: null,
+    adjust: 'Leave with a time.',
+    reviewed_at: '2026-10-07T17:00:00Z',
+  });
+  assert.equal(await d1CallInsightStore(db).get('t1'), null, 'not read yet');
+  const notes = await callNotes(db, 't1');
+  assert.equal(notes?.read.stage, 'conversation');
+  assert.equal(notes?.sources.stage?.by, 'rep');
+  assert.ok(!notes?.unsure.includes('stage'));
+  assert.deepEqual(notes?.feedbackBy, { whatWorked: null, adjust: 'rep' });
+  assert.ok(notes?.notes.some((n) => n.text === 'Leave with a time.'));
+});
