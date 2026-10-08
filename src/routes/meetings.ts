@@ -3,7 +3,7 @@ import { callNotes } from '../actions/coaching';
 import { latestMeetingDial, logMeeting, meetingsOverview } from '../actions/meetings';
 import { loadAppSettings } from '../lib/app-settings';
 import { parseHubSpotTime } from '../lib/dates';
-import { d1MeetingLogStore, latestSendToContact } from '../lib/db';
+import { d1MeetingLogStore, latestSendToContact, loggedCallRecords } from '../lib/db';
 import { createHubSpot } from '../lib/hubspot';
 import type { AppEnv } from '../types';
 import { meetingPage, meetingsPage, type MeetingsFlash } from '../views/meetings';
@@ -55,7 +55,7 @@ meetingsRoute.get('/:id', async (c) => {
   ]);
   const startAt = parseHubSpotTime(parties.meeting.properties.hs_meeting_start_time);
   const [context, lastEmail, log, coaching] = await Promise.all([
-    loadCallContext(hs, parties),
+    loadCallContext(hs, parties, (ids) => loggedCallRecords(c.env.DB, ids)),
     latestSendToContact(c.env.DB, parties.contact.id),
     // One that stopped partway first: after a reschedule landed, it's no
     // longer under the meeting's current start time.

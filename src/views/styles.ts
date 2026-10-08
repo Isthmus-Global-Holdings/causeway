@@ -148,6 +148,17 @@ ul.summary { margin: 0; padding-left: var(--space-5); }
 .transcript { max-height: 24rem; overflow: auto; display: flex; flex-direction: column; gap: var(--space-2); }
 .transcript .turn strong { display: block; font-size: 0.8rem; color: var(--muted); }
 .transcript .turn.prospect { padding-left: var(--space-4); border-left: 2px solid var(--accent); }
+/* A logged call's parts, each under its own label: the rep's notes, the AI summary, what was said */
+.call-record { display: flex; flex-direction: column; gap: var(--space-3); }
+.call-record .part > h3, .call-record .part > summary h3 { display: inline; margin: 0; font-size: 0.75rem; font-weight: 700;
+  letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.call-record .part > h3 { display: block; margin-bottom: var(--space-1); }
+.call-record .part > h3 .muted, .call-record .part > summary .muted { font-size: 0.8rem; font-weight: 400; letter-spacing: 0; text-transform: none; }
+.call-record .notes { padding: var(--space-2) var(--space-3); border-left: 3px solid var(--fg); background: var(--bg); border-radius: var(--radius-md); }
+.call-record ul.summary { font-style: italic; }
+.call-record .said > summary { margin-bottom: var(--space-2); }
+.call-record .said .transcript { max-height: 20rem; padding: var(--space-2) var(--space-3); background: var(--bg); border-radius: var(--radius-md); }
+.last-talk { border-color: var(--accent); }
 /* Card headings: an icon, the title, and on the right anything that goes with it */
 .icon { width: 1.1em; height: 1.1em; flex: none; }
 .card-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: var(--space-1) var(--space-4); }
@@ -190,7 +201,7 @@ nav.jump ~ .with-aside [id] { scroll-margin-top: calc(var(--jump-height) + var(-
 mark.unfilled { background: var(--warn-bg); color: var(--warn-fg); }
 /* HubSpot history: each kind its own icon and colour, newest first */
 ol.history { list-style: none; margin: 0; padding: 0; max-height: 32rem; overflow: auto; display: flex; flex-direction: column; gap: var(--space-3); }
-ol.history li { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: var(--space-3); align-items: start; }
+ol.history > li { display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: var(--space-3); align-items: start; }
 ol.history .kind { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: var(--radius-pill); background: var(--line); color: var(--fg); }
 ol.history .kind .icon { width: 1rem; height: 1rem; }
 ol.history li.call .kind { background: var(--accent); color: var(--accent-fg); }

@@ -58,6 +58,36 @@ export const FOLD_SCRIPT = `(() => {
   }
 })();`;
 
+// A form marked data-submit-once goes once: its button greys out and says
+// what's happening (data-busy) as it's sent, so a second click can't post it
+// again while the first is saving. Back to the page from the browser's Back
+// button, it's ready again. Disabled a tick after the submit, so the button
+// is still in what the form sends.
+export const SUBMIT_ONCE_SCRIPT = `(() => {
+  document.addEventListener('submit', (e) => {
+    const form = e.target;
+    if (!form.matches('form[data-submit-once]') || e.defaultPrevented) return;
+    if (form.dataset.sent) { e.preventDefault(); return; }
+    form.dataset.sent = '1';
+    setTimeout(() => {
+      for (const b of form.querySelectorAll('button[type=submit]')) {
+        b.disabled = true;
+        if (b.dataset.busy) { b.dataset.idle = b.textContent; b.textContent = b.dataset.busy; }
+      }
+    });
+  });
+  window.addEventListener('pageshow', (e) => {
+    if (!e.persisted) return;
+    for (const form of document.querySelectorAll('form[data-submit-once][data-sent]')) {
+      delete form.dataset.sent;
+      for (const b of form.querySelectorAll('button[type=submit]')) {
+        b.disabled = false;
+        if (b.dataset.idle) b.textContent = b.dataset.idle;
+      }
+    }
+  });
+})();`;
+
 export interface JumpLink {
   id: string;
   icon: IconName;

@@ -5,12 +5,14 @@
 //      can be retried)
 //   2. stream the recording from Twilio into Nova-3 (Workers AI), one channel
 //      per side, and turn the words into who-said-what
-//   3. summarise it with a small Workers AI model; a failed summary keeps the
-//      transcript
+//   3. summarise it with a small Workers AI model, if the rep talked with
+//      someone (a summary of only a phone menu or a voicemail greeting comes
+//      out made up); a failed summary keeps the transcript
 //   4. if the rep already logged the call, rewrite that HubSpot call's notes
 //      with the transcript (syncTranscript; syncCallBack for a call back)
 // Runs after Twilio reports the recording, and again when the rep clicks Retry.
 
+import { talkedWithSomeone } from '../lib/call-insight';
 import type { CallLogStore, Dial, DialStore } from '../lib/db';
 import type { HubSpot } from '../lib/hubspot';
 import {
@@ -122,8 +124,10 @@ export async function transcribeRecording<T extends Recorded>(
     return 'failed';
   }
 
+  // A recording with only their side (a voicemail left for the rep) is all
+  // them, and worth its summary.
   let summary: string | null = null;
-  if (turns.length) {
+  if (turns.length && (!speakers.includes('rep') || talkedWithSomeone(turns))) {
     try {
       summary = (await deps.ai.summarize(summaryMessages(turns, label))).trim() || null;
     } catch (err) {

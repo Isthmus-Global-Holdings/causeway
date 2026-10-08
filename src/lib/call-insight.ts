@@ -555,6 +555,9 @@ const nameIn = (text: string, name: string | null) =>
 // A phone menu: the turns before anyone answers.
 const MENU =
   /\b(press (\d|one|two|three|four|five|six|seven|eight|nine|zero|pound|star)|menu options|options have (recently )?changed|extension|office hours|business hours|our hours are|please hold|next available|para espa)/i;
+// The phone system putting the call through.
+const TRANSFER =
+  /\b(your call is being (transferred|connected)|please (wait|hold) while (i|we) (transfer|connect)|connecting your call)\b/i;
 // A voicemail greeting, the contact's or the company's.
 const VOICEMAIL =
   /\b(record your message|at the tone|after the tone|at the beep|after the beep|not available to take your call|no one (is )?available to take your call|forwarded to (an? )?(automated )?voice ?mail|voice ?mail ?box|mailbox (is full|of)|please leave (your|a) (name|message))/i;
@@ -624,6 +627,22 @@ export function phoneTree(turns: Turn[], firstName: string | null): PhoneTree | 
     digit: digit ?? null,
     end,
   };
+}
+
+// The rep talked with someone: past any phone menu, the rep said something
+// and a person said a line that isn't the menu, a transfer notice or a
+// voicemail greeting. A call that only reached those didn't, and a summary
+// of it would be made up.
+export function talkedWithSomeone(turns: Turn[]): boolean {
+  const plain = plainTurns(turns);
+  const after = plain.slice(phoneTree(plain, null)?.end ?? 0);
+  const repWords = after.filter((t) => t.speaker === 'rep').reduce((n, t) => n + words(t.text), 0);
+  return (
+    repWords >= 2 &&
+    after.some(
+      (t) => far(t) && words(t.text) >= 2 && !MENU.test(t.text) && !TRANSFER.test(t.text) && !VOICEMAIL.test(t.text)
+    )
+  );
 }
 
 // Who answered and what happened, from the transcript alone. Null when no
