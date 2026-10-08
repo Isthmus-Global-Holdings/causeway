@@ -660,8 +660,12 @@ function personWords(text: string): number {
   return before.some((sentence) => EXCHANGE.test(sentence) || HOLD.test(sentence)) ? said : 0;
 }
 
+// Digits the rep said into a phone menu ("one zero", "four"), not to anyone.
+const KEYED = /^[\s.,!?]*((\d+|one|two|three|four|five|six|seven|eight|nine|zero|oh|star|pound)[\s.,!?]*)+$/i;
+
 // The rep talked with someone: one side spoke and the other answered, the
-// rep with a line (not a keyed-in "one zero") and their side with words
+// rep with two words or more that aren't digits keyed into a menu ("Hi,
+// John." counts, "One zero." doesn't) and their side with words
 // that aren't a phone menu, a transfer notice or a voicemail greeting. A
 // call that only reached those didn't, and a summary of it would be made up.
 // A recording Nova gave back as one channel (all 'call') can't tell the rep
@@ -670,7 +674,13 @@ function personWords(text: string): number {
 export function talkedWithSomeone(turns: Turn[]): boolean {
   if (turns.every((t) => t.speaker === 'call')) return false;
   const sides = turns.map((t) =>
-    t.speaker === 'rep' ? (words(t.text) >= 3 ? 'rep' : null) : personWords(t.text) >= 2 ? 'them' : null
+    t.speaker === 'rep'
+      ? words(t.text) >= 2 && !KEYED.test(t.text)
+        ? 'rep'
+        : null
+      : personWords(t.text) >= 2
+        ? 'them'
+        : null
   );
   const first = sides.findIndex(Boolean);
   return first >= 0 && sides.some((side, i) => i > first && side && side !== sides[first]);

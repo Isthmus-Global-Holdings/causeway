@@ -235,6 +235,11 @@ test('talked with someone: a person in the same turn as the menu, on their chann
     true,
     'a caller first, then the rep'
   );
+  assert.equal(
+    talkedWithSomeone([turn('rep', 0, 'Hi, John.'), turn('prospect', 1, 'Hey, yeah, we quote everything by hand.')]),
+    true,
+    'a two-word opener and an answer'
+  );
 });
 
 test('talked with someone: a voicemail greeting in their turn ends what counts', () => {
