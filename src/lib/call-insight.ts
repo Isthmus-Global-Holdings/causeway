@@ -13,7 +13,14 @@ import { turnSpan, type CallTranscript, type Turn } from './transcript';
 
 // Bump it when the rules change: every call is read again (for free, by the
 // cron sweep), and nothing read by older rules is left.
-export const RULES_VERSION = 4;
+export const RULES_VERSION = 5;
+
+// The review rules' version (prompts/call-review.ts, review_call's tags):
+// bump it when a review can answer something it couldn't before, and every
+// call reviewed under older rules comes back to calls_to_review for it.
+// 1: the Mom Test (asked about the last time, pitched, their longest story,
+// fluff caught, what they committed).
+export const REVIEW_RULES_VERSION = 1;
 
 // Who answered.
 export const GATES = ['owner', 'gatekeeper', 'voicemail', 'no_answer', 'wrong_number'] as const;

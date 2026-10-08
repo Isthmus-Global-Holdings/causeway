@@ -574,7 +574,9 @@ what they gave up at the end: their time, an intro, money), what worked, and
 what to adjust. The rules take a first pass at the Mom Test from the words
 (a question about the last time, a pitch, how long they talked, a time or an
 intro agreed) and mark the rest unsure; whether you caught the fluff only a
-review can say. Your recorded interviews are read and reviewed the same way
+review can say. A call reviewed before the review rules could answer a tag
+(`REVIEW_RULES_VERSION`, bumped when `review_call` gains one) comes back to
+`calls_to_review` for it. Your recorded interviews are read and reviewed the same way
 (`calls_to_review` lists them as `kind: interview`; the id is the meeting's):
 the call made from the interview's page, once it ended, with how you logged
 the interview (its outcome, and your notes when there's no recording). They

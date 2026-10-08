@@ -1894,6 +1894,14 @@ test('a review is saved, survives the rules reading the call again, and a new on
   assert.equal(again?.stage, 'conversation');
   assert.equal((await d1CallInsightStore(db).get('t1'))?.what_worked, 'Let them talk about dispatch.');
   assert.deepEqual(await callsToReview(db, 10), [], 'reviewed: off the list');
+  // A review from before the review rules could answer the new tags brings
+  // the call back to the list; reviewing again takes it off.
+  await db.prepare(`UPDATE call_reviews SET rules_version = 0 WHERE call_task_id = 't1'`).run();
+  assert.deepEqual(
+    (await callsToReview(db, 10)).map((c) => c.call_task_id),
+    ['t1'],
+    'reviewed under older rules: back on the list'
+  );
 
   // Claude's second review drops the stage: the rules' stage is back.
   const replaced = await reviewCall(
