@@ -128,6 +128,25 @@ export function callTimeline(facts: CallFacts, reading: Reading): Timeline | nul
 
 export const timelineJson = (t: Timeline | null): string | null => (t ? JSON.stringify(t) : null);
 
+// A drawing with the reviewed Mom Test over it: a pitch or a last-time
+// question the review says didn't happen loses its marks (the rules heard
+// wrong), and the longest story is the review's. A question the rules
+// missed can't be placed, so it gains no mark: the tag line says it.
+export function withReviewedTags(
+  t: Timeline,
+  tags: { pitched: number | null; asked_last_time: number | null; longest_story_sec: number | null }
+): Timeline {
+  const marks = t.marks.filter(
+    (m) => !((m.kind === 'pitch' && tags.pitched === 0) || (m.kind === 'last_time' && tags.asked_last_time === 0))
+  );
+  const longestStorySec = tags.longest_story_sec ?? t.longestStorySec;
+  const turns =
+    longestStorySec !== null && longestStorySec < STORY_SEC
+      ? t.turns.map(({ story: _story, ...tick }) => tick)
+      : t.turns;
+  return { ...t, marks, turns, longestStorySec };
+}
+
 // call_insights keeps the timeline as JSON; a damaged value reads as none.
 export function parseTimeline(json: string | null | undefined): Timeline | null {
   if (!json) return null;

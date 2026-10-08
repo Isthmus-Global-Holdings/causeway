@@ -64,7 +64,7 @@ import {
 } from '../src/lib/db.ts';
 import type { HubSpot } from '../src/lib/hubspot.ts';
 import type { Turn } from '../src/lib/transcript.ts';
-import { afterCallSummary, beforeCallSummary, bookingSummary } from '../src/mcp/format.ts';
+import { afterCallSummary, callReviewSummary, beforeCallSummary, bookingSummary } from '../src/mcp/format.ts';
 import { callTags, coachingCard, coachingPage } from '../src/views/coaching.ts';
 import {
   excludeCall,
@@ -1661,6 +1661,77 @@ test('the Mom Test across calls and interviews: counts of what has been said, th
   );
   assert.equal(m.longest?.call.call_task_id, 'm');
   assert.deepEqual(momTestReport([], []).rows, []);
+});
+
+test('a review that says the rules heard wrong takes the pitch and last-time marks off the drawing', () => {
+  const drawing = {
+    totalSec: 90,
+    phases: [{ kind: 'them', from: 0, to: 90, label: null }],
+    turns: [{ who: 'prospect', from: 5, to: 80, story: true }],
+    marks: [
+      { kind: 'opening', at: 2, text: null },
+      { kind: 'pitch', at: 2, text: 'our software' },
+      { kind: 'last_time', at: 12, text: 'walk me through' },
+    ],
+    longestStorySec: 75,
+  };
+  const row = insight({
+    call_task_id: 'd1',
+    pitched: 1,
+    asked_last_time: 1,
+    longest_story_sec: 75,
+    timeline_json: JSON.stringify(drawing),
+  });
+  const reviewed = withReviews(row, [
+    {
+      reviewer: 'claude',
+      corrections: { pitched: false, longestStorySec: 40 },
+      what_worked: null,
+      adjust: null,
+      reviewed_at: '2026-10-08T17:00:00Z',
+    },
+  ]);
+  const t = parseTimeline(reviewed.timeline_json)!;
+  assert.deepEqual(
+    t.marks.map((m) => m.kind),
+    ['opening', 'last_time'],
+    'the pitch the rules heard wrong is gone; the question stays'
+  );
+  assert.equal(t.longestStorySec, 40, 'the review’s figure');
+  assert.equal(t.turns[0].story, undefined, 'under a minute now: no story tick');
+  assert.equal(
+    withReviews(insight({ call_task_id: 'n', timeline_json: null }), [
+      { reviewer: 'rep', corrections: { pitched: false }, what_worked: null, adjust: null, reviewed_at: '' },
+    ]).timeline_json,
+    null,
+    'nothing drawn: nothing to change'
+  );
+});
+
+test('the review’s transcript stamps each turn start–end, so a story’s length reads off the line', async () => {
+  await logCall('t1', { outcome: 'connected', duration_sec: 543, notes: putThrough.notes });
+  const log = (await d1CallLogStore(db).get('t1'))!;
+  const notes = (await callNotes(db, 't1'))!;
+  const call = {
+    id: 't1',
+    kind: 'call' as const,
+    channel: log.channel,
+    outcome: log.outcome,
+    durationSec: log.duration_sec,
+    notes: log.notes,
+    nextDue: log.next_due,
+  };
+  const summary = callReviewSummary(
+    { settings: { timeZone: TZ } as never, call, turns: putThrough.turns, summary: [], notes, reviews: [] },
+    ORIGIN
+  );
+  assert.match(
+    summary.transcript![0],
+    /^\[0:01–0:07\] Prospect: thank you for calling/,
+    'capped by its words, not the 14 s gap'
+  );
+  assert.match(summary.transcript![9], /^\[0:56–1:30\] You: yeah so basically lyle/);
+  assert.match(summary.rules, /stamped \[start–end\]/);
 });
 
 test('a review settles the Mom Test over the rules', () => {

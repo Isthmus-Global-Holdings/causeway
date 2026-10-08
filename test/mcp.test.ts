@@ -268,6 +268,7 @@ test('calls are reviewed from here: the ones to review, one with its rules, and 
   assert.match(call.data.rules, /Correct the tags/);
   assert.equal(call.data.call.repNotes, 'Talked with Ana. Busy at lunch, said call back tomorrow.');
   assert.equal(call.data.transcript, null, 'logged by hand: no recording');
+  assert.match(call.data.rules, /stamped \[start–end\]/);
   assert.deepEqual(call.data.reviews, []);
 
   assert.match(call.data.rules, /## The Mom Test/);
