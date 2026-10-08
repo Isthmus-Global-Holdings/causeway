@@ -15,6 +15,7 @@ import {
 import { formatLocal } from '../lib/dates';
 import type { CallInsight, DialSubject, InboundCall } from '../lib/db';
 import { parseUnsure } from '../lib/call-insight';
+import { parseTimeline } from '../lib/call-timeline';
 import { formatPhone } from '../lib/phone';
 import { dialTranscript, SPEAKER_LABELS, type CallTranscript } from '../lib/transcript';
 import { dialState, formatDuration, isLive } from '../workflows/dial';
@@ -33,6 +34,7 @@ import { humanize } from './facts';
 import { LIVE_REFRESH_SEC, setupNote, type InboundSetup } from './inbound';
 import { callTags } from './coaching';
 import { layout, type Html } from './layout';
+import { timelineStrip } from './timeline';
 
 export interface HistoryPageState {
   page: HistoryPage;
@@ -166,12 +168,14 @@ function entryOf(item: HistoryItem, nowSec: number, insights: Map<string, CallIn
   return { ...entry, coaching: coached ? { taskId, insight: insights.get(taskId) ?? null } : null };
 }
 
-// What coaching read from the call, and the button that leaves it out (a
-// test call) or puts it back.
+// What coaching read from the call (drawn to scale, then its tags), and the
+// button that leaves it out (a test call) or puts it back.
 function coachingPart(coaching: NonNullable<Entry['coaching']>, back: string): Html {
   const { insight } = coaching;
   const excluded = insight?.excluded === 1;
-  return html`<div class="row">
+  const timeline = insight && !excluded ? parseTimeline(insight.timeline_json) : null;
+  return html`${timeline && insight ? timelineStrip(timeline, { outcome: outcomeLabel(insight.outcome) }) : ''}
+    <div class="row">
     ${
       excluded
         ? html`<p class="muted">Left out of coaching.</p>`

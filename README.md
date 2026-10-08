@@ -577,7 +577,12 @@ Nothing interrupts a call. The notes sit in a **Coaching** card on the call
 page, under the script:
 
 - **After the call with …**: when you log a call and land on the next one,
-  the tags in a line (with what it wasn't sure of), then what to adjust from
+  the call drawn to scale (a strip: the phone menu, the front desk, the hold
+  and them underneath, your turns ticking above the middle and theirs below,
+  a taller tick for a story of a minute or more, dots for your opening, their
+  objection and the next step, and the same in words after it; from the
+  transcript, or one segment as long as the call without one), the tags in a
+  line (with what it wasn't sure of), then what to adjust from
   the last: a connect under 1:30 of talk that left with no next step ("leave
   with a time"), stopping at the front desk (by name, what they did, and what
   to try for that), the menu digit for next time, an objection it didn't get
@@ -625,8 +630,8 @@ page, under the script:
 - Where each call ended, and your last calls with their tags and what to
   adjust on each.
 
-On **Calls**, each logged call shows its tags too, with **Leave out of
-coaching** for a test call (and **Put back in coaching**).
+On **Calls**, each logged call shows its strip and its tags too, with **Leave
+out of coaching** for a test call (and **Put back in coaching**).
 
 It reads only D1 (`call_insights`, one row per logged call, replaced when a
 better source arrives or the rules change; the bookings from `call_logs`,

@@ -112,7 +112,7 @@ See README.md for the behaviour.
   (`workflows/call-insight.ts`) is rules, no model.
 - **Pure logic stays pure.** `lib/fit.ts`, `lib/richtext.ts`, `lib/dates.ts`,
   `lib/prompt.ts`, `lib/phone.ts`, `lib/twiml.ts`, `lib/transcript.ts`,
-  `lib/call-script.ts`, `lib/call-insight.ts`, `lib/coaching.ts`, `lib/voice-token.ts`, `lib/whatsapp.ts`, `lib/work-plan.ts`, `lib/address.ts`, `lib/call-history.ts`, `lib/sent-rank.ts`, `lib/set-time.ts`, `lib/upwork.ts` (also bundled into the extension), `mcp/format.ts`, `prompts/follow-up-emails.ts`, `prompts/whatsapp-messages.ts` and `prompts/call-review.ts` do no I/O and are unit tested. Workflows take interfaces (`HubSpot`, `Twilio`, and the D1 stores
+  `lib/call-script.ts`, `lib/call-insight.ts`, `lib/call-timeline.ts`, `lib/coaching.ts`, `lib/voice-token.ts`, `lib/whatsapp.ts`, `lib/work-plan.ts`, `lib/address.ts`, `lib/call-history.ts`, `lib/sent-rank.ts`, `lib/set-time.ts`, `lib/upwork.ts` (also bundled into the extension), `mcp/format.ts`, `prompts/follow-up-emails.ts`, `prompts/whatsapp-messages.ts` and `prompts/call-review.ts` do no I/O and are unit tested. Workflows take interfaces (`HubSpot`, `Twilio`, and the D1 stores
   in `lib/db.ts`), so tests use fakes or the real SQL on SQLite.
 - **Sending never repeats.** `runSend` records a `sent_emails` row before
   calling Gmail, and never resends a row whose outcome is unknown. The rep

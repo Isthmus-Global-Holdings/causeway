@@ -13,7 +13,7 @@ import type { CallTranscript, Turn } from './transcript';
 
 // Bump it when the rules change: every call is read again (for free, by the
 // cron sweep), and nothing read by older rules is left.
-export const RULES_VERSION = 3;
+export const RULES_VERSION = 4;
 
 // Who answered.
 export const GATES = ['owner', 'gatekeeper', 'voicemail', 'no_answer', 'wrong_number'] as const;
@@ -291,9 +291,33 @@ export function feedbackBy(reviews: CallReview[]): { whatWorked: Reviewer | null
   return { whatWorked: last((r) => r.what_worked), adjust: last((r) => r.adjust) };
 }
 
+// Where in the transcript each thing happened, as turn indices (null: it
+// didn't, or there's no transcript): what the call's timeline is drawn from
+// (lib/call-timeline.ts). Never stored as such.
+export interface TurnMarks {
+  menuEnd: number | null; // the first turn after the phone menu
+  ownerFrom: number | null; // where the person they called for came on
+  holdFrom: number | null; // where the front desk put them on hold
+  voicemailFrom: number | null; // where a voicemail greeting started
+  openingAt: number | null; // the rep's first line to them
+  objectionAt: number | null; // their objection
+  nextStepAt: number | null; // where the next step was agreed, or their number given
+}
+
+export const NO_MARKS: TurnMarks = {
+  menuEnd: null,
+  ownerFrom: null,
+  holdFrom: null,
+  voicemailFrom: null,
+  openingAt: null,
+  objectionAt: null,
+  nextStepAt: null,
+};
+
 // One call read by the rules, with the tags they only guessed at.
 export interface RuleReading extends InsightFields {
   unsure: Tag[];
+  marks: TurnMarks;
 }
 
 // What a call's reading starts from.
@@ -496,8 +520,11 @@ export interface TranscriptReading {
   name: string | null; // the front desk's
   tree: PhoneTree | null;
   ownerFrom: number | null; // the turn where the person they called for came on
+  holdFrom: number | null; // the turn where the front desk put them on hold
+  voicemailFrom: number | null; // the turn where a voicemail greeting started
   deskLine: string | null; // the rep's line to the front desk
   opening: string | null; // the rep's first line to them
+  openingAt: number | null; // its turn
 }
 
 export function readTranscript(turns: Turn[], firstName: string | null): TranscriptReading | null {
@@ -505,8 +532,20 @@ export function readTranscript(turns: Turn[], firstName: string | null): Transcr
   const start = tree?.end ?? 0;
   const firstFar = turns.findIndex((t, i) => i >= start && far(t));
   if (firstFar < 0) return null;
-  const base = { tree, name: null, result: null, deskLine: null, opening: null, ownerFrom: null };
-  if (VOICEMAIL.test(turns[firstFar].text)) return { ...base, gate: 'voicemail', gateSure: true };
+  const base = {
+    tree,
+    name: null,
+    result: null,
+    deskLine: null,
+    opening: null,
+    openingAt: null,
+    ownerFrom: null,
+    holdFrom: null,
+    voicemailFrom: null,
+  };
+  if (VOICEMAIL.test(turns[firstFar].text)) {
+    return { ...base, gate: 'voicemail', gateSure: true, voicemailFrom: firstFar };
+  }
 
   // The rep's first lines, and what the person who answered said before them.
   const repLines = turns
@@ -523,8 +562,9 @@ export function readTranscript(turns: Turn[], firstName: string | null): Transcr
   const saidName = (said?.[1] ?? said?.[2] ?? null)?.toLowerCase() ?? null;
   const deskName = saidName && !NOT_A_NAME.has(saidName) && !sameName(saidName, firstName) ? saidName : null;
   const ask = repLines.find(({ t }) => ASK.test(t.text))?.i ?? -1;
-  const firstLine = (i: number) =>
-    clip(turns.find((t, j) => j >= i && t.speaker === 'rep' && words(t.text) >= 4)?.text, 240);
+  const firstLineAt = (i: number) => turns.findIndex((t, j) => j >= i && t.speaker === 'rep' && words(t.text) >= 4);
+  const firstLine = (i: number) => clip(turns[firstLineAt(i)]?.text, 240);
+  const at = (i: number) => (i >= 0 ? i : null);
 
   const owner = (sure: boolean): TranscriptReading => ({
     ...base,
@@ -532,6 +572,7 @@ export function readTranscript(turns: Turn[], firstName: string | null): Transcr
     gateSure: sure,
     ownerFrom: firstFar,
     opening: firstLine(firstFar),
+    openingAt: at(firstLineAt(firstFar)),
   });
   if (sameName(saidName, firstName)) return owner(true);
   if (ask < 0 && !deskName) return owner(repLines.length > 0 && nameIn(turns[repFirst].text, firstName));
@@ -589,8 +630,11 @@ export function readTranscript(turns: Turn[], firstName: string | null): Transcr
     result,
     name: deskName ? capitalized(deskName) : null,
     ownerFrom: result === 'put_through' ? through : null,
+    holdFrom: at(hold),
+    voicemailFrom: at(vm),
     deskLine: clip(turns[from]?.text, 240),
     opening: result === 'put_through' ? firstLine(through) : null,
+    openingAt: result === 'put_through' ? at(firstLineAt(through)) : null,
   };
 }
 
@@ -667,6 +711,7 @@ export function ruleInsight(facts: CallFacts): RuleReading {
     what_worked: null,
     adjust: null,
     unsure: [],
+    marks: NO_MARKS,
   };
   // The outcome settles a call nobody (or the wrong person) answered.
   if (facts.outcome === 'wrong_number') return { ...none, gate: 'wrong_number' };
@@ -690,6 +735,7 @@ export function ruleInsight(facts: CallFacts): RuleReading {
       stage: 'voicemail',
       phone_tree_sec: tree?.sec ?? null,
       phone_tree_digit: tree?.digit ?? null,
+      marks: { ...NO_MARKS, menuEnd: tree?.end ?? null, voicemailFrom: heard.voicemailFrom },
     };
   }
 
@@ -749,6 +795,10 @@ export function ruleInsight(facts: CallFacts): RuleReading {
       ? objectionIn(facts.notes, (p) => sentenceAround(facts.notes, p))
       : null;
   if (reached && !heard && !objection) unsure.push('objection');
+  const objectionPattern = objection ? OBJECTIONS.find((o) => o.kind === objection.kind)?.pattern : undefined;
+  const objectionTurn = objectionPattern
+    ? (reached ? theirTurns : turns.filter(far)).find((t) => objectionPattern.test(t.text))
+    : undefined;
 
   // A next step: a booked interview or a set time, else a time to talk or
   // their number, from them.
@@ -781,6 +831,21 @@ export function ruleInsight(facts: CallFacts): RuleReading {
   if (unsure.includes('reachedThem') || (!heard && reached)) unsure.push('stage');
   if (reached && !heard && !nextStep) unsure.push('nextStep');
 
+  // Where each of those happened, for the timeline.
+  const indexOf = (turn: Turn | undefined) => (turn ? turns.indexOf(turn) : null);
+  const numberTurn = gaveNumber ? theirTurns.find((t) => t.text.replace(/\D/g, '').length >= 7) : undefined;
+  const marks: TurnMarks = heard
+    ? {
+        menuEnd: tree?.end ?? null,
+        ownerFrom: reached ? ownerFrom : null,
+        holdFrom: heard.holdFrom,
+        voicemailFrom: heard.voicemailFrom,
+        openingAt: reached ? heard.openingAt : null,
+        objectionAt: indexOf(objectionTurn),
+        nextStepAt: indexOf(agreedAt ?? numberTurn),
+      }
+    : NO_MARKS;
+
   return {
     gate,
     gatekeeper_result: gate === 'gatekeeper' ? result : null,
@@ -800,6 +865,7 @@ export function ruleInsight(facts: CallFacts): RuleReading {
     what_worked: null,
     adjust: null,
     unsure: [...new Set(unsure)],
+    marks,
   };
 }
 

@@ -1856,7 +1856,8 @@ export function d1MeetingBookingStore(db: D1Database): MeetingBookingStore {
 // --- Coaching (call_insights: what happened on each logged call) ---
 
 export interface CallInsight extends InsightFields {
-  call_task_id: string;
+  call_task_id: string; // the CALL task, or the meeting for an interview (see subject)
+  subject: InsightSubject;
   contact_id: string;
   company_id: string | null;
   dial_id: string | null;
@@ -1872,12 +1873,22 @@ export interface CallInsight extends InsightFields {
   rules_version: number;
   unsure: string; // JSON: the tags nothing was sure of (Tag[])
   sources: string; // JSON: tag → { by, p }, who decided each (TagSources)
+  // JSON: the call drawn to scale (Timeline, lib/call-timeline.ts); null when
+  // there's nothing to draw, or when the query left it out (allCallInsights,
+  // callInsightsNear: every call page loads those, and the pages that draw
+  // read their few rows with callInsightsFor or get).
+  timeline_json: string | null;
   excluded: number; // 1: left out of coaching; only setExcluded changes it
   extracted_at: string;
 }
 
+// What a call_insights row reads: a CALL task's logged call, or an
+// interview's recorded dial (its meeting id in call_task_id).
+export type InsightSubject = 'task' | 'meeting';
+
 const INSIGHT_COLUMNS = [
   'call_task_id',
+  'subject',
   'contact_id',
   'company_id',
   'dial_id',
@@ -1910,11 +1921,15 @@ const INSIGHT_COLUMNS = [
   'rules_version',
   'unsure',
   'sources',
+  'timeline_json',
   'excluded',
   'extracted_at',
 ] as const satisfies readonly (keyof CallInsight)[];
 // Everything a reading writes: whether the call is left out is the rep's.
 const WRITTEN_COLUMNS = INSIGHT_COLUMNS.filter((c) => c !== 'excluded');
+// The columns for a list every page loads: the timeline (a few KB a call)
+// comes back null, the row's shape unchanged.
+const LIGHT_COLUMNS = INSIGHT_COLUMNS.map((c) => (c === 'timeline_json' ? 'NULL AS timeline_json' : c));
 
 // A reading by newer rules is never replaced by one by older rules (a run
 // from before a deploy that finishes after it), and among the same rules,
@@ -2009,11 +2024,12 @@ export function d1CallInsightStore(db: D1Database): CallInsightStore {
   };
 }
 
-// Every read call coaching counts, oldest first, for the coaching report.
+// Every read call coaching counts, oldest first, for the coaching report
+// (without the timelines: callInsightsFor has them).
 export async function allCallInsights(db: D1Database): Promise<CallInsight[]> {
   const { results } = await db
     .prepare(
-      `SELECT * FROM (SELECT ${INSIGHT_COLUMNS.join(', ')} FROM call_insights WHERE excluded = 0
+      `SELECT * FROM (SELECT ${LIGHT_COLUMNS.join(', ')} FROM call_insights WHERE excluded = 0
                       ORDER BY at_sec DESC LIMIT ?)
        ORDER BY at_sec`
     )
@@ -2023,7 +2039,7 @@ export async function allCallInsights(db: D1Database): Promise<CallInsight[]> {
 }
 
 // The calls to this contact and to others at their company, newest first,
-// for the coaching before a call.
+// for the coaching before a call (without the timelines).
 export async function callInsightsNear(
   db: D1Database,
   contactId: string,
@@ -2031,7 +2047,7 @@ export async function callInsightsNear(
 ): Promise<CallInsight[]> {
   const { results } = await db
     .prepare(
-      `SELECT ${INSIGHT_COLUMNS.join(', ')} FROM call_insights
+      `SELECT ${LIGHT_COLUMNS.join(', ')} FROM call_insights
        WHERE excluded = 0 AND (contact_id = ?1 OR (?2 IS NOT NULL AND company_id = ?2))
        ORDER BY at_sec DESC LIMIT 50`
     )

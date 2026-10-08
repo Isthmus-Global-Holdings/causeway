@@ -716,8 +716,8 @@ test('transcribes both channels, summarises, and stores who said what', async ()
   assert.deepEqual(recordings, [{ sid: 'RE1', channels: 2 }]);
   const dial = (await dials.get(DIAL_ID))!;
   assert.deepEqual(JSON.parse(dial.transcript_json!), [
-    { speaker: 'rep', start: 0.5, text: 'Hi' },
-    { speaker: 'prospect', start: 1.5, text: 'Send a quote.' },
+    { speaker: 'rep', start: 0.5, end: 0.8, text: 'Hi' },
+    { speaker: 'prospect', start: 1.5, end: 2.5, text: 'Send a quote.' },
   ]);
   assert.equal(dial.summary, '- Wants a quote\n- Call back Monday');
   assert.equal(recordingState(dial, NOW_SEC).kind, 'done');

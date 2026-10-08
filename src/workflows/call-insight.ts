@@ -22,6 +22,7 @@ import {
   withReviews,
   type CallReview,
 } from '../lib/call-insight';
+import { callTimeline, timelineJson } from '../lib/call-timeline';
 import type { CallInsight, CallInsightStore, CallLogStore, CallReviewStore, DialStore } from '../lib/db';
 import { dialTranscript } from '../lib/transcript';
 
@@ -57,7 +58,8 @@ export async function readCall(
     return before;
   }
 
-  const { unsure, ...fields } = ruleInsight(facts);
+  const reading = ruleInsight(facts);
+  const { unsure, marks: _marks, ...fields } = reading;
   const stats = transcript ? transcriptStats(theirPart(transcript.turns, facts.firstName)) : null;
   const contactTz =
     before?.contact_tz ??
@@ -68,6 +70,7 @@ export async function readCall(
   const row: CallInsight = {
     ...fields,
     call_task_id: callTaskId,
+    subject: 'task',
     contact_id: log.contact_id,
     company_id: log.company_id,
     dial_id: log.dial_id,
@@ -83,6 +86,7 @@ export async function readCall(
     rules_version: RULES_VERSION,
     unsure: JSON.stringify(unsure),
     sources: JSON.stringify(rulesSources()),
+    timeline_json: timelineJson(callTimeline(facts, reading)),
     excluded: before?.excluded ?? 0,
     extracted_at: new Date(now).toISOString(),
   };

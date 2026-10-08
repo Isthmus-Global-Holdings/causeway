@@ -136,6 +136,28 @@ dl.bars .fill.quiet { background: var(--muted); }
 dl.bars .fill.warn { background: var(--warn-fg); }
 dl.bars .half { position: absolute; left: 50%; top: -3px; bottom: -3px; border-left: 2px solid var(--fg); }
 dl.bars .n { text-align: right; font-variant-numeric: tabular-nums; }
+/* Coaching's timelines: one call to scale (--w: its share of the row's scale). The phases run
+   underneath, your turns tick above the middle, theirs below (taller for a story), the moments are
+   dots on top. Every position is a custom property set by the view; the text alternative follows. */
+dl.strips { display: grid; grid-template-columns: minmax(7rem, 15rem) minmax(0, 1fr) 3.5rem; gap: var(--space-2) var(--space-3); align-items: center; margin: 0; }
+dl.strips dt { overflow-wrap: anywhere; }
+dl.strips dd { margin: 0; }
+dl.strips .n { text-align: right; font-variant-numeric: tabular-nums; }
+.strip { position: relative; height: 1.5rem; width: var(--w, 100%); border-radius: var(--radius-sm); background: var(--line); }
+.strip .phase { position: absolute; top: 0.6rem; bottom: 0; left: var(--l); width: var(--w); }
+.strip .phase.menu { background: var(--line); }
+.strip .phase.desk { background: var(--muted); opacity: 0.45; }
+.strip .phase.hold { background: var(--warn-bg); border-top: 1px dashed var(--warn-fg); }
+.strip .phase.them, .strip .phase.call { background: var(--accent); opacity: 0.3; }
+.strip .phase.voicemail { background: var(--muted); opacity: 0.25; }
+.strip .tick { position: absolute; left: var(--l); width: max(var(--w), 2px); }
+.strip .tick.rep { top: 0.6rem; height: 0.4rem; background: var(--fg); }
+.strip .tick.prospect { bottom: 0; height: 0.5rem; background: var(--accent); }
+.strip .tick.prospect.story { height: 0.9rem; }
+.strip .mark { position: absolute; top: 0; left: var(--l); width: 0.5rem; height: 0.5rem; margin-left: -0.25rem; border-radius: 50%; background: var(--fg); }
+.strip .mark.objection { background: var(--warn-fg); }
+.strip .mark.next_step { background: var(--accent); }
+.strip-text { margin: 0; font-size: 0.9em; }
 ol.consequences { margin: 0; padding-left: var(--space-5); display: flex; flex-direction: column; gap: var(--space-1); }
 
 /* Tables */
@@ -209,6 +231,8 @@ dl.headers dd { margin: 0; overflow-wrap: anywhere; }
   input[type=text], input[type=search], input[type=date], input[type=time], input[type=url], textarea, select { font-size: 16px; }
   .matches { grid-template-columns: minmax(0, 1fr); }
   dl.bars { grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3rem; }
+  dl.strips { grid-template-columns: minmax(0, 1fr) 3rem; }
+  dl.strips dt { grid-column: 1 / -1; }
   .waiting { grid-template-columns: minmax(0, 1fr); }
   table.stacked thead { display: none; }
   table.stacked, table.stacked tbody, table.stacked tr, table.stacked td { display: block; }

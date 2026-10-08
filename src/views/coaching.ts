@@ -33,7 +33,11 @@ import {
 } from '../lib/coaching';
 import { formatLocal } from '../lib/dates';
 import type { CallInsight } from '../lib/db';
+import { CALL_OUTCOMES } from '../workflows/call-logged';
 import { layout, type Html } from './layout';
+import { timelineStrip } from './timeline';
+
+const outcomeLabel = (outcome: string) => CALL_OUTCOMES.find((o) => o.value === outcome)?.label ?? outcome;
 
 function noteList(notes: CoachNote[]): Html {
   return html`<ul class="coach">
@@ -74,13 +78,22 @@ export function callTags(call: InsightFields, unsure: Tag[]): Html {
 }
 
 // On the call page: quiet notes, never in the way. What to adjust after the
-// call just logged, then what's worked on calls like this one.
+// call just logged (the call drawn to scale, its tags, the notes), then
+// what's worked on calls like this one.
 export function coachingCard(coaching: CallCoaching): Html | '' {
   const { after } = coaching;
   if (!after && !coaching.before.length) return '';
   return html`<div class="card" id="coaching">
     <div class="row"><h2>Coaching</h2><a class="muted" href="/coaching">Patterns across your calls</a></div>
-    ${after ? html`<div class="tight"><h3>After the call with ${after.label}</h3>${callTags(after.read, after.unsure)}${noteList(after.notes)}</div>` : ''}
+    ${
+      after
+        ? html`<div class="tight">
+            <h3>After the call with ${after.label}</h3>
+            ${after.timeline ? timelineStrip(after.timeline, { outcome: outcomeLabel(after.outcome) }) : ''}
+            ${callTags(after.read, after.unsure)}${noteList(after.notes)}
+          </div>`
+        : ''
+    }
     ${coaching.before.length ? html`<div class="tight"><h3>Before this call</h3>${noteList(coaching.before)}</div>` : ''}
   </div>`;
 }
