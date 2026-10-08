@@ -593,8 +593,8 @@ page, under the script:
 **Coaching** in the navbar has the patterns across every call:
 
 - How far your calls get, as bars: calls, someone picked up, reached them, a
-  next step agreed, an interview booked on one of those calls, an interview
-  held. Counts, not
+  next step agreed, an interview booked on one of those calls (counted by
+  call), an interview held. Counts, not
   rates, so they hold at any number of calls, and the step that loses the
   most (at least 40% of the one before) is named with what to try.
 - The interviews your calls booked, followed to how each turned out: held,

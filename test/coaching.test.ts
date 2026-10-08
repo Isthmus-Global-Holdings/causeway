@@ -737,10 +737,11 @@ test('the funnel counts each step to an interview held, and names the step that 
     moves: 0,
     call_sec: null,
   });
-  // 'k' was booked on a counted call; the other without logging one.
+  // 'k' was booked on a call that agreed a next step, twice; 'm' reached
+  // them but agreed none (booked from its task); the last without a call.
   const funnel = callFunnel(
     report,
-    [booking('k'), booking('booked-from-the-task')],
+    [booking('k'), { ...booking('k'), meeting_id: 'm-k-2' }, booking('m'), booking('booked-from-the-task')],
     Date.parse('2026-09-30T00:00:00Z')
   );
   assert.deepEqual(

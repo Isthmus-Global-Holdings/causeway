@@ -120,7 +120,7 @@ export interface CoachingReport {
   talk: CallInsight[]; // the latest connects with a transcript (their share of the words), newest first
   theyLed: { calls: number; of: number }; // every connect with a transcript: where they talked more than half
   recent: CallInsight[]; // the last calls read, newest first
-  callTaskIds: ReadonlySet<string>; // the calls counted
+  nextStepCalls: ReadonlySet<string>; // the counted calls that agreed a next step
 }
 
 const QUOTES = 3;
@@ -275,7 +275,7 @@ export function coachingReport(rows: CallInsight[], repTimeZone: string): Coachi
     talk: talked.slice(0, RECENT),
     theyLed: { calls: talked.filter((c) => (c.prospect_talk_share ?? 0) > 0.5).length, of: talked.length },
     recent: newest.slice(0, RECENT),
-    callTaskIds: new Set(calls.map((c) => c.call_task_id)),
+    nextStepCalls: new Set(calls.filter((c) => c.stage === 'next_step').map((c) => c.call_task_id)),
   };
 }
 
@@ -283,9 +283,10 @@ export function coachingReport(rows: CallInsight[], repTimeZone: string): Coachi
 
 // Counts, not rates: honest at any number of calls. Each step is a subset of
 // the one before (a booked interview is a next step), except held, which
-// waits on the interviews still ahead. Only interviews booked on the calls
-// the report counts: one booked without logging a call, or on a call left
-// out, is no step of theirs.
+// waits on the interviews still ahead. Interviews count by call, and only
+// on calls that agreed a next step: one booked from a task whose logged call
+// agreed none, on a call left out, or a second time on the same call, is no
+// step of theirs.
 export interface FunnelStep {
   key: 'calls' | 'answered' | 'reached' | 'next_step' | 'booked' | 'held';
   label: string;
@@ -313,10 +314,9 @@ const LEAK_ADVICE: Record<string, string> = {
 };
 
 export function callFunnel(report: CoachingReport, booked: BookedInterview[], now: number): Funnel {
-  const bookings = bookingReport(
-    booked.filter((b) => report.callTaskIds.has(b.call_task_id)),
-    now
-  );
+  const theirs = booked.filter((b) => report.nextStepCalls.has(b.call_task_id));
+  const calls = (status?: BookingStatus[]) =>
+    new Set(theirs.filter((b) => !status || status.includes(bookingStatus(b, now))).map((b) => b.call_task_id)).size;
   const steps: FunnelStep[] = [
     { key: 'calls', label: 'Calls', count: report.calls },
     { key: 'answered', label: 'Someone picked up', count: report.answered },
@@ -326,8 +326,8 @@ export function callFunnel(report: CoachingReport, booked: BookedInterview[], no
       label: 'Next step agreed',
       count: report.stages.find((s) => s.stage === 'next_step')?.count ?? 0,
     },
-    { key: 'booked', label: 'Interview booked', count: bookings.booked },
-    { key: 'held', label: 'Interview held', count: bookings.held },
+    { key: 'booked', label: 'Interview booked', count: calls() },
+    { key: 'held', label: 'Interview held', count: calls(['held']) },
   ];
   let leak: Funnel['leak'] = null;
   let worst = 0;
@@ -338,7 +338,7 @@ export function callFunnel(report: CoachingReport, booked: BookedInterview[], no
     worst = lost;
     leak = { from, to, advice: LEAK_ADVICE[to.key] };
   }
-  return { steps, upcoming: bookings.upcoming + bookings.toLog, leak };
+  return { steps, upcoming: calls(['upcoming', 'to_log']), leak };
 }
 
 // The hour with the best rate, among those with enough calls to beat

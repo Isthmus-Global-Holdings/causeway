@@ -20,7 +20,7 @@ The rules already tagged the call. Answer only the tags that are wrong, or that 
 - nextStep: whether a next step was agreed, and what, in a few words ("Call back Thursday 8 AM", "Gave his cell").
 
 ## Say what to keep and what to change
-- whatWorked: one or two sentences on what the rep did that kept the call going or got past the front desk, quoting the line. Leave it out when nothing did.
+- what_worked: one or two sentences on what the rep did that kept the call going or got past the front desk, quoting the line. Leave it out when nothing did.
 - adjust: one or two sentences on the single change that would help most on the next call like it, with the words to try. Concrete, in the rep's voice, no hedging.
 
 What a good call looks like:
