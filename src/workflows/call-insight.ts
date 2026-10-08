@@ -129,7 +129,8 @@ async function readFacts(
   { reread = false }: ReadOptions
 ): Promise<CallInsight> {
   const source = insightSource(facts);
-  const [before, reviews] = await Promise.all([deps.insights.get(key.id), deps.reviews.list(key.id)]);
+  const dialId = key.dial?.id ?? null;
+  const [before, reviews] = await Promise.all([deps.insights.get(key.id), deps.reviews.list(key.id, dialId)]);
   const reviewedSince = reviews.some((r) => before && r.reviewed_at > before.extracted_at);
   // Read already, from this source by these rules, of the same call with the
   // same outcome, and no review since: as it was. An interview's latest dial
@@ -192,7 +193,7 @@ async function readFacts(
   // its own read land first, which this save just overwrote: look again,
   // and lay the newer reviews over once more. A review saved after this
   // look has its own read, which lands after.
-  const latest = await deps.reviews.list(key.id);
+  const latest = await deps.reviews.list(key.id, dialId);
   if (JSON.stringify(latest) === JSON.stringify(reviews)) return reviewed;
   const again = withReviews(base, latest);
   await deps.insights.save(again);
@@ -220,7 +221,10 @@ export async function reviewCall(
 ): Promise<CallInsight | null> {
   const log = await deps.callLogs.get(id);
   if (log ? log.channel === 'whatsapp_message' : !(await readInterview(deps, id, now))) return null;
-  await deps.reviews.save(id, review);
+  // The review is of this call: an interview's page dialled again later is
+  // another call, read and reviewed on its own.
+  const dialId = log ? log.dial_id : ((await deps.dials.latestForTask(id))?.id ?? null);
+  await deps.reviews.save(id, { ...review, dial_id: dialId });
   return readEither(deps, id, now, { reread: true });
 }
 

@@ -216,10 +216,11 @@ export async function callCoaching(
 // just after logging it usually hasn't yet (that runs in the background), so
 // the rules read it now from the outcome, length and notes.
 export async function callNotes(db: D1Database, callTaskId: string): Promise<CallNotes | null> {
-  const [row, reviews]: [CallInsight | null, CallReview[]] = await Promise.all([
-    d1CallInsightStore(db).get(callTaskId),
-    d1CallReviewStore(db).list(callTaskId),
-  ]);
+  const row: CallInsight | null = await d1CallInsightStore(db).get(callTaskId);
+  const fresh = row ? null : await freshFacts(db, callTaskId);
+  if (!row && !fresh) return null;
+  // Its reviews, of this call (an interview dialled again is a new call).
+  const reviews: CallReview[] = await d1CallReviewStore(db).list(callTaskId, row ? row.dial_id : fresh!.dialId);
   // A review saved since the row was read (its read failed; the sweep reads
   // it again) may replace one already laid into the row: read from the rules
   // now, below, rather than over what the old review said.
@@ -236,8 +237,7 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
       timeline: parseTimeline(row.timeline_json),
     };
   }
-  const facts = await freshFacts(db, callTaskId);
-  if (!facts) return null;
+  const { facts } = fresh ?? (await freshFacts(db, callTaskId))!;
   const reading = ruleInsight(facts);
   const { unsure, marks: _marks, ...fields } = reading;
   // Its reviews too: one saved before the call's reading was (a read that
@@ -267,16 +267,16 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
 // The facts of this id's call, for a reading on the spot: the call logged
 // for a CALL task, or an interview's call once it ended (with how the rep
 // logged the interview, if they have). Null when there's neither.
-async function freshFacts(db: D1Database, id: string): Promise<CallFacts | null> {
+async function freshFacts(db: D1Database, id: string): Promise<{ facts: CallFacts; dialId: string | null } | null> {
   const log = await d1CallLogStore(db).get(id);
   if (log) {
     if (log.channel === 'whatsapp_message') return null;
     const dial = log.dial_id ? await d1DialStore(db).get(log.dial_id) : null;
-    return callFacts(log, dial, dial ? dialTranscript(dial) : null);
+    return { facts: callFacts(log, dial, dial ? dialTranscript(dial) : null), dialId: log.dial_id };
   }
   const dial = await d1DialStore(db).latestForTask(id);
   if (dial?.subject !== 'meeting' || isLive(dialState(dial, Math.floor(Date.now() / 1000)))) return null;
-  return interviewFacts(dial, await d1MeetingLogStore(db).latest(id), dialTranscript(dial));
+  return { facts: interviewFacts(dial, await d1MeetingLogStore(db).latest(id), dialTranscript(dial)), dialId: dial.id };
 }
 
 // Calls worth a review (someone picked up, nobody reviewed it yet), newest
@@ -306,11 +306,7 @@ export interface CallForReview {
 // One logged call, or one interview's call, with everything a review reads:
 // the connector's get_call_review.
 export async function callForReview(c: Context<AppEnv>, id: string): Promise<CallForReview> {
-  const [settings, log, reviews] = await Promise.all([
-    loadAppSettings(c.env),
-    d1CallLogStore(c.env.DB).get(id),
-    d1CallReviewStore(c.env.DB).list(id),
-  ]);
+  const [settings, log] = await Promise.all([loadAppSettings(c.env), d1CallLogStore(c.env.DB).get(id)]);
   if (log?.channel === 'whatsapp_message') throw notACall();
   let dial: Dial | null;
   let call: CallForReview['call'];
@@ -340,7 +336,10 @@ export async function callForReview(c: Context<AppEnv>, id: string): Promise<Cal
     };
   }
   const transcript = dial ? dialTranscript(dial) : null;
-  const notes = await callNotes(c.env.DB, id);
+  const [notes, reviews] = await Promise.all([
+    callNotes(c.env.DB, id),
+    d1CallReviewStore(c.env.DB).list(id, dial?.id ?? null),
+  ]);
   if (!notes) throw notACall();
   return { settings, call, turns: transcript?.turns ?? [], summary: transcript?.summary ?? [], notes, reviews };
 }

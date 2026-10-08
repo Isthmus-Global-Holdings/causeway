@@ -2001,6 +2001,8 @@ export function d1CallInsightStore(db: D1Database): CallInsightStore {
            VALUES (${WRITTEN_COLUMNS.map(() => '?').join(', ')})
            ON CONFLICT(call_task_id) DO UPDATE SET ${updates.join(', ')}
            WHERE excluded.rules_version > call_insights.rules_version
+              -- An interview dialled again: a new call, whatever it was read from.
+              OR excluded.dial_id IS NOT call_insights.dial_id
               OR (excluded.rules_version = call_insights.rules_version
                   AND ${sourceRank('excluded.source')} >= ${sourceRank('call_insights.source')})`
         )
@@ -2023,7 +2025,8 @@ export function d1CallInsightStore(db: D1Database): CallInsightStore {
              (i.excluded = 0 AND i.rules_version < ?1)
              -- A review saved after its last read (a read that failed after review_call).
              OR (i.excluded = 0 AND EXISTS (SELECT 1 FROM call_reviews r
-                 WHERE r.call_task_id = ${id} AND r.reviewed_at > i.extracted_at))
+                 WHERE r.call_task_id = ${id} AND r.reviewed_at > i.extracted_at
+                   AND (r.dial_id IS NULL OR r.dial_id IS i.dial_id)))
              -- A silent recording's transcript is done with no turns: nothing to read again.
              OR (i.excluded = 0 AND i.source != 'transcript' AND d.transcript_status = 'done'
                  AND json_array_length(d.transcript_json) > 0)`;
@@ -2116,8 +2119,9 @@ export async function callInsightsFor(db: D1Database, callTaskIds: string[]): Pr
 // --- Reviews of a call (call_reviews): the rep's, or Claude's through the connector ---
 
 export interface CallReviewStore {
-  // The call's reviews, at most one per reviewer.
-  list(callTaskId: string): Promise<CallReview[]>;
+  // The call's reviews, at most one per reviewer: those of this dial (an
+  // interview dialled again is a new call), and those of no dial in particular.
+  list(callTaskId: string, dialId?: string | null): Promise<CallReview[]>;
   // Writes the reviewer's review of the call under the current review rules
   // (REVIEW_RULES_VERSION). It replaces their earlier one whole, unless that
   // one was under older rules: a reviewer asked again only for what's new
@@ -2127,39 +2131,44 @@ export interface CallReviewStore {
 
 export function d1CallReviewStore(db: D1Database): CallReviewStore {
   return {
-    async list(callTaskId) {
+    async list(callTaskId, dialId) {
       const { results } = await db
         .prepare(
-          `SELECT reviewer, corrections, what_worked, adjust, reviewed_at FROM call_reviews
-           WHERE call_task_id = ? ORDER BY reviewer`
+          `SELECT reviewer, corrections, what_worked, adjust, reviewed_at, dial_id FROM call_reviews
+           WHERE call_task_id = ?1 AND (?2 IS NULL OR dial_id IS NULL OR dial_id = ?2) ORDER BY reviewer`
         )
-        .bind(callTaskId)
+        .bind(callTaskId, dialId ?? null)
         .all<{
           reviewer: Reviewer;
           corrections: string;
           what_worked: string | null;
           adjust: string | null;
           reviewed_at: string;
+          dial_id: string | null;
         }>();
       return results.map((r) => ({ ...r, corrections: parseCorrections(r.corrections) }));
     },
 
     async save(callTaskId, review) {
+      const dialId = review.dial_id ?? null;
       const earlier = await db
-        .prepare(`SELECT corrections, rules_version FROM call_reviews WHERE call_task_id = ? AND reviewer = ?`)
+        .prepare(`SELECT corrections, rules_version, dial_id FROM call_reviews WHERE call_task_id = ? AND reviewer = ?`)
         .bind(callTaskId, review.reviewer)
-        .first<{ corrections: string; rules_version: number }>();
+        .first<{ corrections: string; rules_version: number; dial_id: string | null }>();
+      // An earlier review under older rules, of this same call, is added to.
       const corrections =
-        earlier && earlier.rules_version < REVIEW_RULES_VERSION
+        earlier &&
+        earlier.rules_version < REVIEW_RULES_VERSION &&
+        (earlier.dial_id === null || earlier.dial_id === dialId)
           ? { ...parseCorrections(earlier.corrections), ...review.corrections }
           : review.corrections;
       await db
         .prepare(
-          `INSERT INTO call_reviews (call_task_id, reviewer, corrections, what_worked, adjust, reviewed_at, rules_version)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+          `INSERT INTO call_reviews (call_task_id, reviewer, corrections, what_worked, adjust, reviewed_at, rules_version, dial_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
            ON CONFLICT(call_task_id, reviewer) DO UPDATE SET corrections = excluded.corrections,
              what_worked = excluded.what_worked, adjust = excluded.adjust, reviewed_at = excluded.reviewed_at,
-             rules_version = excluded.rules_version`
+             rules_version = excluded.rules_version, dial_id = excluded.dial_id`
         )
         .bind(
           callTaskId,
@@ -2168,7 +2177,8 @@ export function d1CallReviewStore(db: D1Database): CallReviewStore {
           review.what_worked,
           review.adjust,
           review.reviewed_at,
-          REVIEW_RULES_VERSION
+          REVIEW_RULES_VERSION,
+          dialId
         )
         .run();
     },
@@ -2184,7 +2194,8 @@ export async function callsToReview(db: D1Database, limit: number): Promise<Call
       `SELECT ${INSIGHT_COLUMNS.map((c) => `i.${c}`).join(', ')} FROM call_insights i
        WHERE i.excluded = 0 AND i.gate IN ('owner', 'gatekeeper')
          AND NOT EXISTS (SELECT 1 FROM call_reviews r
-                         WHERE r.call_task_id = i.call_task_id AND r.rules_version >= ?1)
+                         WHERE r.call_task_id = i.call_task_id AND r.rules_version >= ?1
+                           AND (r.dial_id IS NULL OR r.dial_id IS i.dial_id))
        ORDER BY i.at_sec DESC LIMIT ?2`
     )
     .bind(REVIEW_RULES_VERSION, limit)

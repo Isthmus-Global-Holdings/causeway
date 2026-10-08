@@ -267,6 +267,7 @@ export interface CallReview {
   what_worked: string | null;
   adjust: string | null;
   reviewed_at: string; // ISO
+  dial_id?: string | null; // the call it's of; null: the call whatever its dial (see migration 0029)
 }
 
 // call_reviews keeps corrections as JSON; a damaged value reads as none.
