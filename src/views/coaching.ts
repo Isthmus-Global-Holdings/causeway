@@ -17,7 +17,6 @@ import {
 import {
   bestHour,
   BOOKING_STATUS_LABELS,
-  callFunnel,
   heldRate,
   HOUR_SAMPLE,
   hourLabel,
@@ -260,11 +259,10 @@ function bookingsCard(bookings: BookingReport, timeZone: string): Html {
   </section>`;
 }
 
-export function coachingPage({ settings, report, bookings, unread }: CoachingOverview, actor: string): Html {
+export function coachingPage({ settings, report, bookings, funnel, unread }: CoachingOverview, actor: string): Html {
   const tz = settings.timeZone;
   const { gatekeeper, fastNoNextStep } = report;
-  // Named only once an hour has enough calls to beat another (the hours card says so).
-  const best = bestHour(report.byHour.filter((h) => h.calls >= HOUR_SAMPLE));
+  const best = bestHour(report.byHour);
   const reading = unread
     ? html`<p class="muted">Some logged calls haven’t been read for coaching yet. They’re being read in the background: refresh in a minute to include them.</p>`
     : '';
@@ -295,7 +293,7 @@ export function coachingPage({ settings, report, bookings, unread }: CoachingOve
       </div>
       ${reading}
 
-      ${funnelCard(callFunnel(report, bookings))}
+      ${funnelCard(funnel)}
 
       ${bookingsCard(bookings, tz)}
 

@@ -119,6 +119,7 @@ export interface CoachingReport {
   style: { long: Style; short: Style };
   talk: CallInsight[]; // connects with a transcript (their share of the words), newest first
   recent: CallInsight[]; // the last calls read, newest first
+  callTaskIds: ReadonlySet<string>; // the calls counted
 }
 
 const QUOTES = 3;
@@ -271,6 +272,7 @@ export function coachingReport(rows: CallInsight[], repTimeZone: string): Coachi
     style: { long: styleOf(long), short: styleOf(connects.filter((c) => (c.talk_sec ?? c.duration_sec ?? 0) < 120)) },
     talk: newest.filter((c) => c.reached && c.prospect_talk_share !== null).slice(0, RECENT),
     recent: newest.slice(0, RECENT),
+    callTaskIds: new Set(calls.map((c) => c.call_task_id)),
   };
 }
 
@@ -278,7 +280,9 @@ export function coachingReport(rows: CallInsight[], repTimeZone: string): Coachi
 
 // Counts, not rates: honest at any number of calls. Each step is a subset of
 // the one before (a booked interview is a next step), except held, which
-// waits on the interviews still ahead.
+// waits on the interviews still ahead. Only interviews booked on the calls
+// the report counts: one booked without logging a call, or on a call left
+// out, is no step of theirs.
 export interface FunnelStep {
   key: 'calls' | 'answered' | 'reached' | 'next_step' | 'booked' | 'held';
   label: string;
@@ -303,7 +307,11 @@ const LEAK_ADVICE: Record<string, string> = {
   booked: 'Next steps aren’t becoming interviews. Ask for the interview on the call, with a day and time.',
 };
 
-export function callFunnel(report: CoachingReport, bookings: BookingReport): Funnel {
+export function callFunnel(report: CoachingReport, booked: BookedInterview[], now: number): Funnel {
+  const bookings = bookingReport(
+    booked.filter((b) => report.callTaskIds.has(b.call_task_id)),
+    now
+  );
   const steps: FunnelStep[] = [
     { key: 'calls', label: 'Calls', count: report.calls },
     { key: 'answered', label: 'Someone picked up', count: report.answered },
@@ -328,11 +336,12 @@ export function callFunnel(report: CoachingReport, bookings: BookingReport): Fun
   return { steps, upcoming: bookings.upcoming + bookings.toLog, leak };
 }
 
-// The hour with the best rate, among those with enough calls.
+// The hour with the best rate, among those with enough calls to beat
+// another (HOUR_SAMPLE): on fewer, no hour is named anywhere.
 export function bestHour(rows: HourRow[]): HourRow | null {
   let best: HourRow | null = null;
   for (const row of rows) {
-    if (row.calls < MIN_SAMPLE) continue;
+    if (row.calls < HOUR_SAMPLE) continue;
     if (!best || (rateOf(row) ?? 0) > (rateOf(best) ?? 0)) best = row;
   }
   return best && best.reached > 0 ? best : null;

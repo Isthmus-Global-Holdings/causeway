@@ -14,6 +14,7 @@ import { afterResponse } from '../lib/background';
 import {
   adjustNotes,
   callFacts,
+  feedbackBy,
   parseSources,
   parseUnsure,
   ruleInsight,
@@ -30,11 +31,13 @@ import {
 import {
   bookingReport,
   callBrief,
+  callFunnel,
   coachingReport,
   prepNotes,
   type BookingReport,
   type CallBrief,
   type CoachingReport,
+  type Funnel,
 } from '../lib/coaching';
 import {
   allBookedInterviews,
@@ -64,6 +67,7 @@ export interface CoachingOverview {
   settings: AppSettings;
   report: CoachingReport;
   bookings: BookingReport;
+  funnel: Funnel;
   unread: number; // logged calls not read yet (up to READ_ON_OPEN + 1)
 }
 
@@ -78,10 +82,13 @@ export async function coachingOverview(c: Context<AppEnv>): Promise<CoachingOver
   if (unread.length) {
     afterResponse(c, 'reading calls for coaching', () => readUnreadCalls(deps, READ_ON_OPEN, Date.now()));
   }
+  const now = Date.now();
+  const report = coachingReport(rows, settings.timeZone);
   return {
     settings,
-    report: coachingReport(rows, settings.timeZone),
-    bookings: bookingReport(booked, Date.now()),
+    report,
+    bookings: bookingReport(booked, now),
+    funnel: callFunnel(report, booked, now),
     unread: unread.length,
   };
 }
@@ -93,6 +100,7 @@ export interface CallNotes {
   unsure: Tag[];
   sources: TagSources;
   notes: CoachNote[];
+  feedbackBy: ReturnType<typeof feedbackBy>; // who wrote what worked and what to adjust
 }
 
 export interface CallCoaching {
@@ -143,7 +151,10 @@ export async function callCoaching(
 // just after logging it usually hasn't yet (that runs in the background), so
 // the rules read it now from the outcome, length and notes.
 export async function callNotes(db: D1Database, callTaskId: string): Promise<CallNotes | null> {
-  const row: CallInsight | null = await d1CallInsightStore(db).get(callTaskId);
+  const [row, reviews]: [CallInsight | null, CallReview[]] = await Promise.all([
+    d1CallInsightStore(db).get(callTaskId),
+    d1CallReviewStore(db).list(callTaskId),
+  ]);
   if (row) {
     return {
       label: row.label,
@@ -151,6 +162,7 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
       unsure: parseUnsure(row.unsure),
       sources: parseSources(row.sources),
       notes: adjustNotes(row),
+      feedbackBy: feedbackBy(reviews),
     };
   }
   const log = await d1CallLogStore(db).get(callTaskId);
@@ -165,6 +177,7 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
     unsure,
     sources: rulesSources(),
     notes: adjustNotes(read),
+    feedbackBy: feedbackBy([]),
   };
 }
 

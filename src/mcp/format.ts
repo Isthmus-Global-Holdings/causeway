@@ -12,7 +12,6 @@ import {
   STAGE_LABELS,
   type GatekeeperResult,
   type InsightFields,
-  type Reviewer,
 } from '../lib/call-insight';
 import {
   BOOKING_STATUS_LABELS,
@@ -334,16 +333,15 @@ export function afterCallSummary(after: CallNotes, nextDue: string | null, timeZ
     unsure: after.unsure,
     review:
       call.what_worked || call.adjust
-        ? { whatWorked: call.what_worked, adjust: call.adjust, by: reviewedBy(after) }
+        ? {
+            whatWorked: call.what_worked,
+            whatWorkedBy: after.feedbackBy.whatWorked,
+            adjust: call.adjust,
+            adjustBy: after.feedbackBy.adjust,
+          }
         : null,
     notes: after.notes.map((n) => n.text),
   };
-}
-
-// Who reviewed the call, from who decided its tags: the rep over Claude.
-function reviewedBy(after: CallNotes): Reviewer | null {
-  const by = Object.values(after.sources).map((s) => s?.by);
-  return by.includes('rep') ? 'rep' : by.includes('claude') ? 'claude' : null;
 }
 
 // One logged call for a review (get_call_review): the call, its transcript

@@ -248,7 +248,10 @@ test('calls are reviewed from here: the ones to review, one with its rules, and 
   });
   assert.equal(reviewed.isError, false, reviewed.text);
   assert.equal(reviewed.data.reading.sources.stage.by, 'claude');
-  assert.equal(reviewed.data.reading.review.by, 'claude');
+  assert.deepEqual(
+    [reviewed.data.reading.review.whatWorkedBy, reviewed.data.reading.review.adjustBy],
+    ['claude', 'claude']
+  );
   assert.equal(reviewed.data.reading.review.adjust, 'Leave with a time, not “tomorrow”.');
   assert.ok(!reviewed.data.reading.unsure.includes('stage'));
 

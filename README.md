@@ -593,7 +593,8 @@ page, under the script:
 **Coaching** in the navbar has the patterns across every call:
 
 - How far your calls get, as bars: calls, someone picked up, reached them, a
-  next step agreed, an interview booked, an interview held. Counts, not
+  next step agreed, an interview booked on one of those calls, an interview
+  held. Counts, not
   rates, so they hold at any number of calls, and the step that loses the
   most (at least 40% of the one before) is named with what to try.
 - The interviews your calls booked, followed to how each turned out: held,
@@ -617,8 +618,8 @@ page, under the script:
 - Reached rate by hour of their day (in the contact's time zone, from their
   state or their company's; unknown counts in yours), with groups under three
   calls marked as too few. Until an hour has about 30 calls it says it's too
-  early to pick one, and the page names no best hour: a difference between
-  hours means nothing on fewer.
+  early to pick one, and no best hour is named, here or before a call: a
+  difference between hours means nothing on fewer.
 - Follow-up timing: by the gap since the last call, how often the next call
   reached them, after a connect (a second connect) and before one.
 - Where each call ended, and your last calls with their tags and what to

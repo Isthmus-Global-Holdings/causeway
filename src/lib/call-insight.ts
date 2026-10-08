@@ -274,6 +274,14 @@ export function withReviews<T extends InsightFields & { unsure: string; sources:
   return out;
 }
 
+// Who wrote the what-worked and the adjust that stand: the last review that
+// said (Claude's, then the rep's, as withReviews lays them). Null: no review did.
+export function feedbackBy(reviews: CallReview[]): { whatWorked: Reviewer | null; adjust: Reviewer | null } {
+  const last = (said: (r: CallReview) => string | null) =>
+    [...REVIEWERS].reverse().find((reviewer) => reviews.some((r) => r.reviewer === reviewer && said(r))) ?? null;
+  return { whatWorked: last((r) => r.what_worked), adjust: last((r) => r.adjust) };
+}
+
 // One call read by the rules, with the tags they only guessed at.
 export interface RuleReading extends InsightFields {
   unsure: Tag[];
