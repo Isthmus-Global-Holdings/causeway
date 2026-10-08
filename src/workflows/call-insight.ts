@@ -59,6 +59,7 @@ interface ReadOptions {
 interface ReadKey {
   id: string; // the CALL task, or the meeting
   subject: InsightSubject;
+  logId: string | null; // an interview's latest log, read with it
   contactId: string;
   companyId: string | null;
   dial: Dial | null;
@@ -84,6 +85,7 @@ export async function readCall(
   const key: ReadKey = {
     id: callTaskId,
     subject: 'task',
+    logId: null,
     contactId: log.contact_id,
     companyId: log.company_id,
     dial,
@@ -111,6 +113,7 @@ export async function readInterview(
   const key: ReadKey = {
     id: meetingId,
     subject: 'meeting',
+    logId: log?.log_id ?? null,
     contactId: dial.contact_id,
     companyId: log?.company_id ?? null,
     dial,
@@ -136,7 +139,10 @@ async function readFacts(
   // same outcome, and no review since: as it was. An interview's latest dial
   // or logged outcome changing (a redial, a no-show logged after the read)
   // is a different call to read.
-  const sameCall = before?.dial_id === (key.dial?.id ?? null) && before?.outcome === key.outcome;
+  const sameCall =
+    before?.dial_id === (key.dial?.id ?? null) &&
+    before?.outcome === key.outcome &&
+    before?.meeting_log_id === key.logId;
   if (
     !reread &&
     before &&
@@ -161,6 +167,7 @@ async function readFacts(
     ...fields,
     call_task_id: key.id,
     subject: key.subject,
+    meeting_log_id: key.logId,
     contact_id: key.contactId,
     company_id: key.companyId,
     dial_id: key.dial?.id ?? null,
