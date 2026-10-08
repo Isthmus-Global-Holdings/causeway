@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
-import { coachingOverview, setCallExcluded } from '../actions/coaching';
+import { coachingOverview, heardOverview, setCallExcluded } from '../actions/coaching';
 import type { AppEnv } from '../types';
 import { coachingPage } from '../views/coaching';
+import { heardPage } from '../views/heard';
 
 export const coachingRoute = new Hono<AppEnv>();
 
@@ -11,6 +12,13 @@ export const coachingRoute = new Hono<AppEnv>();
 // timing. All from D1; calls not read yet are read after it answers.
 coachingRoute.get('/', async (c) => {
   return c.html(coachingPage(await coachingOverview(c), c.get('actor')));
+});
+
+// GET /coaching/heard — what they've told the rep: the software they use
+// and what they said about their work, in their words, by theme, across
+// every call and interview that reached them.
+coachingRoute.get('/heard', async (c) => {
+  return c.html(heardPage(await heardOverview(c), c.get('actor')));
 });
 
 // POST /coaching/calls/:id/exclude — leave a logged call out of coaching (a

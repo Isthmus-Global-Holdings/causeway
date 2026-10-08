@@ -661,6 +661,28 @@ pick one, and no best hour is named, here or before a call. And follow-up
 timing: by the gap since the last call, how often the next call reached
 them, after a connect (a second connect) and before one.
 
+**What you've heard**, Coaching's second tab, is the point of the calls: what
+they've told you, across every call and interview that reached them, read by
+rules from their part of each recording and from your notes on the call or
+the interview.
+
+- The software they use: named tools of the trade (McLeod, TMW, Truckstop,
+  DAT, Samsara, Motive, QuickBooks, spreadsheets and the rest) and the ways
+  of working that stand in for one (a load board, a TMS, an ELD, something
+  in-house, paper, phone and text), each with how many calls named it and
+  the newest quotes.
+- What they said about their work, by theme: quoting and rates, dispatch and
+  loads, invoicing and getting paid, drivers and people, compliance and
+  safety, the software they use. Each with how many calls touched it, how
+  many of those hurt (a line that names a problem, time lost, a mess), and
+  the quotes, the ones that hurt first. Your notes count when they report
+  what they said or do ("He said they use QuickBooks"), not your own plans.
+- Call by call, newest first.
+
+Counts of calls, never rates, and every quote links its call. The synthesis
+(what keeps coming up, what to ask next, whether to narrow the segment) is
+yours to do with Claude: `what_you_heard` hands it the same.
+
 On **Calls**, each logged call shows its strip and its tags too, with **Leave
 out of coaching** for a test call (and **Put back in coaching**).
 
@@ -709,8 +731,9 @@ as the pages.
   (the call script filled in, history, coaching), `call_coaching` (the
   patterns across every call), `calls_to_review` and `get_call_review` (a
   logged call to review, with its transcript and the review rules),
-  `get_meeting` (prep and the interview questions), `recent_inbound_calls`
-  and `unfinished`.
+  `what_you_heard` (the software they use and what they said about their
+  work, by theme, with every quote), `get_meeting` (prep and the interview
+  questions), `recent_inbound_calls` and `unfinished`.
 - **Writes:** `save_draft`, `mark_email_sent`, `drop_email_task`, `log_call`,
   `snooze_call`, `review_call` (a call's review for coaching, in the app
   only), `book_interview` (never with a calendar invite: send one from

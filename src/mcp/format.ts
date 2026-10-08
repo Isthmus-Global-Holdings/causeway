@@ -3,6 +3,7 @@
 // each record's page (where the rep calls and sends). No I/O.
 
 import type { CallCoaching, CallForReview, CallNotes } from '../actions/coaching';
+import type { HeardReport, Said } from '../lib/heard';
 import { formatAddress, zoneLabel } from '../lib/address';
 import { clock } from '../lib/call-history';
 import {
@@ -394,6 +395,40 @@ export function callReviewSummary(r: CallForReview, origin: string) {
       at: localTime(Date.parse(v.reviewed_at), tz),
     })),
     rules: CALL_REVIEW_RULES,
+  };
+}
+
+// What they've told the rep (what_you_heard): the tools named and what they
+// said about their work, by theme, each quote with the call it's from.
+export function heardSummary(report: HeardReport, timeZone: string, origin: string) {
+  const quote = (q: Said) => ({
+    said: q.text,
+    from: q.from === 'them' ? 'them, on the recording' : 'the rep’s notes',
+    pain: q.pain,
+    call: { id: q.id, kind: q.kind, with: q.label, at: localTime(q.atSec * 1000, timeZone) },
+    url: pageUrl(origin, q.kind === 'interview' ? `/meetings/${q.id}` : `/calls/${q.id}`),
+  });
+  return {
+    timeZone,
+    heardFrom: report.heardFrom,
+    ofCallsThatReachedThem: report.of,
+    softwareTheyUse: report.tools.map((t) => ({ name: t.name, calls: t.calls, quotes: t.quotes.map(quote) })),
+    byTheme: report.themes.map((t) => ({
+      theme: t.theme,
+      label: t.label,
+      calls: t.calls,
+      callsWithAPain: t.pains,
+      quotes: t.quotes.map(quote),
+    })),
+    callByCall: report.calls.map((c) => ({
+      id: c.id,
+      kind: c.kind,
+      with: c.label,
+      at: localTime(c.atSec * 1000, timeZone),
+      tools: c.tools,
+      said: c.said.map((q) => ({ said: q.text, from: q.from, pain: q.pain })),
+      url: pageUrl(origin, c.kind === 'interview' ? `/meetings/${c.id}` : `/calls/${c.id}`),
+    })),
   };
 }
 

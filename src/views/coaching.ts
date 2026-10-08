@@ -39,7 +39,7 @@ import { STORY_SEC, timelineText, type Timeline } from '../lib/call-timeline';
 import { formatLocal } from '../lib/dates';
 import type { CallInsight } from '../lib/db';
 import { CALL_OUTCOMES } from '../workflows/call-logged';
-import { layout, type Html } from './layout';
+import { coachingTabs, layout, type Html } from './layout';
 import { timelineStrip } from './timeline';
 
 const outcomeLabel = (outcome: string) => CALL_OUTCOMES.find((o) => o.value === outcome)?.label ?? outcome;
@@ -135,7 +135,7 @@ function callLink(call: CallInsight, timeZone: string): Html {
     <span class="muted">· ${formatLocal(call.at_sec * 1000, timeZone)}${call.duration_sec !== null ? ` · ${clock(call.duration_sec)}` : ''}</span>`;
 }
 
-interface Bar {
+export interface Bar {
   label: Html | string;
   value: number;
   of: number; // the bar's full width
@@ -146,7 +146,7 @@ interface Bar {
 
 // A bar chart: each row's bar as wide as its share, its count beside it. The
 // count is the text: the bar is only a picture of it.
-function bars(name: string, rows: Bar[]): Html {
+export function bars(name: string, rows: Bar[]): Html {
   return html`<dl class="bars" aria-label="${name}">
     ${rows.map((r) => {
       const width = r.of ? Math.round((Math.min(r.value, r.of) / r.of) * 100) : 0;
@@ -399,6 +399,7 @@ export function coachingPage(
       'Coaching',
       actor,
       html`<h1>Coaching</h1>
+        ${coachingTabs('patterns')}
         ${reading}
         <p class="muted">No calls read yet. Each call you log is read here: who answered, how far it got, the objection, and whether a next step was agreed.</p>
         ${bookings.booked ? bookingsCard(bookings, tz) : ''}
@@ -414,6 +415,7 @@ export function coachingPage(
     html`
       <div class="tight">
         <h1>Coaching</h1>
+        ${coachingTabs('patterns')}
         <p class="muted">
           From ${report.calls} logged call${report.calls === 1 ? '' : 's'}: someone picked up ${pct(report.answered / report.calls)},
           you reached the person ${pct(report.reached / report.calls)}${best ? html`, most often at ${hourLabel(best.hour)} their time` : ''}.
