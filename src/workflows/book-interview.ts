@@ -17,7 +17,7 @@
 // is put on the meeting). The invite's id comes from the booking, so a retry
 // can't send a second one.
 
-import { isDate, localDateAt, parseHubSpotTime, parseTime, type TimeOfDay } from '../lib/dates';
+import { isDate, parseHubSpotTime, parseSaidTime, saidAt, type SaidTime } from '../lib/dates';
 import type { MeetingBookingStore } from '../lib/db';
 import type { HubSpot, HubSpotObject, RecordLinks } from '../lib/hubspot';
 import { formatPhone } from '../lib/phone';
@@ -28,8 +28,8 @@ const LOCK_TTL_SEC = 60;
 export const LENGTHS_MIN = [15, 30, 45, 60] as const;
 
 export interface BookingInput {
-  date: string; // "YYYY-MM-DD" in the rep's time zone
-  time: TimeOfDay;
+  date: string; // "YYYY-MM-DD" in the zone of `time`: the rep's, unless it's said in theirs
+  time: SaidTime;
   minutes: number;
   byPhone: boolean; // a phone interview: the rep calls them
   joinUrl: string | null; // video only
@@ -60,6 +60,7 @@ export interface Calendar {
 export const BOOKING_FIELDS = [
   'book_date',
   'book_time',
+  'book_time_tz',
   'book_minutes',
   'book_format',
   'book_join_url',
@@ -75,7 +76,7 @@ export function bookingFieldsOf(text: (key: string) => string | undefined): Reco
 // A phone interview ignores the join link.
 export function parseBookingForm(form: Record<string, string | undefined>, today: string): BookingInput {
   const date = form.book_date ?? '';
-  const time = parseTime(form.book_time ?? '');
+  const time = parseSaidTime(form.book_time ?? '', form.book_time_tz);
   if (!isDate(date) || !time) throw new WorkflowError('Pick the date and time of the interview.');
   if (date < today) throw new WorkflowError('The interview date is in the past.');
   const minutes = LENGTHS_MIN.find((m) => String(m) === form.book_minutes) ?? 30;
@@ -159,7 +160,7 @@ export function bookingTimes(
   timeZone: string,
   now: number | null = null
 ): { startAt: string; endAt: string } {
-  const start = localDateAt(input.date, timeZone, input.time);
+  const start = saidAt(input.date, input.time, timeZone);
   if (now !== null && start <= now)
     throw new WorkflowError('That interview time has already passed. Pick a later one.');
   return { startAt: new Date(start).toISOString(), endAt: new Date(start + input.minutes * 60_000).toISOString() };

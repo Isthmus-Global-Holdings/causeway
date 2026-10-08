@@ -60,6 +60,28 @@ test('snoozeCall at a time makes a set-time call, later today if need be, with i
   await assert.rejects(snoozeCall(hs, 'c2', '2026-09-24', { hour: 11, minute: 0 }, OPTS), /after today/);
 });
 
+test("snoozeCall at a time said in their zone saves it in the rep's", async () => {
+  // 2pm in New York (EDT) is 1pm in Panama.
+  const { dueAt } = await snoozeCall(
+    hs,
+    'c2',
+    '2026-09-25',
+    { hour: 14, minute: 0, timeZone: 'America/New_York' },
+    OPTS
+  );
+  const task = (await hs.getObject('tasks', 'c2')).properties;
+  assert.equal(task.hs_timestamp, '2026-09-25T18:00:00.000Z');
+  assert.equal(task.hs_task_reminders, String(dueAt - 5 * 60_000));
+  // 9am in Los Angeles (PDT) is 11am in Panama: still ahead at 10am.
+  await snoozeCall(hs, 'c2', '2026-09-25', { hour: 9, minute: 0, timeZone: 'America/Los_Angeles' }, OPTS);
+  assert.equal((await hs.getObject('tasks', 'c2')).properties.hs_timestamp, '2026-09-25T16:00:00.000Z');
+  // 10am in New York is 9am in Panama: gone.
+  await assert.rejects(
+    snoozeCall(hs, 'c2', '2026-09-25', { hour: 10, minute: 0, timeZone: 'America/New_York' }, OPTS),
+    /already passed/
+  );
+});
+
 test('snoozeCall without a time keeps a set-time call at its time, and moves its reminder', async () => {
   await snoozeCall(hs, 'c1', '2026-09-25', { hour: 16, minute: 0 }, OPTS);
   await snoozeCall(hs, 'c1', '2026-09-28', null, OPTS);
@@ -197,6 +219,7 @@ const callRow = (r: Partial<CallRow> & { taskId: string }): CallRow => ({
   contactId: null,
   contactName: null,
   companyName: null,
+  timeZone: null,
   phone: '+13852557051',
   interview: null,
   fit: 'UNKNOWN',

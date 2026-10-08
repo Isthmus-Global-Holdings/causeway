@@ -34,6 +34,7 @@ import {
 } from '../lib/call-insight';
 import { fillScript } from '../lib/call-script';
 import { parseFitReason } from '../lib/fit';
+import { partyTimeZone } from '../lib/address';
 import { localDate, parseHubSpotTime } from '../lib/dates';
 import {
   CALL_CHANNELS,
@@ -93,7 +94,7 @@ export const INSTRUCTIONS = `This connector is the rep's outreach app: HubSpot E
 - Ids come from earlier results (taskId, contactId, meetingId). Never make one up.
 - Emails are sent and calls are dialled from the app's pages, not from here: give the rep the result's "url" to open.
 - To write an email: "get_email_task", then "drafting_rules", then "save_draft". The rep sends it from the page.
-- Dates are YYYY-MM-DD and times HH:MM, in the rep's time zone (every result says which).
+- Dates are YYYY-MM-DD and times HH:MM, in the rep's time zone (every result says which). When the contact gave a time in their own zone ("call me at 2pm my time"), pass it as they said it with time_zone: their zone (theirTimeZone in results, from their address) or whichever they named. The app saves it in the rep's zone.
 - Writes are safe to repeat: running one again finishes what an earlier attempt started and never doubles it.`;
 
 // A HubSpot record id (or, once HubSpot is gone, the app's own).
@@ -109,6 +110,14 @@ const time = z
   .string()
   .regex(/^\d{2}:\d{2}$/)
   .describe("HH:MM (24-hour), in the rep's time zone");
+// The zone a time (and its date) was said in, when the contact said it in theirs.
+const timeZone = z
+  .string()
+  .regex(/^[A-Za-z_]+\/[A-Za-z_/+-]+$/)
+  .optional()
+  .describe(
+    "only when the contact said the time in their own zone: that IANA zone (e.g. America/New_York, theirTimeZone in results). The date and time are then theirs; the app saves them in the rep's zone"
+  );
 
 const READ = { readOnlyHint: true, openWorldHint: false } as const;
 // Writes change HubSpot but never remove anything, and repeating one is a no-op.
@@ -415,6 +424,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
         const p = parties.contact.properties;
         return {
           timeZone,
+          theirTimeZone: partyTimeZone(parties.contact, parties.company),
           task: taskSummary(parties.task, timeZone, origin),
           contact: contactSummary(parties.contact, origin),
           company: parties.company ? companySummary(parties.company, origin) : null,
@@ -546,6 +556,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
         ]);
         return {
           timeZone,
+          theirTimeZone: partyTimeZone(parties.contact, parties.company),
           meeting: {
             ...meetingRowSummary(meetingRow(parties.meeting, parties), timeZone, origin),
             start_at: parties.meeting.properties.hs_meeting_start_time ?? null,
@@ -682,6 +693,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
           .describe(
             'only when the contact asked to be called at a time: a set-time call, with a HubSpot reminder, that becomes the next call then'
           ),
+        time_zone: timeZone,
         real_conversation: z
           .boolean()
           .optional()
@@ -705,6 +717,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
       next_type,
       next_date,
       next_time,
+      time_zone,
       real_conversation,
       learned,
     }) =>
@@ -720,6 +733,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
             next_type: next_type ?? '',
             next_date: next_date ?? '',
             next_time: next_time ?? '',
+            next_time_tz: time_zone ?? '',
             conversation: real_conversation ? '1' : '',
             learned: learned ?? '',
           },
@@ -737,12 +751,17 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
       title: 'Move call',
       description:
         'Move a CALL task to a later day, keeping its time of day. Logs nothing. Give a time only when the contact asked to be called then: it makes a set-time call, which can be later today, gets a HubSpot reminder and becomes the next call at that time.',
-      inputSchema: { task_id: id, date, time: time.optional().describe('only for a time the contact asked for') },
+      inputSchema: {
+        task_id: id,
+        date,
+        time: time.optional().describe('only for a time the contact asked for'),
+        time_zone: timeZone,
+      },
       annotations: WRITE,
     },
-    ({ task_id, date, time }) =>
+    ({ task_id, date, time, time_zone }) =>
       run(async () => {
-        const { dueAt } = await snoozeCallTask(c, task_id, date, time ?? '');
+        const { dueAt } = await snoozeCallTask(c, task_id, date, time ?? '', time_zone ?? '');
         const { timeZone } = await loadAppSettings(env);
         return { moved: true, due: localTime(dueAt, timeZone) };
       })
@@ -758,6 +777,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
         task_id: id,
         date,
         time,
+        time_zone: timeZone,
         minutes: z
           .number()
           .int()
@@ -768,7 +788,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
       },
       annotations: WRITE,
     },
-    ({ task_id, date, time, minutes, format, join_url }) =>
+    ({ task_id, date, time, time_zone, minutes, format, join_url }) =>
       run(async () => {
         // No invite from here, so nothing would make a Meet link: without the
         // rep's own link a video interview would have no way to join.
@@ -780,6 +800,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
         const result = await bookInterview(c, task_id, {
           book_date: date,
           book_time: time,
+          book_time_tz: time_zone,
           book_minutes: String(minutes),
           book_format: format,
           book_join_url: join_url,
@@ -803,6 +824,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
         canceled_by: z.enum(['them', 'rep']).optional().describe("CANCELED only: who called it off (default 'them')"),
         new_date: date.optional().describe('RESCHEDULED only'),
         new_time: time.optional().describe('RESCHEDULED only'),
+        time_zone: timeZone,
         next_type: z.enum(['CALL', 'EMAIL']).optional().describe('the follow-up task, if any'),
         next_date: date.optional().describe("the follow-up's day, YYYY-MM-DD"),
         real_conversation: z
@@ -827,6 +849,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
       notes,
       new_date,
       new_time,
+      time_zone,
       next_type,
       next_date,
       real_conversation,
@@ -842,6 +865,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
             notes,
             new_date,
             new_time,
+            new_time_tz: time_zone,
             next_type: next_type ?? '',
             next_date: next_date ?? '',
             conversation: real_conversation ? '1' : '',

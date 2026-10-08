@@ -3,6 +3,7 @@
 // due today are ranked by who to call first (see planCalls), except the calls
 // at a set time (lib/set-time.ts), which wait for their time.
 
+import { partyTimeZone } from '../lib/address';
 import { localDate, parseHubSpotTime } from '../lib/dates';
 import type { ContactEngagement } from '../lib/db';
 import { FIT_RANK, parseFitLabel, type FitLabel } from '../lib/fit';
@@ -21,6 +22,7 @@ export interface CallRow {
   contactId: string | null;
   contactName: string | null;
   companyName: string | null;
+  timeZone: string | null; // theirs, from their address (or their company's)
   // First dialable number: phone, then mobile, then the company line.
   phone: string | null;
   // The contact's next interview, when the call is also one (see withInterviews).
@@ -49,6 +51,7 @@ export async function loadCallQueue(hs: HubSpot): Promise<CallQueue> {
     contactId: contact?.id ?? null,
     contactName: contact ? contactName(contact) : null,
     companyName: companyName(company),
+    timeZone: partyTimeZone(contact, company),
     phone:
       toE164(contact?.properties.phone) ?? toE164(contact?.properties.mobilephone) ?? toE164(company?.properties.phone),
     interview: null,

@@ -75,6 +75,33 @@ export function parseTime(value: string): TimeOfDay | null {
 // (it also checks the hour and minutes are on the clock).
 export const TIME_PATTERN = String.raw`\s*(\d{1,2}(:\d{2})?\s*[AaPp]\.?\s*([Mm]\.?)?|\d{2}:\d{2})\s*`;
 
+// An IANA time zone this runtime knows, e.g. "America/Denver".
+export function isTimeZone(value: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: value });
+    return value.includes('/') || value === 'UTC';
+  } catch {
+    return false;
+  }
+}
+
+// A time of day as the contact said it: "call me at 2pm" in their zone, when
+// `timeZone` is given, else in the rep's. It's turned into an instant once
+// (saidAt), and from then on everything is shown in the rep's zone.
+export interface SaidTime extends TimeOfDay {
+  timeZone?: string;
+}
+
+// A typed time and the zone it was said in: a form's "<field>_tz" select, or
+// the connector's time_zone. A blank zone is the rep's own. Null when the
+// time doesn't parse or the zone isn't one.
+export function parseSaidTime(text: string, zone?: string | null): SaidTime | null {
+  const time = parseTime(text);
+  const tz = zone?.trim() ?? '';
+  if (!time || (tz && !isTimeZone(tz))) return null;
+  return tz ? { ...time, timeZone: tz } : time;
+}
+
 // Local wall-clock time of an instant, e.g. to reuse a task's due time.
 export function timeOfDay(epochMs: number, timeZone: string): TimeOfDay {
   const p = localParts(epochMs, timeZone);
@@ -91,6 +118,11 @@ export function formatLocal(epochMs: number, timeZone: string): string {
     hour: 'numeric',
     minute: '2-digit',
   }).format(new Date(epochMs));
+}
+
+// "2:30 PM" in `timeZone`.
+export function clockTime(epochMs: number, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', minute: '2-digit' }).format(new Date(epochMs));
 }
 
 const DATE = /^(\d{4})-(\d{2})-(\d{2})$/;
@@ -123,6 +155,12 @@ export function localDateAt(date: string, timeZone: string, at: TimeOfDay): numb
   // result so a DST change between the two instants doesn't shift the hour.
   const guess = wallClock - offsetMs(wallClock, timeZone);
   return wallClock - offsetMs(guess, timeZone);
+}
+
+// The instant a said time names on `date` ("YYYY-MM-DD", their date when
+// it's in their zone), in the zone it was said in, else `timeZone` (the rep's).
+export function saidAt(date: string, time: SaidTime, timeZone: string): number {
+  return localDateAt(date, time.timeZone ?? timeZone, time);
 }
 
 // The instant at `at` local time on the calendar day after `nowMs`'s local
@@ -161,9 +199,7 @@ export function dayBounds(nowMs: number, timeZone: string): { startMs: number; e
 export function saidAhead(eventMs: number, nowMs: number, timeZone: string): string {
   const day = localDate(eventMs, timeZone);
   const today = localDate(nowMs, timeZone);
-  const at = new Intl.DateTimeFormat('en-US', { timeZone, hour: 'numeric', minute: '2-digit' }).format(
-    new Date(eventMs)
-  );
+  const at = clockTime(eventMs, timeZone);
   if (day === today) return `today at ${at}`;
   if (day === addDays(today, 1)) return `tomorrow at ${at}`;
   const format =

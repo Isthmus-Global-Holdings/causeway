@@ -184,6 +184,7 @@ callsRoute.post('/:id/log', async (c) => {
       next_type: text('next_type'),
       next_date: text('next_date'),
       next_time: text('next_time'),
+      next_time_tz: text('next_time_tz'),
       book: text('book'),
       ...bookingFieldsOf(text),
       conversation: text('conversation'),
@@ -230,7 +231,7 @@ callsRoute.post('/:id/snooze', async (c) => {
   const taskId = c.req.param('id');
   const form = await c.req.parseBody();
   const field = (name: string) => (typeof form[name] === 'string' ? form[name] : '');
-  const { dueAt } = await snoozeCallTask(c, taskId, field('date'), field('time'));
+  const { dueAt } = await snoozeCallTask(c, taskId, field('date'), field('time'), field('time_tz'));
   const query = { moved: taskId, due: String(dueAt), ...(field('time') ? { set: '1' } : {}) };
   return c.redirect(`/queue/calls?${new URLSearchParams(query)}`, 303);
 });

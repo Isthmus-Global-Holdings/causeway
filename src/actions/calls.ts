@@ -7,7 +7,7 @@
 import type { Context } from 'hono';
 import { googleCalendar, insightDeps, loadAppSettings, type AppSettings } from '../lib/app-settings';
 import { afterResponse } from '../lib/background';
-import { localDate, parseTime } from '../lib/dates';
+import { localDate, parseSaidTime } from '../lib/dates';
 import {
   addSetTimeCallToPlan,
   d1CallLogStore,
@@ -264,17 +264,19 @@ export async function bookInterview(c: Context<AppEnv>, taskId: string, form: Re
 
 // Moves the call to another day ("YYYY-MM-DD") without logging one, at
 // `time` ("HH:MM", or "" to keep its time of day): a time makes it a set-time
-// call (lib/set-time.ts).
+// call (lib/set-time.ts). `zone` is the one the time was said in, when it's
+// theirs (the day is theirs then too); blank is the rep's.
 export async function snoozeCallTask(
   c: Context<AppEnv>,
   taskId: string,
   date: string,
-  time = ''
+  time = '',
+  zone = ''
 ): Promise<{ dueAt: number }> {
   const actor = c.get('actor');
   const { timeZone } = await loadAppSettings(c.env);
-  const at = time ? parseTime(time) : null;
-  const moveTo = time ? `${date} ${time}` : date;
+  const at = time ? parseSaidTime(time, zone) : null;
+  const moveTo = time ? `${date} ${time}${zone ? ` ${zone}` : ''}` : date;
   try {
     if (time && !at) throw new WorkflowError('Enter a time like 4pm or 4:30pm, or leave it blank.');
     const { dueAt } = await snoozeCall(createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN), taskId, date, at, {
