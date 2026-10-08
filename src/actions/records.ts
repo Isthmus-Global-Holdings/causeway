@@ -64,15 +64,15 @@ export async function saveCompanyCallLines(
   input: { theirWorld: string; pedestal: string | null }
 ): Promise<{ lines: CallLines; changed: boolean }> {
   const result = await saveCallLines(createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN), companyId, input);
-  if (result.changed) {
-    await insertAudit(c.env.DB, {
-      actor: c.get('actor'),
-      workflow: 'connector',
-      taskId: companyId,
-      action: 'save call lines',
-      outcome: 'success',
-      detail: { companyId, ...result.lines },
-    });
-  }
+  // Every save, changed or not: a retry after the audit failed finds nothing
+  // left to change, and still has to record the write that landed.
+  await insertAudit(c.env.DB, {
+    actor: c.get('actor'),
+    workflow: 'connector',
+    taskId: companyId,
+    action: 'save call lines',
+    outcome: 'success',
+    detail: { companyId, changed: result.changed, ...result.lines },
+  });
   return result;
 }
