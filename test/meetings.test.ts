@@ -9,6 +9,7 @@ import { adjustNotes, ruleInsight, type CallFacts } from '../src/lib/call-insigh
 import { callTimeline } from '../src/lib/call-timeline.ts';
 import { d1CallLogStore, d1DialStore, d1MeetingBookingStore, d1MeetingLogStore } from '../src/lib/db.ts';
 import type { NewCall, Twilio } from '../src/lib/twilio.ts';
+import type { AppEnv } from '../src/types.ts';
 import { meetingPage } from '../src/views/meetings.ts';
 import { parseBookingForm, runBooking, type Calendar, type Invite } from '../src/workflows/book-interview.ts';
 import { callLogDone, LAST_TRY, parseCallLogForm, runCallLogged } from '../src/workflows/call-logged.ts';
@@ -31,7 +32,7 @@ import {
   type MeetingRow,
 } from '../src/workflows/meeting-queue.ts';
 import { parseTaskBody } from '../src/lib/richtext.ts';
-import { FakeHubSpot } from './fakes.ts';
+import { FakeHubSpot, hubspotApi } from './fakes.ts';
 import { sqliteD1 } from './sqlite-d1.ts';
 
 const NOW = Date.parse('2026-09-25T15:00:00Z'); // 09:00 in Denver (MDT)
@@ -969,6 +970,48 @@ test('canceled by the rep: a plain follow-up, no draft', async () => {
   const task = hs.created[0].properties;
   assert.equal(task.hs_task_subject, 'Email: Granger Hauling (Sam Granger) — follow up on interview');
   assert.ok(!task.hs_task_body, 'no template for the rep’s own cancel');
+});
+
+test('the log form keeps who canceled: the page posts canceled_by through to D1', async () => {
+  const { default: app } = await import('../src/index.ts');
+  const background: Promise<unknown>[] = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = hubspotApi(hs) as unknown as typeof fetch;
+  try {
+    const res = await app.request(
+      'http://localhost/meetings/m1/log',
+      {
+        method: 'POST',
+        headers: { Origin: 'http://localhost', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          outcome: 'CANCELED',
+          canceled_by: 'rep',
+          notes: '',
+          start: '2026-09-25T14:00:00Z',
+        }),
+      },
+      {
+        DB: db,
+        DEV_BYPASS_ACCESS: 'true',
+        TZ,
+        HUBSPOT_ACCESS_TOKEN: 'hs',
+        PUBLIC_BASE_URL: 'http://localhost',
+      } as unknown as AppEnv['Bindings'],
+      {
+        waitUntil: (p: Promise<unknown>) => background.push(p),
+        passThroughOnException() {},
+        props: {},
+      } as unknown as ExecutionContext
+    );
+    await Promise.all(background.splice(0));
+    assert.equal(res.status, 303);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+  const row = await db
+    .prepare(`SELECT canceled_by FROM meeting_logs WHERE meeting_id = 'm1'`)
+    .first<{ canceled_by: string }>();
+  assert.equal(row?.canceled_by, 'rep');
 });
 
 test('a no-show from a phone interview offers another time for the call', async () => {
