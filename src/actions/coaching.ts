@@ -15,12 +15,14 @@ import {
   adjustNotes,
   callFacts,
   feedbackBy,
+  firstNameOf,
   interviewFacts,
   parseSources,
   parseUnsure,
   ruleInsight,
   rulesSources,
   RULES_VERSION,
+  theirPart,
   withReviews,
   type CallFacts,
   type CallReview,
@@ -32,6 +34,7 @@ import {
   type TagSources,
 } from '../lib/call-insight';
 import { callTimeline, parseTimeline, type Timeline } from '../lib/call-timeline';
+import { heardReport, type HeardReport, type HeardSource } from '../lib/heard';
 import {
   bookingReport,
   callBrief,
@@ -57,6 +60,7 @@ import {
   d1CallReviewStore,
   d1DialStore,
   d1MeetingLogStore,
+  heardSources,
   insertAudit,
   type CallInsight,
   type Dial,
@@ -123,6 +127,30 @@ export async function coachingOverview(c: Context<AppEnv>): Promise<CoachingOver
     strips: latest.map((call) => ({ call, timeline: parseTimeline(drawn.get(call.call_task_id)?.timeline_json) })),
     unread: unread.length,
   };
+}
+
+// What they've told the rep across every call and interview that reached
+// them (the What you've heard page, the what_you_heard tool): their part of
+// each transcript and the rep's notes, read by the rules in lib/heard.ts.
+export interface HeardOverview {
+  settings: AppSettings;
+  report: HeardReport;
+}
+
+export async function heardOverview(c: Context<AppEnv>): Promise<HeardOverview> {
+  const [settings, rows] = await Promise.all([loadAppSettings(c.env), heardSources(c.env.DB)]);
+  const sources: HeardSource[] = rows.map((r) => {
+    const turns = r.transcript_json ? (JSON.parse(r.transcript_json) as Turn[]) : [];
+    return {
+      id: r.call_task_id,
+      kind: r.subject === 'meeting' ? 'interview' : 'call',
+      label: r.label,
+      atSec: r.at_sec,
+      turns: theirPart(turns, firstNameOf(r.label)).filter((t) => t.speaker === 'prospect'),
+      notes: r.notes,
+    };
+  });
+  return { settings, report: heardReport(sources) };
 }
 
 // One logged call's reading: its tags, who decided them, and what to adjust.

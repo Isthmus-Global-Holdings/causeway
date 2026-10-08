@@ -47,6 +47,7 @@ import {
   allCallInsights,
   callsToReview,
   callInsightsFor,
+  heardSources,
   callInsightsNear,
   d1CallInsightStore,
   d1CallReviewStore,
@@ -1789,6 +1790,39 @@ test('an interview’s call still going isn’t read; one not recorded reads the
   assert.equal(row?.outcome, 'connected');
   assert.equal(row?.duration_sec, 900);
   assert.ok(row?.objection_kind, 'the objection, from the notes');
+});
+
+// --- What they've told the rep: the sources ---
+
+test('what you’ve heard reads every reached call and interview with its transcript and the rep’s notes', async () => {
+  const dials = d1DialStore(db);
+  await dials.begin(dial({ contact_label: putThrough.label }), 120);
+  await dials.setProspectResult('d1', { sid: 'CA1', status: 'completed', durationSec: 543 });
+  await dials.setRecording('d1', { sid: 'RE1', durationSec: 543, channels: 2 });
+  await dials.beginTranscript('d1', T0, 300);
+  await dials.saveTranscript('d1', JSON.stringify(putThrough.turns), null);
+  await logCall('t1', { dial_id: 'd1', outcome: 'connected', duration_sec: null, notes: putThrough.notes });
+  await logCall('t2', { outcome: 'busy', notes: 'Front desk, not available' }, '2026-09-28 16:00:00');
+  await dials.begin(
+    dial({ id: 'dm', task_id: 'm1', subject: 'meeting', contact_label: 'Grant Ives', started_sec: T0 + DAY }),
+    120
+  );
+  await dials.setProspectResult('dm', { sid: 'CA9', status: 'completed', durationSec: 900 });
+  await logMeeting('m1', 'COMPLETED', '2026-09-30 17:00:00');
+  await db
+    .prepare(`UPDATE meeting_logs SET notes = 'He said they run everything on spreadsheets.' WHERE meeting_id = 'm1'`)
+    .run();
+  await readUnreadCalls(deps(), 10, Date.now());
+
+  const rows = await heardSources(db);
+  assert.deepEqual(
+    rows.map((r) => [r.call_task_id, r.subject, r.transcript_json !== null, r.notes]),
+    [
+      ['m1', 'meeting', false, 'He said they run everything on spreadsheets.'],
+      ['t1', 'task', true, putThrough.notes],
+    ],
+    'newest first; the front desk call never reached them'
+  );
 });
 
 // --- Reviews: Claude's or the rep's, laid over the rules' reading ---

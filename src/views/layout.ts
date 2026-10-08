@@ -103,6 +103,16 @@ export function queueTabs(current: 'emails' | 'calls', waiting: number): Html {
   </nav>`;
 }
 
+// Coaching's two tabs: the patterns across the calls, and what they've said.
+export function coachingTabs(current: 'patterns' | 'heard'): Html {
+  const tab = (href: string, label: string, on: boolean) =>
+    on ? html`<a href="${href}" aria-current="page">${label}</a>` : html`<a href="${href}">${label}</a>`;
+  return html`<nav class="tabs" aria-label="Coaching">
+    ${tab('/coaching', 'Your calls', current === 'patterns')}
+    ${tab('/coaching/heard', 'What you’ve heard', current === 'heard')}
+  </nav>`;
+}
+
 // "1. Draft · 2. Preview & send", with the current step in bold.
 export function steps(current: 'draft' | 'send'): Html {
   const step = (label: string, on: boolean) => (on ? html`<strong>${label}</strong>` : html`${label}`);
