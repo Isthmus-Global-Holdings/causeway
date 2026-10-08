@@ -6,7 +6,7 @@ import { parseFitReason } from '../lib/fit';
 import { addDays, formatClock, formatDay, formatLocal, localDate } from '../lib/dates';
 import { sqliteTime, type CallLog, type Dial, type DialMode, type InboundCall, type RecentSend } from '../lib/db';
 import { extensionOf, formatPhone, toE164 } from '../lib/phone';
-import { callableFrom } from '../lib/set-time';
+import { askedFor, callableFrom } from '../lib/set-time';
 import type { PlanProgress } from '../lib/work-plan';
 import { htmlToText } from '../lib/richtext';
 import { dialTranscript, SPEAKER_LABELS, type Turn } from '../lib/transcript';
@@ -1386,13 +1386,13 @@ function todaysCalls(today: PlanProgress | null, timeZone: string): Html {
             ${today.items.map(
               (i) => html`<li class="${i.state}">
                 <a href="/calls/${i.id}" ${i.state === 'current' ? html`aria-current="page"` : html`data-prefetch-hover`}>
-                  <span class="rail-who">${i.state === 'done' ? '✓ ' : ''}${i.company ?? i.contact ?? `Call task ${i.id}`}</span>
+                  <span class="rail-who">${i.done ? '✓ ' : ''}${i.company ?? i.contact ?? `Call task ${i.id}`}</span>
                   ${i.state === 'next' ? html`<span class="tag">Next</span>` : ''}
                   ${
                     i.company && i.contact
-                      ? html`<span class="muted">${i.contact}${i.at !== undefined ? ` · ${formatClock(i.at, timeZone)}` : ''}</span>`
+                      ? html`<span class="muted">${i.contact}${i.at !== undefined ? ` · ${formatClock(askedFor(i.at), timeZone)}` : ''}</span>`
                       : i.at !== undefined
-                        ? html`<span class="muted">${formatClock(i.at, timeZone)}</span>`
+                        ? html`<span class="muted">${formatClock(askedFor(i.at), timeZone)}</span>`
                         : ''
                   }
                 </a>

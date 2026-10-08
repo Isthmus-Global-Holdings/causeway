@@ -88,7 +88,8 @@ export function withoutItem(plan: WorkPlan, id: string): WorkPlan {
 export type PlanItemState = 'done' | 'current' | 'next' | 'open';
 
 export interface PlanProgress {
-  items: (WorkPlan['items'][number] & { state: PlanItemState })[];
+  // `done`: worked already, even when it's the one open now (`current`).
+  items: (WorkPlan['items'][number] & { state: PlanItemState; done: boolean })[];
   left: number; // not done, the current one included
   done: number;
 }
@@ -109,7 +110,8 @@ export function planProgress(
   const items = plan.items.map((i) => ({
     ...i,
     state: (i.id === current ? 'current' : done.has(i.id) ? 'done' : i.id === next ? 'next' : 'open') as PlanItemState,
+    done: done.has(i.id),
   }));
-  const doneCount = items.filter((i) => i.state === 'done').length;
+  const doneCount = items.filter((i) => i.done).length;
   return { items, left: items.length - doneCount, done: doneCount };
 }

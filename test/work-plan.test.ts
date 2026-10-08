@@ -119,6 +119,11 @@ test('the call page lists today’s plan: done, this one, the next, the rest', (
     ['next', 'open', 'open', 'open'],
     'a call not in the plan: only the list'
   );
+  const viewingDone = planProgress(calls, '2026-09-25', 'a', new Set(['a']));
+  assert.equal(viewingDone?.items[0]?.state, 'current');
+  assert.equal(viewingDone?.items[0]?.done, true, 'a done call is still done while it is open');
+  assert.equal(viewingDone?.done, 1);
+  assert.equal(viewingDone?.left, 3);
   assert.deepEqual(parsePlan(JSON.stringify(calls)), calls, 'who each is is kept');
 });
 

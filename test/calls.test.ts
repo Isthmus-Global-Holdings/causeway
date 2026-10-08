@@ -1187,7 +1187,7 @@ test("the call page lists today's calls beside it, any a click away", async () =
         { id: '7', drafted: false, company: 'Done Co', contact: 'Dee' },
         { id: '1', drafted: false, company: 'Acme', contact: 'Ana' },
         { id: '8', drafted: false, company: 'Next Co', contact: 'Ned' },
-        { id: '6', drafted: false, at: NOW + 3_600_000, contact: 'Lou' },
+        { id: '6', drafted: false, at: NOW + 3_600_000 - 5 * 60_000, contact: 'Lou' },
       ],
     },
     '2026-09-25',
@@ -1203,7 +1203,11 @@ test("the call page lists today's calls beside it, any a click away", async () =
   );
   assert.match(page, /<li class="current">\s*<a href="\/calls\/1" aria-current="page">/);
   assert.match(page, /<li class="next">\s*<a href="\/calls\/8"[\s\S]*?>Next</);
-  assert.match(page, /<span class="rail-who">Lou<\/span>[\s\S]*?11:00 AM/, 'a set-time call shows its time');
+  assert.match(
+    page,
+    /<span class="rail-who">Lou<\/span>[\s\S]*?11:00 AM/,
+    'a set-time call shows the time they asked for, not the lead time'
+  );
   const none = String(await callPage(await pageState(), 'rep@example.com'));
   assert.match(none, /to line up today’s calls here/);
 });
