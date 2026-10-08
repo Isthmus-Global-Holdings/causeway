@@ -29,6 +29,7 @@ import {
   type Tag,
   type TagSources,
 } from '../lib/call-insight';
+import { callTimeline, parseTimeline, type Timeline } from '../lib/call-timeline';
 import {
   bookingReport,
   callBrief,
@@ -97,11 +98,13 @@ export async function coachingOverview(c: Context<AppEnv>): Promise<CoachingOver
 // One logged call's reading: its tags, who decided them, and what to adjust.
 export interface CallNotes {
   label: string;
+  outcome: string; // as the rep logged it
   read: ReadCall;
   unsure: Tag[];
   sources: TagSources;
   notes: CoachNote[];
   feedbackBy: ReturnType<typeof feedbackBy>; // who wrote what worked and what to adjust
+  timeline: Timeline | null; // the call drawn to scale, when there's something to draw
 }
 
 export interface CallCoaching {
@@ -163,18 +166,21 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
     const read = withReviews(row, reviews); // the same reviews again: no change
     return {
       label: row.label,
+      outcome: row.outcome,
       read,
       unsure: parseUnsure(read.unsure),
       sources: parseSources(read.sources),
       notes: adjustNotes(read),
       feedbackBy: feedbackBy(reviews),
+      timeline: parseTimeline(row.timeline_json),
     };
   }
   const log = await d1CallLogStore(db).get(callTaskId);
   if (!log || log.channel === 'whatsapp_message') return null;
   const dial = log.dial_id ? await d1DialStore(db).get(log.dial_id) : null;
   const facts = callFacts(log, dial, dial ? dialTranscript(dial) : null);
-  const { unsure, ...fields } = ruleInsight(facts);
+  const reading = ruleInsight(facts);
+  const { unsure, marks: _marks, ...fields } = reading;
   // Its reviews too: one saved before the call's reading was (a read that
   // failed after review_call) still stands.
   const read = withReviews(
@@ -189,11 +195,13 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
   );
   return {
     label: facts.label,
+    outcome: log.outcome,
     read,
     unsure: parseUnsure(read.unsure),
     sources: parseSources(read.sources),
     notes: adjustNotes(read),
     feedbackBy: feedbackBy(reviews),
+    timeline: callTimeline(facts, reading),
   };
 }
 

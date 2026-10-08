@@ -40,6 +40,7 @@ import {
   lastInterviewNote,
   prepNotes,
 } from '../src/lib/coaching.ts';
+import { callTimeline, parseTimeline } from '../src/lib/call-timeline.ts';
 import {
   allBookedInterviews,
   allCallInsights,
@@ -393,6 +394,7 @@ test('the front desk’s flag says what to do about what it did', () => {
 
 function insight(over: Partial<CallInsight> & Pick<CallInsight, 'call_task_id'>): CallInsight {
   return {
+    subject: 'task',
     contact_id: `c-${over.call_task_id}`,
     company_id: null,
     dial_id: null,
@@ -425,6 +427,7 @@ function insight(over: Partial<CallInsight> & Pick<CallInsight, 'call_task_id'>)
     rules_version: RULES_VERSION,
     unsure: '[]',
     sources: '{}',
+    timeline_json: null,
     excluded: 0,
     extracted_at: '2026-09-29T17:00:00.000Z',
     ...over,
@@ -797,25 +800,45 @@ test('the Coaching page and the call page’s card', async () => {
 
   const empty = String(await coachingCard({ before: [], brief: null, after: null }));
   assert.equal(empty, '');
-  const read = { ...heard(onHold), duration_sec: 261, label: 'Hank Marlow' };
+  const reading = heard(onHold);
+  const read = { ...reading, duration_sec: 261, label: 'Hank Marlow' };
   const coaching: CallCoaching = {
     before: [{ kind: 'tip', text: 'It’s 10 AM for them.' }],
     brief: null,
     after: {
       label: 'Hank Marlow',
+      outcome: 'connected',
       read,
       unsure: ['objection'],
       sources: {},
       notes: adjustNotes(read),
       feedbackBy: { whatWorked: null, adjust: null },
+      timeline: callTimeline(
+        facts({
+          label: onHold.label,
+          firstName: 'Hank',
+          durationSec: 261,
+          transcript: { turns: onHold.turns, summary: [] },
+        }),
+        reading
+      ),
     },
   };
   const card = String(await coachingCard(coaching));
   assert.match(card, /After the call with Hank Marlow/);
+  assert.match(card, /<div class="strip" aria-hidden="true" style="--w: 100%">/, 'the call drawn to scale');
+  assert.match(card, /<span class="phase hold" style="--l: 18\.5%; --w: 81\.5%">/);
+  assert.match(
+    card,
+    /<p class="strip-text muted">Phone menu 0:43 · Front desk \(Hugo\) 0:43–0:48 · On hold from 0:48, they never came on · 4:21 in all<\/p>/
+  );
   assert.match(card, /Front desk \(Hugo\): put you on hold, and they never came on · Phone menu 0:43/);
   assert.match(card, /Not sure of the objection/);
   assert.match(card, /<li class="flag">Hugo at the front desk/);
+  assert.ok(card.indexOf('class="strip"') < card.indexOf('Front desk (Hugo):'), 'the strip first, then the tags');
   assert.ok(card.indexOf('After the call') < card.indexOf('Before this call'));
+  const plain = String(await coachingCard({ ...coaching, after: { ...coaching.after!, timeline: null } }));
+  assert.doesNotMatch(plain, /class="strip"/, 'nothing to draw: the tags alone');
 });
 
 test('after the call, the connector gets the tags, who decided them, and the follow-up’s time', () => {
@@ -823,11 +846,13 @@ test('after the call, the connector gets the tags, who decided them, and the fol
   const summary = afterCallSummary(
     {
       label: 'Grant Ives',
+      outcome: 'connected',
       read,
       unsure: [],
       sources: { stage: { by: 'rules', p: null } },
       notes: adjustNotes(read),
       feedbackBy: { whatWorked: null, adjust: null },
+      timeline: null,
     },
     '2026-09-29T17:00:00.000Z',
     TZ
@@ -979,6 +1004,12 @@ test('a transcript that lands after the call was read gets it read again', async
   assert.equal(first?.at_sec, T0, 'a dialled call is when it started');
   assert.equal(first?.duration_sec, 543, 'the length is Twilio’s');
   assert.equal(first?.label, putThrough.label);
+  assert.equal(first?.subject, 'task');
+  assert.deepEqual(
+    parseTimeline(first?.timeline_json)?.phases.map((p) => p.kind),
+    ['call'],
+    'no transcript yet: drawn as one segment, as long as the call'
+  );
 
   await dials.setRecording('d1', { sid: 'RE1', durationSec: 543, channels: 2 });
   await dials.beginTranscript('d1', T0, 300);
@@ -991,6 +1022,17 @@ test('a transcript that lands after the call was read gets it read again', async
   assert.equal(second?.talk_sec, 488);
   assert.ok(second!.prospect_talk_share! > 0, 'from Lyle’s part of the call');
   assert.equal(calls.place, 1, 'their time zone is kept from the first read');
+  assert.deepEqual(
+    parseTimeline(second?.timeline_json)?.phases.map((p) => p.kind),
+    ['menu', 'desk', 'hold', 'desk', 'them'],
+    'drawn from the transcript now'
+  );
+  assert.equal(
+    (await allCallInsights(db))[0].timeline_json,
+    null,
+    'the report’s rows come without the drawing; the Calls page reads it by id'
+  );
+  assert.ok((await callInsightsFor(db, ['t1'])).get('t1')?.timeline_json);
 });
 
 test('a slower read from the notes never overwrites the transcript’s', async () => {

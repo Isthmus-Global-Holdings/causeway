@@ -13,6 +13,7 @@ export type Speaker = 'rep' | 'prospect' | 'call';
 export interface Turn {
   speaker: Speaker;
   start: number; // seconds into the recording
+  end?: number; // when its last word ended; transcripts stored before this was kept have none (turnEnd)
   text: string;
 }
 
@@ -57,7 +58,30 @@ export function turnsFromNova(result: NovaResult, speakers: Speaker[] = ['rep', 
       turns.push({ speaker: w.speaker, start: w.start, end: w.end, text: word });
     }
   }
-  return turns.map(({ speaker, start, text }) => ({ speaker, start, text }));
+  return turns;
+}
+
+// Without Nova's end on a turn (older stored transcripts), the next turn's
+// start stands in, capped by how many words it has: a long silence after a
+// few words is lost audio or a hold, not the turn still going.
+export const MAX_SEC_PER_WORD = 0.6;
+// The last turn, when the call's length isn't known either.
+export const LAST_TURN_SEC = 3;
+
+const wordCount = (text: string) => text.split(/\s+/).filter(Boolean).length;
+
+// When turn `i` ended, in seconds: `totalSec` is the call's length, if known.
+export function turnEnd(turns: Turn[], i: number, totalSec: number | null): number {
+  const turn = turns[i];
+  if (turn.end !== undefined) return Math.max(turn.start, turn.end);
+  const next = turns[i + 1];
+  const cap = turn.start + Math.max(1, wordCount(turn.text)) * MAX_SEC_PER_WORD;
+  const until = next ? next.start : (totalSec ?? turn.start + LAST_TURN_SEC);
+  return Math.max(turn.start, Math.min(until, cap));
+}
+
+export function turnSpan(turns: Turn[], i: number, totalSec: number | null): { from: number; to: number } {
+  return { from: turns[i].start, to: turnEnd(turns, i, totalSec) };
 }
 
 export function transcriptText(turns: Turn[]): string {
