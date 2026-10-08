@@ -158,6 +158,14 @@ timeline like one made in HubSpot.
   has none). Give it a time and it's a set-time call, which can be later
   today; a set-time call moved without one keeps its time. The form sends the
   date itself, not "+1 day", so a double submit lands on the same day.
+- **Drop** (on each call in the list, and under the call page's log form,
+  after a confirm) is for a call you won't make. The `CALL` task is set to
+  `DEFERRED`, which takes it off the queue: no call is logged and no
+  follow-up is created. It's refused while a call for the task is live, and
+  once the call was logged from the app (that task completes with its log).
+  When a log and a Drop overlap, the log wins, as with Send and Drop: Drop
+  puts the task back (Completed if the log finished, else open). The call
+  page of a dropped task says so, without the log form.
 - **The call page** puts what you need on the call in one place:
   - **Where they are**, under the name: the city in large type, the street,
     and a small map, from the company's address (the contact's when the
@@ -762,7 +770,7 @@ as the pages.
   work, by theme, with every quote), `get_meeting` (prep and the interview
   questions), `recent_inbound_calls` and `unfinished`.
 - **Writes:** `save_draft`, `mark_email_sent`, `drop_email_task`, `log_call`,
-  `snooze_call`, `review_call` (a call's review for coaching, in the app
+  `snooze_call`, `drop_call_task`, `review_call` (a call's review for coaching, in the app
   only), `book_interview` (never with a calendar invite: send one from
   the interview's page), `log_meeting`, `open_task_for_contact` and
   `save_contact_numbers` (phone and mobile, with extensions). Each is

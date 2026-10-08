@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import { beforeEach, test } from 'node:test';
 import { sameTimeOn } from '../src/lib/dates.ts';
+import type { CallLog } from '../src/lib/db.ts';
 import { applyRecentChange, planCalls, planItems, type CallQueue, type CallRow } from '../src/workflows/call-queue.ts';
 import { loadEmailQueue } from '../src/workflows/email-queue.ts';
-import { dropEmail, snoozeCall } from '../src/workflows/task-actions.ts';
+import { dropCall, dropEmail, snoozeCall } from '../src/workflows/task-actions.ts';
 import { FakeHubSpot, FakeSentStore, FakeStore } from './fakes.ts';
 
 const NOW = Date.parse('2026-09-25T15:00:00Z'); // Fri 10:00 in Panama
@@ -141,6 +142,53 @@ test('dropEmail backs off when a send claims the task while it drops', async () 
   };
   await assert.rejects(dropEmail(hs, sent, confirmations, 'e1'), /send page/);
   assert.equal((await hs.getObject('tasks', 'e1')).properties.hs_task_status, 'NOT_STARTED');
+});
+
+// Only `get` is read; a row is a call logged from the app.
+function callLogs(rows: Record<string, { completed_at: string | null }> = {}) {
+  return { get: async (id: string) => (rows[id] ?? null) as CallLog | null };
+}
+
+test('dropCall defers the task, and a repeat is a no-op', async () => {
+  await dropCall(hs, callLogs(), 'c1');
+  await dropCall(hs, callLogs(), 'c1');
+  assert.equal((await hs.getObject('tasks', 'c1')).properties.hs_task_status, 'DEFERRED');
+});
+
+test('dropCall refuses non-CALL and completed tasks', async () => {
+  await assert.rejects(dropCall(hs, callLogs(), 'e1'), /not CALL/);
+  await hs.updateObject('tasks', 'c1', { hs_task_status: 'COMPLETED' });
+  await assert.rejects(dropCall(hs, callLogs(), 'c1'), /no longer open/);
+});
+
+test('dropCall refuses a call logged from the app', async () => {
+  await assert.rejects(dropCall(hs, callLogs({ c1: { completed_at: null } }), 'c1'), /call page/);
+  assert.equal((await hs.getObject('tasks', 'c1')).properties.hs_task_status, 'NOT_STARTED');
+});
+
+test('dropCall puts the task back when a log lands while it drops', async () => {
+  const rows: Record<string, { completed_at: string | null }> = {};
+  const update = hs.updateObject.bind(hs);
+  hs.updateObject = async (type, id, props) => {
+    await update(type, id, props);
+    if (props.hs_task_status === 'DEFERRED') rows.c1 = { completed_at: null };
+  };
+  await assert.rejects(dropCall(hs, callLogs(rows), 'c1'), /call page/);
+  assert.equal((await hs.getObject('tasks', 'c1')).properties.hs_task_status, 'NOT_STARTED');
+  // One that finished first: the task goes back to Completed.
+  hs.updateObject = update;
+  await update('tasks', 'c2', { hs_task_status: 'NOT_STARTED' });
+  let raced = false;
+  hs.updateObject = async (type, id, props) => {
+    if (!raced && props.hs_task_status === 'DEFERRED') {
+      raced = true;
+      await update(type, id, { hs_task_status: 'COMPLETED' });
+      rows.c2 = { completed_at: new Date(NOW).toISOString() };
+    }
+    await update(type, id, props);
+  };
+  await assert.rejects(dropCall(hs, callLogs(rows), 'c2'), /call page/);
+  assert.equal((await hs.getObject('tasks', 'c2')).properties.hs_task_status, 'COMPLETED');
 });
 
 test('loadEmailQueue leaves out tasks the rep just closed, even if search still returns them', async () => {

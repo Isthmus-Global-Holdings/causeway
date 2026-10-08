@@ -9,7 +9,7 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { Context } from 'hono';
 import { z } from 'zod';
-import { bookInterview, callsOverview, logCall, snoozeCallTask } from '../actions/calls';
+import { bookInterview, callsOverview, dropCallTask, logCall, snoozeCallTask } from '../actions/calls';
 import {
   callCoaching,
   callForReview,
@@ -745,6 +745,22 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
         const { dueAt } = await snoozeCallTask(c, task_id, date, time ?? '');
         const { timeZone } = await loadAppSettings(env);
         return { moved: true, due: localTime(dueAt, timeZone) };
+      })
+  );
+
+  server.registerTool(
+    'drop_call_task',
+    {
+      title: 'Drop call task',
+      description:
+        "The rep won't make this call: marks the CALL task deferred, off the queue. Logs no call and creates no follow-up. Only when the rep says so.",
+      inputSchema: { task_id: id },
+      annotations: WRITE,
+    },
+    ({ task_id }) =>
+      run(async () => {
+        await dropCallTask(c, task_id);
+        return { dropped: true };
       })
   );
 

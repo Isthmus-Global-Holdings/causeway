@@ -200,6 +200,7 @@ See README.md for the behaviour.
 | POST | `/calls/:id/log` | Log the call (a phone call, or a WhatsApp call or message: `channel`) on the contact, complete the task, create the follow-up, optionally at a set time (after the response, unless it books an interview), book the interview it set up. Lands on the next call |
 | POST | `/calls/:id/numbers` (also `/meetings/:id/numbers`) | Save the contact's phone and mobile, each with an extension, in HubSpot (JSON for the page's script, so a call isn't interrupted) |
 | POST | `/calls/:id/snooze` | Move a CALL task to another day, keeping its time of day, or to a set time (today or later) |
+| POST | `/calls/:id/drop` | Mark a CALL task DEFERRED (won't call, nothing logged, no follow-up) |
 | GET | `/calls/:id/recording/:dialId` | The call's audio, streamed from Twilio |
 | GET | `/calls/:id/transcript/:dialId` | The transcript card, fetched by the page while it waits |
 | POST | `/calls/:id/transcribe` | Retry a failed transcription |

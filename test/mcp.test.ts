@@ -126,6 +126,7 @@ test('it introduces itself and lists its tools, marked read-only or safe to repe
     'save_draft',
     'log_call',
     'snooze_call',
+    'drop_call_task',
     'log_meeting',
     'book_interview',
     'mark_email_sent',

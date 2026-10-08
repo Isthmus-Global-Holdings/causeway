@@ -1,11 +1,12 @@
 // Small task changes the rep would otherwise make in HubSpot's task UI:
 //   - move a CALL task to another day or a set time without logging a call
 //   - drop an EMAIL task that won't be sent (DEFERRED, as done by hand before)
+//   - drop a CALL task the rep won't make (DEFERRED too)
 // Each is one PATCH to an absolute value, so a double submit or a retry
 // writes the same thing again and needs no D1 row.
 
 import { isDate, localDate, localDateAt, parseHubSpotTime, sameTimeOn, type TimeOfDay } from '../lib/dates';
-import type { ConfirmationStore, SentEmailStore } from '../lib/db';
+import type { CallLogStore, ConfirmationStore, SentEmailStore } from '../lib/db';
 import type { HubSpot, HubSpotObject } from '../lib/hubspot';
 import { hasReminder, reminderFor } from '../lib/set-time';
 import { WorkflowError, type TaskType } from './parties';
@@ -92,5 +93,33 @@ export async function dropEmail(
       await hs.updateObject('tasks', taskId, { hs_task_status: after.completed ? 'COMPLETED' : 'NOT_STARTED' });
     }
     throw new WorkflowError(SEND_STARTED, 409);
+  }
+}
+
+const CALL_LOGGED =
+  'This call was logged from this app, so its task completes with the log. Open its call page instead.';
+
+// The rep won't make this call. A call logged here is never dropped: its task
+// finishes through that flow, which completes it.
+export async function dropCall(hs: HubSpot, callLogs: Pick<CallLogStore, 'get'>, taskId: string): Promise<void> {
+  if (await callLogs.get(taskId)) throw new WorkflowError(CALL_LOGGED, 409);
+  const task = await loadOpen(hs, taskId, 'CALL');
+  const status = task.properties.hs_task_status;
+  if (status === 'DEFERRED') return;
+  if (status !== 'NOT_STARTED') {
+    throw new WorkflowError('This call task is no longer open, so it wasn’t dropped.', 409);
+  }
+  await hs.updateObject('tasks', taskId, { hs_task_status: 'DEFERRED' });
+
+  // As dropEmail: logging writes its D1 row, then the task; this writes the
+  // task, then reads D1. If a log started meanwhile, it wins: the task gets
+  // back COMPLETED if the log already completed it, else stays open for it.
+  const log = await callLogs.get(taskId);
+  if (log) {
+    const current = await hs.getObject('tasks', taskId, ['hs_task_status']);
+    if (current.properties.hs_task_status === 'DEFERRED') {
+      await hs.updateObject('tasks', taskId, { hs_task_status: log.completed_at ? 'COMPLETED' : 'NOT_STARTED' });
+    }
+    throw new WorkflowError(CALL_LOGGED, 409);
   }
 }

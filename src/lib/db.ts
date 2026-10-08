@@ -209,12 +209,14 @@ export async function addSetTimeCallToPlan(db: D1Database, today: string, taskId
 
 // Tasks worked through the app in the last two days, which a plan (at most a
 // day old) and the queues (HubSpot's search trails writes) skip: calls
-// logged, emails sent, marked sent or dropped. A drop leaves no row of its
-// own, only its audit entry.
+// logged or dropped, emails sent, marked sent or dropped. A drop leaves no
+// row of its own, only its audit entry.
 export async function recentlyWorked(db: D1Database, kind: 'call' | 'email'): Promise<Set<string>> {
   const sql =
     kind === 'call'
-      ? `SELECT call_task_id AS id FROM call_logs WHERE created_at >= datetime('now', '-2 days')`
+      ? `SELECT call_task_id AS id FROM call_logs WHERE created_at >= datetime('now', '-2 days')
+         UNION SELECT task_id FROM audit_log
+           WHERE action = 'drop call task' AND outcome = 'success' AND created_at >= datetime('now', '-2 days')`
       : `SELECT email_task_id AS id FROM sent_confirmations WHERE created_at >= datetime('now', '-2 days')
          UNION SELECT email_task_id FROM sent_emails WHERE created_at >= datetime('now', '-2 days')
          UNION SELECT task_id FROM audit_log

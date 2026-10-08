@@ -130,6 +130,14 @@ function moveForm(row: CallRow, tomorrow: string): Html {
   </form>`;
 }
 
+// For a call the rep won't make. The confirm names what happens in HubSpot.
+function dropForm(taskId: string, who: string): Html {
+  const confirmText = `Drop the call to ${who}? The task is marked Deferred in HubSpot and leaves the queue. No call is logged and no follow-up is created.`;
+  return html`<form method="post" action="/calls/${taskId}/drop" onsubmit="return confirm(this.dataset.confirm)" data-confirm="${confirmText}">
+    <button type="submit" class="quiet">Drop</button>
+  </form>`;
+}
+
 // Where a set-time call due today stands: "in 1 h 20 min", "now", "12 min late".
 export function setTimeStatus(dueAt: number, now: number): string {
   const span = (min: number) =>
@@ -183,6 +191,7 @@ function callRow(row: CallRow, timeZone: string, now: number, moveTo: string | n
         ${row.phone ? html`<a class="button primary" href="${callNowHref(row.taskId)}" title="Open the call and start calling ${formatPhone(row.phone)}">Call</a>` : ''}
         <a class="button" href="/calls/${row.taskId}" data-prefetch-hover>Open</a>
         ${moveTo ? moveForm(row, moveTo) : ''}
+        ${dropForm(row.taskId, row.contactName ?? row.companyName ?? 'this contact')}
       </div>
     </td>
   </tr>`;
@@ -270,6 +279,7 @@ export function callsPage(
   queue: CallQueue,
   flash: CallsFlash | null,
   moved: MovedCall | null,
+  dropped: string | null, // a call task just dropped
   setup: CallsSetup,
   now: number,
   timeZone: string,
@@ -304,6 +314,7 @@ export function callsPage(
             )
           : ''
       }
+      ${dropped ? flashBox('ok', html`Call task ${dropped} dropped: it's marked Deferred in HubSpot.`) : ''}
       ${setupWarning(setup)}
       ${queue.truncated ? flashBox('warn', 'Showing the oldest 1,000 open call tasks only.') : ''}
       ${todayStrip(counts)}
@@ -1345,10 +1356,12 @@ export function callPage(state: CallPageState, actor: string): Html {
   // steps still to do; it isn't finished until the whole workflow is.
   const unfinishedLog = state.log !== null && !callLogDone(state.log);
   const completed = task.properties.hs_task_status === 'COMPLETED' && !unfinishedLog;
+  // Dropped: no call logged, no follow-up (POST /calls/:id/drop).
+  const dropped = task.properties.hs_task_status === 'DEFERRED' && state.log === null;
   // Its HubSpot steps are running now, after the rep moved on.
   const saving = unfinishedLog && state.log?.lock_until != null && state.log.lock_until >= Math.floor(state.now / 1000);
   const live = state.dialState !== null && isLive(state.dialState);
-  const canDial = setupReady(state.setup) && !live && !completed;
+  const canDial = setupReady(state.setup) && !live && !completed && !dropped;
   const browserCalls = canDial && state.setup.callWith === 'browser';
   const dueAt = task.properties.hs_timestamp ? Date.parse(task.properties.hs_timestamp) : NaN;
 
@@ -1390,7 +1403,7 @@ export function callPage(state: CallPageState, actor: string): Html {
           ${!live && state.dial && state.recordingState && state.recordingState.kind !== 'none' ? transcriptCard(`/calls/${task.id}`, state.dial, state.recordingState) : ''}
           <div class="card" id="numbers">
             <h2>Numbers</h2>
-            ${numbersCard({ ...state, page: `/calls/${task.id}`, whatsapp: completed ? null : callWhatsApp(state) }, canDial)}
+            ${numbersCard({ ...state, page: `/calls/${task.id}`, whatsapp: completed || dropped ? null : callWhatsApp(state) }, canDial)}
           </div>
           <div class="card">
             <h2>Last email from this app</h2>
@@ -1401,17 +1414,25 @@ export function callPage(state: CallPageState, actor: string): Html {
           ${bookCard(state)}
         </div>
         ${
-          completed
-            ? html`<div class="card"><p>This call task is completed.</p><p class="muted">${state.log?.logged_message_id ? 'The WhatsApp message is on the contact’s timeline.' : state.log?.logged_call_id ? 'The call is on the contact’s timeline.' : 'Check the contact’s timeline in HubSpot for the call.'}</p></div>`
-            : live
-              ? html`<div class="card"><p class="muted">The log form appears when the call ends. This page updates on its own.</p></div>`
-              : saving
-                ? html`<div class="card"><p>Saving this call to HubSpot.</p><p class="muted">It takes a few seconds. Refresh to see it finished.</p></div>`
-                : logForm(state)
+          dropped
+            ? html`<div class="card"><p>This call task was dropped.</p><p class="muted">It’s marked Deferred in HubSpot: no call was logged and no follow-up created.</p></div>`
+            : completed
+              ? html`<div class="card"><p>This call task is completed.</p><p class="muted">${state.log?.logged_message_id ? 'The WhatsApp message is on the contact’s timeline.' : state.log?.logged_call_id ? 'The call is on the contact’s timeline.' : 'Check the contact’s timeline in HubSpot for the call.'}</p></div>`
+              : live
+                ? html`<div class="card"><p class="muted">The log form appears when the call ends. This page updates on its own.</p></div>`
+                : saving
+                  ? html`<div class="card"><p>Saving this call to HubSpot.</p><p class="muted">It takes a few seconds. Refresh to see it finished.</p></div>`
+                  : html`<div class="stack">
+                    ${logForm(state)}
+                    <div class="card split">
+                      <p class="muted">Not calling them? Drop the task: no call is logged and no follow-up created.</p>
+                      ${dropForm(task.id, contact_)}
+                    </div>
+                  </div>`
         }
       </div>
       ${!live && state.recordingState?.kind === 'pending' ? html`<script>${raw(POLL_SCRIPT)}</script>` : ''}
-      ${!completed && !live ? html`<script>${raw(BOOKING_SCRIPT)}</script><script>${raw(NEXT_TIME_SCRIPT)}</script>` : ''}
+      ${!completed && !dropped && !live ? html`<script>${raw(BOOKING_SCRIPT)}</script><script>${raw(NEXT_TIME_SCRIPT)}</script>` : ''}
       <script>${raw(BOOKING_FORMAT_SCRIPT)}</script>
       ${browserCalls ? browserCallScripts() : ''}
       ${state.callNow ? html`<script>${raw(DROP_CALL_NOW_SCRIPT)}</script>` : ''}
