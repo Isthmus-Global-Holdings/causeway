@@ -2007,8 +2007,8 @@ test('an interview dialled again is a new call: its reading replaces the first�
   assert.deepEqual([second?.dial_id, second?.source], ['second', 'outcome'], 'replaced, though read from less');
   assert.deepEqual(
     [second?.stage, second?.what_worked],
-    ['opening', null],
-    'the first call’s review isn’t laid over it'
+    ['conversation', null],
+    'five minutes by length; the first call’s review isn’t laid over it'
   );
   assert.deepEqual(await store.needing(10, RULES_VERSION), [], 'and it stays read');
   assert.deepEqual(
