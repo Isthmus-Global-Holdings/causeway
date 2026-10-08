@@ -20,6 +20,7 @@ import type { AppEnv } from '../src/types.ts';
 import { bookingReport, callFunnel, coachingReport, momTestReport, talkReport } from '../src/lib/coaching.ts';
 import { coachingPage } from '../src/views/coaching.ts';
 import { todayStrip } from '../src/views/layout.ts';
+import { FakeHubSpot, hubspotApi } from './fakes.ts';
 import { sqliteD1 } from './sqlite-d1.ts';
 
 let db: D1Database;
@@ -361,4 +362,79 @@ test('Coaching’s card: the count, the pace, each one with its line, and the ca
   assert.match(page, /“People, not software”/);
   assert.match(page, /Reached them, not counted yet/);
   assert.match(page, /value="Uses a spreadsheet for loads\."/, 'the notes’ first sentence, ready to keep or change');
+});
+
+test('the log forms’ box counts through the pages: a call and an interview, with the line', async () => {
+  const { default: app } = await import('../src/index.ts');
+  const hs = new FakeHubSpot();
+  const earlier = new Date(Date.now() - 3_600_000).toISOString();
+  hs.put('tasks', '1', {
+    hs_task_type: 'CALL',
+    hs_task_status: 'NOT_STARTED',
+    hs_task_subject: 'Call: Acme',
+    hs_timestamp: earlier,
+  });
+  hs.put('contacts', '10', { firstname: 'Ana', lastname: 'Díaz' });
+  hs.put('companies', '20', { name: 'Acme' });
+  hs.link('tasks', '1', 'contacts', '10');
+  hs.link('tasks', '1', 'companies', '20');
+  hs.put('meetings', 'm1', {
+    hs_meeting_title: 'Interview',
+    hs_meeting_start_time: earlier,
+    hs_meeting_end_time: new Date(Date.parse(earlier) + 1_800_000).toISOString(),
+    hs_meeting_outcome: 'SCHEDULED',
+  });
+  hs.link('meetings', 'm1', 'contacts', '10');
+  hs.link('meetings', 'm1', 'companies', '20');
+  const background: Promise<unknown>[] = [];
+  const post = async (path: string, body: Record<string, string>) => {
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = hubspotApi(hs) as unknown as typeof fetch;
+    try {
+      const res = await app.request(
+        `http://localhost${path}`,
+        {
+          method: 'POST',
+          headers: { Origin: 'http://localhost', 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams(body),
+        },
+        {
+          DB: db,
+          DEV_BYPASS_ACCESS: 'true',
+          TZ: 'America/Denver',
+          HUBSPOT_ACCESS_TOKEN: 'hs',
+          PUBLIC_BASE_URL: 'https://app.example',
+        } as unknown as AppEnv['Bindings'],
+        { waitUntil: (p: Promise<unknown>) => background.push(p), passThroughOnException() {} } as never
+      );
+      await Promise.all(background.splice(0));
+      return res;
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  };
+
+  const call = await post('/calls/1/log', {
+    outcome: 'connected',
+    notes: 'Quotes by phone.',
+    next_type: '',
+    conversation: '1',
+    learned: 'Quoting takes an hour a load',
+  });
+  assert.equal(call.status, 303, await call.text());
+  const counted = await d1ConversationStore(db).get('call', '1');
+  assert.equal(counted?.who, 'Ana Díaz at Acme');
+  assert.equal(counted?.learned, 'Quoting takes an hour a load');
+
+  const interview = await post('/meetings/m1/log', {
+    start: String(Date.parse(earlier)),
+    outcome: 'COMPLETED',
+    notes: 'Dispatch lives in a group text.',
+    next_type: '',
+    conversation: '1',
+    learned: 'Dispatch lives in a group text',
+  });
+  assert.equal(interview.status, 303, await interview.text());
+  assert.equal((await d1ConversationStore(db).get('interview', 'm1'))?.learned, 'Dispatch lives in a group text');
+  assert.equal((await d1ConversationStore(db).summary()).people, 1, 'Ana, twice: one person');
 });
