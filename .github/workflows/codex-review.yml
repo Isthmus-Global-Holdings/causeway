@@ -1,0 +1,35 @@
+name: Codex review
+
+# A required check that waits for Codex to review the PR's latest commit, so
+# "merge when ready" waits for it too. Passes anyway when Codex is out of
+# usage, hasn't answered in 15 minutes, or the PR has the skip-codex label.
+# See scripts/codex-review-gate.mjs.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
+
+# A new push makes the old wait pointless.
+concurrency:
+  group: codex-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  codex-review:
+    # Codex doesn't review drafts. A draft can't be merged anyway, and marking
+    # it ready runs this again.
+    if: ${{ !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: node scripts/codex-review-gate.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
