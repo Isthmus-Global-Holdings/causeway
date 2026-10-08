@@ -336,6 +336,7 @@ export interface TurnMarks {
   menuEnd: number | null; // the first turn after the phone menu
   ownerFrom: number | null; // where the person they called for came on
   holdFrom: number | null; // where the front desk put them on hold
+  deskBackAt: number | null; // where the front desk came back after the hold, with an answer
   voicemailFrom: number | null; // where a voicemail greeting started
   openingAt: number | null; // the rep's first line to them
   objectionAt: number | null; // their objection
@@ -348,6 +349,7 @@ export const NO_MARKS: TurnMarks = {
   menuEnd: null,
   ownerFrom: null,
   holdFrom: null,
+  deskBackAt: null,
   voicemailFrom: null,
   openingAt: null,
   objectionAt: null,
@@ -573,6 +575,7 @@ export interface TranscriptReading {
   tree: PhoneTree | null;
   ownerFrom: number | null; // the turn where the person they called for came on
   holdFrom: number | null; // the turn where the front desk put them on hold
+  deskBackAt: number | null; // the turn where the front desk came back after the hold, with an answer
   voicemailFrom: number | null; // the turn where a voicemail greeting started
   deskLine: string | null; // the rep's line to the front desk
   opening: string | null; // the rep's first line to them
@@ -593,6 +596,7 @@ export function readTranscript(turns: Turn[], firstName: string | null): Transcr
     openingAt: null,
     ownerFrom: null,
     holdFrom: null,
+    deskBackAt: null,
     voicemailFrom: null,
   };
   if (VOICEMAIL.test(turns[firstFar].text)) {
@@ -660,6 +664,15 @@ export function readTranscript(turns: Turn[], firstName: string | null): Transcr
   // Nobody came on after the hold: everything they said since is the hold.
   const heldOnly =
     hold >= 0 && farLater.filter(({ i }) => i > hold).every(({ t }) => HOLD.test(t.text) || words(t.text) <= 2);
+  // Else the front desk came back with an answer (not available, a message,
+  // "I'll put you through now"): the hold ended there, whatever came next.
+  const deskBack =
+    hold >= 0 && !heldOnly
+      ? (farLater.find(
+          ({ t, i }) =>
+            i > hold && !HOLD.test(t.text) && words(t.text) > 2 && (vm < 0 || i < vm) && (through < 0 || i < through)
+        )?.i ?? -1)
+      : -1;
 
   const result: GatekeeperResult | null =
     vm >= 0 && (!theyTalked || vm < through)
@@ -683,6 +696,7 @@ export function readTranscript(turns: Turn[], firstName: string | null): Transcr
     name: deskName ? capitalized(deskName) : null,
     ownerFrom: result === 'put_through' ? through : null,
     holdFrom: at(hold),
+    deskBackAt: at(deskBack),
     voicemailFrom: at(vm),
     deskLine: clip(turns[from]?.text, 240),
     opening: result === 'put_through' ? firstLine(through) : null,
@@ -927,6 +941,7 @@ export function ruleInsight(facts: CallFacts): RuleReading {
         menuEnd: tree?.end ?? null,
         ownerFrom: reached ? ownerFrom : null,
         holdFrom: heard.holdFrom,
+        deskBackAt: heard.deskBackAt,
         voicemailFrom: heard.voicemailFrom,
         openingAt: reached ? heard.openingAt : null,
         objectionAt: indexOf(objectionTurn),
