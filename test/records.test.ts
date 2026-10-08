@@ -316,26 +316,36 @@ test("saves the call script's lines after the Fit line, and saving them again ch
   );
 
   const again = await saveCallLines(hs, 'co1', {
+    theirWorld: 'how trucking companies handle quoting and dispatch',
     pedestal: 'you still dispatch the trucks yourself, so you see every load',
   });
   assert.equal(again.changed, false);
 
-  const pedestalOnly = await saveCallLines(hs, 'co1', { pedestal: 'you quote every load yourself' });
-  assert.deepEqual(pedestalOnly.lines, {
+  const worldOnly = await saveCallLines(hs, 'co1', {
     theirWorld: 'how trucking companies handle quoting and dispatch',
-    pedestal: 'you quote every load yourself',
+    pedestal: null,
   });
+  assert.deepEqual(
+    worldOnly.lines,
+    { theirWorld: 'how trucking companies handle quoting and dispatch', pedestal: null },
+    'a null pedestal takes it out'
+  );
 });
 
 test('checks both lines before writing either', async () => {
   const before = (await hs.getObject('companies', 'co1')).properties.description;
   for (const input of [
     { theirWorld: 'how trucking companies handle quoting', pedestal: 'you run five terminals; quoting varies' },
-    { pedestal: 'you run five terminals \u2014 so quoting varies' },
-    { pedestal: Array.from({ length: 26 }, () => 'word').join(' ') },
-    { pedestal: 'you quote loads. Fit: STRONG - x' },
-    { theirWorld: '  ' },
-    {},
+    {
+      theirWorld: 'how trucking companies handle quoting and dispatch',
+      pedestal: 'you run five terminals \u2014 so quoting varies',
+    },
+    {
+      theirWorld: 'how trucking companies handle quoting and dispatch',
+      pedestal: Array.from({ length: 26 }, () => 'word').join(' '),
+    },
+    { theirWorld: 'how trucking companies handle quoting and dispatch', pedestal: 'you quote loads. Fit: STRONG - x' },
+    { theirWorld: '  ', pedestal: null },
   ]) {
     await assert.rejects(saveCallLines(hs, 'co1', input), WorkflowError, JSON.stringify(input));
   }

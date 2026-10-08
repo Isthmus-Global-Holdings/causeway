@@ -953,20 +953,17 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     'save_call_lines',
     {
       title: 'Save call script lines',
-      description: `Write the company's World and/or Pedestal line in its HubSpot description, which fill the call script's {their_world} and {pedestal}. A line left out keeps what's there, and the rest of the description stays as written. Company results show the current ones (theirWorld, pedestal; null when missing).\n\n${CALL_LINES_RULES}`,
+      description: `Write the company's World and Pedestal lines in its HubSpot description, which fill the call script's {their_world} and {pedestal}. Give both every time: they replace whatever lines were there (pedestal: null for none), and the rest of the description stays as written. Company results show the current ones (theirWorld, pedestal; null when missing).\n\n${CALL_LINES_RULES}`,
       inputSchema: {
         company_id: id,
-        their_world: z.string().max(200).optional(),
-        pedestal: z.string().max(300).optional(),
+        their_world: z.string().max(200),
+        pedestal: z.string().max(300).nullable().describe('null when nothing specific is verified'),
       },
       annotations: WRITE,
     },
     ({ company_id, their_world, pedestal }) =>
       run(async () => {
-        const { lines, changed } = await saveCompanyCallLines(c, company_id, {
-          ...(their_world !== undefined ? { theirWorld: their_world } : {}),
-          ...(pedestal !== undefined ? { pedestal } : {}),
-        });
+        const { lines, changed } = await saveCompanyCallLines(c, company_id, { theirWorld: their_world, pedestal });
         return { saved: lines, unchanged: !changed };
       })
   );

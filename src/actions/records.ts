@@ -61,7 +61,7 @@ export async function saveNumbers(
 export async function saveCompanyCallLines(
   c: Context<AppEnv>,
   companyId: string,
-  input: Partial<Record<keyof CallLines, string>>
+  input: { theirWorld: string; pedestal: string | null }
 ): Promise<{ lines: CallLines; changed: boolean }> {
   const result = await saveCallLines(createHubSpot(c.env.HUBSPOT_ACCESS_TOKEN), companyId, input);
   if (result.changed) {

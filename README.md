@@ -836,8 +836,8 @@ as the pages.
   the interview's page), `log_meeting`, `open_task_for_contact` and
   `save_contact_numbers` (phone and mobile, with extensions) and
   `save_call_lines` (a company's World and Pedestal lines, which fill the
-  call script; checked to be one spoken line, then written into its
-  description, the rest kept as written). Each is
+  call script; both at once, each checked to be one spoken line, then
+  written into its description, the rest kept as written). Each is
   safe to repeat, like the pages' buttons, and each is in the audit log under
   your email.
 - **Not from Claude:** sending an email and placing a call. Every result

@@ -122,10 +122,18 @@ test('a line that is missing, empty, or only mid-sentence fills nothing', () => 
 
 test('rewriting the lines moves them after the Fit line and keeps the rest', () => {
   assert.equal(
-    withCallLines(`Contact: Ana. World: old world. Fit: GOOD - x. Pedestal: old one.`, { pedestal: PEDESTAL }),
-    `Contact: Ana. Fit: GOOD - x.\nWorld: old world.\nPedestal: ${PEDESTAL}.`
+    withCallLines(`Contact: Ana. World: old world. Fit: GOOD - x. Pedestal: old one.`, {
+      theirWorld: WORLD,
+      pedestal: PEDESTAL,
+    }),
+    `Contact: Ana. Fit: GOOD - x.\nWorld: ${WORLD}.\nPedestal: ${PEDESTAL}.`
   );
-  assert.equal(withCallLines(null, { theirWorld: WORLD }), `World: ${WORLD}.`);
+  assert.equal(withCallLines(null, { theirWorld: WORLD, pedestal: null }), `World: ${WORLD}.`);
+  assert.equal(
+    withCallLines(`Fit: GOOD - x.\nWorld: a.\nPedestal: b.`, { theirWorld: WORLD, pedestal: null }),
+    `Fit: GOOD - x.\nWorld: ${WORLD}.`,
+    'a null pedestal takes the old one out'
+  );
 });
 
 test('a line is checked for one breath in the rep’s voice', () => {

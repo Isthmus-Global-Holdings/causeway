@@ -182,23 +182,23 @@ export async function loadCompanyRecord(hs: HubSpot, companyId: string): Promise
 }
 
 // The call script's World and Pedestal lines on the company, written from a
-// Claude chat. Checks both before anything is written, reads the description
-// fresh, and writes it only when it changed, so saving the same lines again
-// changes nothing.
+// Claude chat: both at once (a null Pedestal for none), so a save is never
+// merged with another. Checks both before anything is written, reads the
+// description fresh, and writes it only when it changed, so saving the same
+// lines again changes nothing.
 export async function saveCallLines(
   hs: HubSpot,
   companyId: string,
-  input: Partial<Record<keyof CallLines, string>>
+  input: { theirWorld: string; pedestal: string | null }
 ): Promise<{ lines: CallLines; changed: boolean }> {
-  const lines: Partial<CallLines> = {};
+  const lines: CallLines = { theirWorld: null, pedestal: null };
   for (const kind of ['theirWorld', 'pedestal'] as const) {
     const raw = input[kind];
-    if (raw === undefined) continue;
+    if (raw === null) continue;
     const checked = checkCallLine(kind, raw);
     if ('problem' in checked) throw new WorkflowError(checked.problem);
     lines[kind] = checked.value;
   }
-  if (!Object.keys(lines).length) throw new WorkflowError('Give their_world or a pedestal to save.');
   const company = await hs.getObject('companies', companyId, ['description']);
   const was = company.properties.description ?? '';
   const description = withCallLines(was, lines);

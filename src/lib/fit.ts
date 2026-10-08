@@ -135,18 +135,15 @@ function withoutCallLines(description: string): string {
 }
 
 // The description with these lines in place of any it had, each on a line of
-// its own at the end (after the Fit line). A line not given keeps what's
-// there. Everything else stays as written.
-export function withCallLines(description: string | null | undefined, lines: Partial<CallLines>): string {
-  const current = parseCallLines(description);
-  const next = {
-    theirWorld: lines.theirWorld ?? current.theirWorld,
-    pedestal: lines.pedestal ?? current.pedestal,
-  };
+// its own at the end (after the Fit line); a null one is left out. Both are
+// always given, so two saves that overlap can't each keep half of the other:
+// the last one written is the whole of what's there. Everything else stays
+// as written.
+export function withCallLines(description: string | null | undefined, lines: CallLines): string {
   const rest = withoutCallLines(description ?? '');
   const added = [
-    next.theirWorld && `World: ${next.theirWorld}.`,
-    next.pedestal && `Pedestal: ${next.pedestal}.`,
+    lines.theirWorld && `World: ${lines.theirWorld}.`,
+    lines.pedestal && `Pedestal: ${lines.pedestal}.`,
   ].filter(Boolean);
   return [rest.trim(), ...added].filter(Boolean).join('\n');
 }

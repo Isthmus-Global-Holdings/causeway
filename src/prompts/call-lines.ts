@@ -12,4 +12,4 @@ The rep's call script says "I'm researching {their_world}, and I'm calling you b
 - pedestal: why them in particular, said to them. One clause in the second person, under 20 words (25 at most), built on the same verified specific as the email's second paragraph, with what it probably means for their day. For example "you run both LTL and TL out of five terminals, so quoting must change lane to lane" or "you handle ocean and air out of Miami, so no two quotes look alike".
 - Never a registry number, a fleet count, a list of facts, a year founded ("since 1987"), flattery or a superlative, or "small". No em-dashes or semicolons.
 - Say it out loud. If it sounds read off a research page, rewrite it.
-- If the research found nothing specific and verified, save their_world only. The call page shows the missing pedestal, and the rep says something general.`;
+- Save both together every time. If the research found nothing specific and verified, save pedestal: null. The call page shows the missing pedestal, and the rep says something general.`;
