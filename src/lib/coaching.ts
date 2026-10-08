@@ -30,6 +30,10 @@ import type { BookedInterview, CallInsight } from './db';
 // Fewer calls than this in a group is too few to call it a pattern.
 export const MIN_SAMPLE = 3;
 
+// The page a read call lives on: its call task's, or the interview's.
+export const insightPath = (row: Pick<CallInsight, 'subject' | 'call_task_id'>): string =>
+  row.subject === 'meeting' ? `/meetings/${row.call_task_id}` : `/calls/${row.call_task_id}`;
+
 // Comparing reached rates between hours takes far more: about this many calls
 // in each hour before a difference between them means anything.
 export const HOUR_SAMPLE = 30;

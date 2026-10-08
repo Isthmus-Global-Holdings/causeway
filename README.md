@@ -574,7 +574,12 @@ what they gave up at the end: their time, an intro, money), what worked, and
 what to adjust. The rules take a first pass at the Mom Test from the words
 (a question about the last time, a pitch, how long they talked, a time or an
 intro agreed) and mark the rest unsure; whether you caught the fluff only a
-review can say. On your Claude plan, so it costs nothing extra. A review is kept in
+review can say. Your recorded interviews are read and reviewed the same way
+(`calls_to_review` lists them as `kind: interview`; the id is the meeting's):
+the call made from the interview's page, once it ended, with how you logged
+the interview (its outcome, and your notes when there's no recording). They
+sit apart from the cold calls in coaching's counts, and the interview's page
+shows the same Coaching card for its call. On your Claude plan, so it costs nothing extra. A review is kept in
 `call_reviews` (one per reviewer, replaced whole) and laid over the rules'
 reading every time the call is read, so the sweep never undoes it; yours
 (`reviewer: 'rep'`, when you tell Claude what happened) wins over Claude's.

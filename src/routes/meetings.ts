@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { callNotes } from '../actions/coaching';
 import { latestMeetingDial, logMeeting, meetingsOverview } from '../actions/meetings';
 import { loadAppSettings } from '../lib/app-settings';
 import { parseHubSpotTime } from '../lib/dates';
@@ -53,7 +54,7 @@ meetingsRoute.get('/:id', async (c) => {
     latestMeetingDial(c.env, meetingId),
   ]);
   const startAt = parseHubSpotTime(parties.meeting.properties.hs_meeting_start_time);
-  const [context, lastEmail, log] = await Promise.all([
+  const [context, lastEmail, log, coaching] = await Promise.all([
     loadCallContext(hs, parties),
     latestSendToContact(c.env.DB, parties.contact.id),
     // One that stopped partway first: after a reschedule landed, it's no
@@ -61,6 +62,8 @@ meetingsRoute.get('/:id', async (c) => {
     d1MeetingLogStore(c.env.DB)
       .unfinished(meetingId)
       .then((row) => row ?? d1MeetingLogStore(c.env.DB).get(meetingLogId(meetingId, startAt))),
+    // What coaching read from the call made from this page, once it ended.
+    dial ? callNotes(c.env.DB, meetingId) : null,
   ]);
   const nowSec = Math.floor(Date.now() / 1000);
   return c.html(
@@ -74,6 +77,7 @@ meetingsRoute.get('/:id', async (c) => {
         dial,
         dialState: dial ? dialState(dial, nowSec) : null,
         recordingState: dial ? recordingState(dial, nowSec) : null,
+        coaching,
         setup: setupOf(c.env, settings),
         portalId: c.env.HUBSPOT_PORTAL_ID,
         now: Date.now(),

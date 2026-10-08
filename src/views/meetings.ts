@@ -1,4 +1,5 @@
 import { html, raw } from 'hono/html';
+import type { CallNotes } from '../actions/coaching';
 import { formatLocal, localDate, saidAhead } from '../lib/dates';
 import type { Dial, MeetingLog, RecentSend } from '../lib/db';
 import type { MeetingOutcome } from '../lib/hubspot';
@@ -37,6 +38,7 @@ import {
 } from '../workflows/meeting-queue';
 import { companyName, contactName } from '../workflows/parties';
 import type { TodayCounts } from '../workflows/today';
+import { coachingCard } from './coaching';
 import { whereTheyAre } from './facts';
 import { flash as flashBox, layout, recordUrl, timeInput, todayStrip, type Html } from './layout';
 
@@ -174,6 +176,7 @@ export interface MeetingPageState {
   dial: Dial | null; // the latest call made from this page
   dialState: DialState | null;
   recordingState: RecordingState | null;
+  coaching: CallNotes | null; // what coaching read from that call, once it ended
   setup: CallsSetup;
   portalId: string;
   now: number;
@@ -402,6 +405,7 @@ export function meetingPage(state: MeetingPageState, actor: string): Html {
           ${open && row.phoneCall ? callCard(view, canDial, true) : ''}
           ${browserCalls ? browserCallPanel : ''}
           ${recording}
+          ${!live && state.coaching ? coachingCard({ before: [], brief: null, after: state.coaching }) : ''}
           ${questionsCard()}
           ${historyCard(state)}
           ${lastEmailBox(state.lastEmail, state.timeZone)}

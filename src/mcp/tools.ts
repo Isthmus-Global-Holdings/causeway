@@ -466,7 +466,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Calls to review',
       description:
-        'Logged calls worth a review, newest first: someone picked up (them or the front desk), and neither the rep nor Claude has reviewed it yet. Each with its tags as the rules read them and which they were unsure of. Review each with get_call_review, then review_call.',
+        'Logged calls and recorded interviews worth a review, newest first: someone picked up (them or the front desk), and neither the rep nor Claude has reviewed it yet. Each with its kind (call or interview), its tags as the rules read them and which they were unsure of. Review each with get_call_review, then review_call.',
       inputSchema: { limit: z.number().int().min(1).max(25).default(10) },
       annotations: READ,
     },
@@ -488,7 +488,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Call to review',
       description:
-        "One logged call, to review it for coaching: the call (who, outcome, length, the rep's notes), its transcript turn by turn with times, the tags as read so far (reading: rules, with any reviews laid over them; unsure lists what nothing was sure of), the reviews so far, and the rules for reviewing it. Then save the review with review_call.",
+        "One logged call or recorded interview (task_id: the CALL task id, or the interview's meeting id from calls_to_review), to review it for coaching: the call (who, outcome, length, the rep's notes), its transcript turn by turn with times, the tags as read so far (reading: rules, with any reviews laid over them; unsure lists what nothing was sure of), the reviews so far, and the rules for reviewing it. Then save the review with review_call.",
       inputSchema: { task_id: id },
       annotations: READ,
     },
@@ -842,7 +842,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
     {
       title: 'Review a call',
       description:
-        "Save a review of one logged call for coaching, after reading it with get_call_review and following its rules: corrections for only the tags that were wrong or unsure (the rest keep the rules' reading), the Mom Test on it (asked about the last time, pitched, their longest story, fluff caught, what they committed), what worked, and what to adjust next time. Saved in the app only (not HubSpot); reviewing again replaces this reviewer's earlier review. reviewer 'rep' when the rep says what happened; the rep's review wins over Claude's. leave_out: true for a test call, to leave it out of coaching (false puts it back).",
+        "Save a review of one logged call or recorded interview (task_id as in calls_to_review) for coaching, after reading it with get_call_review and following its rules: corrections for only the tags that were wrong or unsure (the rest keep the rules' reading), the Mom Test on it (asked about the last time, pitched, their longest story, fluff caught, what they committed), what worked, and what to adjust next time. Saved in the app only (not HubSpot); reviewing again replaces this reviewer's earlier review. reviewer 'rep' when the rep says what happened; the rep's review wins over Claude's. leave_out: true for a test call, to leave it out of coaching (false puts it back).",
       inputSchema: {
         task_id: id,
         reviewer: z.enum(REVIEWERS).default('claude'),
@@ -899,7 +899,7 @@ export function registerTools(server: McpServer, c: Context<AppEnv>): void {
           saved: true,
           leftOut: leave_out ?? null,
           reading: afterCallSummary(notes, log?.next_due ?? null, timeZone),
-          url: pageUrl(origin, `/calls/${task_id}`),
+          url: pageUrl(origin, log ? `/calls/${task_id}` : `/meetings/${task_id}`),
         };
       })
   );

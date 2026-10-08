@@ -21,6 +21,7 @@ import {
   d1CallLogStore,
   d1DialStore,
   d1InboundCallStore,
+  d1MeetingLogStore,
   DIAL_MODES,
   getSettings,
   type DialMode,
@@ -175,6 +176,7 @@ export function insightDeps(env: Env): InsightDeps {
   return {
     callLogs: d1CallLogStore(env.DB),
     dials: d1DialStore(env.DB),
+    meetingLogs: d1MeetingLogStore(env.DB),
     insights: d1CallInsightStore(env.DB),
     reviews: d1CallReviewStore(env.DB),
     place: async (contactId, companyId) =>

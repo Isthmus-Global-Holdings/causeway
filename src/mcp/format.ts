@@ -15,6 +15,7 @@ import {
 } from '../lib/call-insight';
 import {
   BOOKING_STATUS_LABELS,
+  insightPath,
   heldRate,
   hourLabel,
   MIN_SAMPLE,
@@ -225,6 +226,7 @@ export function inboundCallSummary(call: InboundCall, timeZone: string, origin: 
 export function callInsightSummary(call: CallInsight, timeZone: string, origin: string) {
   return {
     taskId: call.call_task_id,
+    kind: call.subject === 'meeting' ? 'interview' : 'call',
     with: call.label,
     at: localTime(call.at_sec * 1000, timeZone),
     length: call.duration_sec !== null ? clock(call.duration_sec) : null,
@@ -241,7 +243,7 @@ export function callInsightSummary(call: CallInsight, timeZone: string, origin: 
     opening: call.opening,
     momTest: momTest(call),
     adjust: adjustNotes(call).map((n) => n.text),
-    url: pageUrl(origin, `/calls/${call.call_task_id}`),
+    url: pageUrl(origin, insightPath(call)),
   };
 }
 
@@ -364,19 +366,20 @@ export function callReviewSummary(r: CallForReview, origin: string) {
   return {
     timeZone: tz,
     call: {
-      taskId: r.log.call_task_id,
+      taskId: r.call.id,
+      kind: r.call.kind,
       with: r.notes.label,
-      channel: r.log.channel,
-      outcome: r.log.outcome,
-      lengthSec: r.log.duration_sec ?? r.notes.read.duration_sec,
-      repNotes: r.log.notes || null,
-      url: pageUrl(origin, `/calls/${r.log.call_task_id}`),
+      channel: r.call.channel,
+      outcome: r.call.outcome,
+      lengthSec: r.call.durationSec ?? r.notes.read.duration_sec,
+      repNotes: r.call.notes || null,
+      url: pageUrl(origin, r.call.kind === 'interview' ? `/meetings/${r.call.id}` : `/calls/${r.call.id}`),
     },
     transcript: r.turns.length
       ? r.turns.map((t) => `[${clock(Math.round(t.start))}] ${SPEAKER_LABELS[t.speaker]}: ${t.text}`)
       : null,
     autoSummary: r.summary.length ? r.summary : null,
-    reading: afterCallSummary(r.notes, r.log.next_due, tz),
+    reading: afterCallSummary(r.notes, r.call.nextDue, tz),
     reviews: r.reviews.map((v) => ({
       by: v.reviewer,
       corrections: v.corrections,

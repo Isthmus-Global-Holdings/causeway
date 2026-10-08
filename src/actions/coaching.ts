@@ -15,12 +15,14 @@ import {
   adjustNotes,
   callFacts,
   feedbackBy,
+  interviewFacts,
   parseSources,
   parseUnsure,
   ruleInsight,
   rulesSources,
   RULES_VERSION,
   withReviews,
+  type CallFacts,
   type CallReview,
   type CoachNote,
   type Corrections,
@@ -50,14 +52,16 @@ import {
   d1CallLogStore,
   d1CallReviewStore,
   d1DialStore,
+  d1MeetingLogStore,
   insertAudit,
   type CallInsight,
-  type CallLog,
+  type Dial,
 } from '../lib/db';
 import type { HubSpotObject } from '../lib/hubspot';
 import { dialTranscript, type Turn } from '../lib/transcript';
 import type { AppEnv } from '../types';
 import { excludeCall, readUnreadCalls, reviewCall } from '../workflows/call-insight';
+import { dialState, isLive } from '../workflows/dial';
 import { WorkflowError } from '../workflows/parties';
 
 // How many unread calls opening the report reads, after it answers (the cron
@@ -175,10 +179,8 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
       timeline: parseTimeline(row.timeline_json),
     };
   }
-  const log = await d1CallLogStore(db).get(callTaskId);
-  if (!log || log.channel === 'whatsapp_message') return null;
-  const dial = log.dial_id ? await d1DialStore(db).get(log.dial_id) : null;
-  const facts = callFacts(log, dial, dial ? dialTranscript(dial) : null);
+  const facts = await freshFacts(db, callTaskId);
+  if (!facts) return null;
   const reading = ruleInsight(facts);
   const { unsure, marks: _marks, ...fields } = reading;
   // Its reviews too: one saved before the call's reading was (a read that
@@ -195,7 +197,7 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
   );
   return {
     label: facts.label,
-    outcome: log.outcome,
+    outcome: facts.outcome,
     read,
     unsure: parseUnsure(read.unsure),
     sources: parseSources(read.sources),
@@ -203,6 +205,21 @@ export async function callNotes(db: D1Database, callTaskId: string): Promise<Cal
     feedbackBy: feedbackBy(reviews),
     timeline: callTimeline(facts, reading),
   };
+}
+
+// The facts of this id's call, for a reading on the spot: the call logged
+// for a CALL task, or an interview's call once it ended (with how the rep
+// logged the interview, if they have). Null when there's neither.
+async function freshFacts(db: D1Database, id: string): Promise<CallFacts | null> {
+  const log = await d1CallLogStore(db).get(id);
+  if (log) {
+    if (log.channel === 'whatsapp_message') return null;
+    const dial = log.dial_id ? await d1DialStore(db).get(log.dial_id) : null;
+    return callFacts(log, dial, dial ? dialTranscript(dial) : null);
+  }
+  const dial = await d1DialStore(db).latestForTask(id);
+  if (dial?.subject !== 'meeting' || isLive(dialState(dial, Math.floor(Date.now() / 1000)))) return null;
+  return interviewFacts(dial, await d1MeetingLogStore(db).latest(id), dialTranscript(dial));
 }
 
 // Calls worth a review (someone picked up, nobody reviewed it yet), newest
@@ -214,26 +231,61 @@ export async function callsForReview(c: Context<AppEnv>, limit: number) {
 
 export interface CallForReview {
   settings: AppSettings;
-  log: CallLog;
+  call: {
+    id: string; // the CALL task, or the meeting
+    kind: 'call' | 'interview';
+    channel: string;
+    outcome: string; // the call's as logged, or the interview's (HubSpot's outcome)
+    durationSec: number | null;
+    notes: string; // the rep's
+    nextDue: string | null;
+  };
   turns: Turn[]; // the transcript, empty when there's none
   summary: string[]; // the transcript's auto-summary (often wrong about who said what)
   notes: CallNotes; // the reading, reviews laid over it
   reviews: CallReview[];
 }
 
-// One logged call, with everything a review reads: the connector's get_call_review.
-export async function callForReview(c: Context<AppEnv>, callTaskId: string): Promise<CallForReview> {
+// One logged call, or one interview's call, with everything a review reads:
+// the connector's get_call_review.
+export async function callForReview(c: Context<AppEnv>, id: string): Promise<CallForReview> {
   const [settings, log, reviews] = await Promise.all([
     loadAppSettings(c.env),
-    d1CallLogStore(c.env.DB).get(callTaskId),
-    d1CallReviewStore(c.env.DB).list(callTaskId),
+    d1CallLogStore(c.env.DB).get(id),
+    d1CallReviewStore(c.env.DB).list(id),
   ]);
-  if (!log || log.channel === 'whatsapp_message') throw notACall();
-  const dial = log.dial_id ? await d1DialStore(c.env.DB).get(log.dial_id) : null;
+  if (log?.channel === 'whatsapp_message') throw notACall();
+  let dial: Dial | null;
+  let call: CallForReview['call'];
+  if (log) {
+    dial = log.dial_id ? await d1DialStore(c.env.DB).get(log.dial_id) : null;
+    call = {
+      id,
+      kind: 'call',
+      channel: log.channel,
+      outcome: log.outcome,
+      durationSec: log.duration_sec,
+      notes: log.notes,
+      nextDue: log.next_due,
+    };
+  } else {
+    dial = await d1DialStore(c.env.DB).latestForTask(id);
+    if (dial?.subject !== 'meeting') throw notACall();
+    const meetingLog = await d1MeetingLogStore(c.env.DB).latest(id);
+    call = {
+      id,
+      kind: 'interview',
+      channel: 'phone',
+      outcome: meetingLog?.outcome ?? 'SCHEDULED',
+      durationSec: dial.prospect_status === 'completed' ? dial.prospect_duration_sec : null,
+      notes: meetingLog?.notes ?? '',
+      nextDue: meetingLog?.next_due ?? null,
+    };
+  }
   const transcript = dial ? dialTranscript(dial) : null;
-  const notes = await callNotes(c.env.DB, callTaskId);
+  const notes = await callNotes(c.env.DB, id);
   if (!notes) throw notACall();
-  return { settings, log, turns: transcript?.turns ?? [], summary: transcript?.summary ?? [], notes, reviews };
+  return { settings, call, turns: transcript?.turns ?? [], summary: transcript?.summary ?? [], notes, reviews };
 }
 
 export interface ReviewInput {
@@ -269,7 +321,8 @@ export async function saveCallReview(c: Context<AppEnv>, callTaskId: string, inp
   return notes;
 }
 
-const notACall = () => new WorkflowError('That task has no logged call, so there’s nothing to review.', 404);
+const notACall = () =>
+  new WorkflowError('That id has no logged call or interview call, so there’s nothing to review.', 404);
 
 // Leaves a call out of coaching (a test call), or puts it back: D1 only.
 // The Calls page's button and the connector's review_call.

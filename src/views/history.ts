@@ -46,9 +46,10 @@ export interface HistoryPageState {
   back: string; // this page, to come back to after a button
 }
 
-// The CALL task whose logged call coaching reads, for a call made from one.
+// What coaching reads this call under: the CALL task for a call made from
+// one or logged by hand, the meeting for an interview's call.
 export function coachedTaskId(item: HistoryItem): string | null {
-  if (item.kind === 'dial') return item.dial.subject === 'task' ? item.dial.task_id : null;
+  if (item.kind === 'dial') return item.dial.subject === 'inbound' ? null : item.dial.task_id;
   return item.kind === 'logged' ? item.log.call_task_id : null;
 }
 
@@ -163,7 +164,11 @@ function entryOf(item: HistoryItem, nowSec: number, insights: Map<string, CallIn
         ? inboundEntry(item.call, nowSec)
         : loggedEntry(item.log);
   const taskId = coachedTaskId(item);
-  const logged = item.kind === 'logged' || (item.kind === 'dial' && item.dial.log_outcome !== null);
+  // A call from a task once the rep logged it; an interview's once the call ended.
+  const logged =
+    item.kind === 'logged' ||
+    (item.kind === 'dial' &&
+      (item.dial.subject === 'meeting' ? !isLive(dialState(item.dial, nowSec)) : item.dial.log_outcome !== null));
   const coached = taskId && logged && !(item.kind === 'logged' && item.log.channel === 'whatsapp_message');
   return { ...entry, coaching: coached ? { taskId, insight: insights.get(taskId) ?? null } : null };
 }

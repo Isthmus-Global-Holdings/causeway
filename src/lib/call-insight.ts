@@ -8,7 +8,7 @@
 // workflows/call-insight.ts reads and saves.
 
 import { clock } from './call-history';
-import type { CallChannel, CallLog, Dial } from './db';
+import type { CallChannel, CallLog, Dial, MeetingLog } from './db';
 import { turnSpan, type CallTranscript, type Turn } from './transcript';
 
 // Bump it when the rules change: every call is read again (for free, by the
@@ -418,6 +418,34 @@ export function callFacts(log: CallLog, dial: Dial | null, transcript: CallTrans
     transcript,
     setTime: log.next_set_time === 1,
     booked: Boolean(log.book_start),
+  };
+}
+
+// An interview's facts, from the call made from its page (dials, subject
+// 'meeting') and how the rep logged it (meeting_logs): read with the same
+// rules as a cold call. Completed → connected; a no-show or a cancel → no
+// answer; moved, or not logged yet → whatever the call itself says. Without
+// a transcript the rep's notes on the interview are read.
+export function interviewFacts(dial: Dial, log: MeetingLog | null, transcript: CallTranscript | null): CallFacts {
+  const answered = dial.prospect_status === 'completed';
+  const outcome =
+    log?.outcome === 'COMPLETED'
+      ? 'connected'
+      : log?.outcome === 'NO_SHOW' || log?.outcome === 'CANCELED'
+        ? 'no_answer'
+        : answered
+          ? 'connected'
+          : 'no_answer';
+  return {
+    label: dial.contact_label,
+    firstName: firstNameOf(dial.contact_label),
+    outcome,
+    channel: 'phone',
+    durationSec: answered ? dial.prospect_duration_sec : null,
+    notes: log?.notes.trim() ?? '',
+    transcript,
+    setTime: false,
+    booked: false,
   };
 }
 
