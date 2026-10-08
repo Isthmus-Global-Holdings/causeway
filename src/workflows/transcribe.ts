@@ -125,9 +125,11 @@ export async function transcribeRecording<T extends Recorded>(
   }
 
   // A recording with only their side (a voicemail left for the rep) is all
-  // them, and worth its summary.
+  // them, and worth its summary; so is one Nova gave back as one channel,
+  // where who said what can't be told (all 'call').
+  const whoIsWho = speakers.includes('rep') && turns.some((t) => t.speaker !== 'call');
   let summary: string | null = null;
-  if (turns.length && (!speakers.includes('rep') || talkedWithSomeone(turns))) {
+  if (turns.length && (!whoIsWho || talkedWithSomeone(turns))) {
     try {
       summary = (await deps.ai.summarize(summaryMessages(turns, label))).trim() || null;
     } catch (err) {

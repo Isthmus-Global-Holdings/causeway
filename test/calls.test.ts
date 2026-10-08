@@ -818,6 +818,23 @@ test('a call that only reached the phone menu is transcribed with no summary: on
   assert.equal(ai.summarized, 0);
 });
 
+test('a recording Nova gave back as one channel keeps its summary: who said what can’t be told', async () => {
+  class OneChannel extends FakeAi {
+    override async transcribe() {
+      return {
+        results: {
+          channels: [{ alternatives: [{ words: [{ word: 'Hi there. Send a quote.', start: 0.5, end: 2 }] }] }],
+        },
+      };
+    }
+  }
+  const { deps } = await recordedCall(new OneChannel());
+  assert.equal(await runTranscription(deps, DIAL_ID, { now: NOW, baseUrl: BASE }), 'done');
+  const dial = (await dials.get(DIAL_ID))!;
+  assert.equal(JSON.parse(dial.transcript_json!)[0].speaker, 'call');
+  assert.equal(dial.summary, '- Wants a quote\n- Call back Monday');
+});
+
 test('a failed transcription can be retried; a failed summary keeps the transcript', async () => {
   const ai = new FakeAi();
   const { deps } = await recordedCall(ai);
