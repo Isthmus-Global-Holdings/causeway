@@ -8,6 +8,7 @@
 // workflows/call-insight.ts reads and saves.
 
 import { clock } from './call-history';
+import { parseTimeline, timelineJson, withReviewedTags } from './call-timeline';
 import type { CallChannel, CallLog, Dial } from './db';
 import { turnSpan, type CallTranscript, type Turn } from './transcript';
 
@@ -323,6 +324,12 @@ export function withReviews<T extends InsightFields & { unsure: string; sources:
   }
   out.got_past_objection =
     out.objection_kind && out.reached && stageRank(out.stage) >= stageRank('conversation') ? 1 : 0;
+  // The drawing, when the row carries one, follows the reviewed tags.
+  const drawn = out as { timeline_json?: string | null };
+  if (typeof drawn.timeline_json === 'string') {
+    const t = parseTimeline(drawn.timeline_json);
+    if (t) drawn.timeline_json = timelineJson(withReviewedTags(t, out));
+  }
   out.unsure = JSON.stringify(TAGS.filter((t) => unsure.has(t)));
   out.sources = JSON.stringify(sources);
   return out;
