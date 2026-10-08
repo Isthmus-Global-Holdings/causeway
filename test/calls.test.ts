@@ -21,7 +21,7 @@ import {
 import { callNowHref, callPage, type CallPageState } from '../src/views/calls.ts';
 import { BOOKING_FIELDS, bookingFieldsOf, parseBookingForm } from '../src/workflows/book-interview.ts';
 import { loadCallContext, historyTimeline, type CallContext } from '../src/workflows/call-context.ts';
-import { DIAL_GUARD_SEC, dialState, isLive, startDial } from '../src/workflows/dial.ts';
+import { claimBrowserDial, DIAL_GUARD_SEC, dialState, isLive, startDial } from '../src/workflows/dial.ts';
 import { dropCall } from '../src/workflows/task-actions.ts';
 import { loadCallQueue } from '../src/workflows/call-queue.ts';
 import { recordingState, runTranscription, type Transcriber } from '../src/workflows/transcribe.ts';
@@ -1085,6 +1085,18 @@ test('a browser dial old enough for Drop to see as over is never claimed', async
   const iso = new Date(at * 1000).toISOString();
   assert.equal(await dials.claimBrowserCall(DIAL_ID, 'CA9', iso, at - DIAL_GUARD_SEC), null);
   assert.ok(await dials.claimBrowserCall(DIAL_ID, 'CA9', iso, at - 1 - DIAL_GUARD_SEC), 'a second younger, it is');
+});
+
+test('a browser claim waits for whatever holds the task, and takes its cutoff then', async () => {
+  await startDial({ hs, twilio, dials }, '1', 'phone', dialOpts(BROWSER));
+  const lease = await dials.lockTask('1', NOW_SEC, 60); // a Drop running
+  assert.equal(await claimBrowserDial(dials, DIAL_ID, 'CA9', () => NOW + 5_000), null);
+  await dials.unlockTask('1', lease!);
+  // The Drop saw it over at the cutoff; a claim after it, however late its
+  // request began, sees the same.
+  assert.equal(await claimBrowserDial(dials, DIAL_ID, 'CA9', () => (NOW_SEC + DIAL_GUARD_SEC) * 1000), null);
+  assert.ok(await claimBrowserDial(dials, DIAL_ID, 'CA9', () => NOW + 5_000));
+  assert.equal(await dials.lockTask('1', NOW_SEC, 60), NOW_SEC + 60, 'the claim released the lock');
 });
 
 test('the browser webhook refuses phone dials, stale dials and cancelled ones', async () => {

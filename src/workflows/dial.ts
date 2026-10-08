@@ -93,6 +93,32 @@ export async function startDial(deps: DialDeps, taskId: string, field: PhoneFiel
 
 const DROPPED = 'This call task was dropped, so it wasn’t dialled.';
 
+// The browser call of a dial from a page: the dial is claimed, so each
+// connects at most once, within DIAL_GUARD_SEC of the click. A task's dial is
+// claimed under the task's lock, with the cutoff taken inside it: a Drop that
+// saw the dial as over came first and this sees it over too, or this came
+// first and the Drop sees the call live. Null when it can't be claimed.
+export async function claimBrowserDial(
+  dials: DialStore,
+  id: string,
+  callSid: string,
+  now: () => number
+): Promise<Dial | null> {
+  const claim = () => {
+    const at = now();
+    return dials.claimBrowserCall(id, callSid, new Date(at).toISOString(), Math.floor(at / 1000) - DIAL_GUARD_SEC);
+  };
+  const dial = await dials.get(id);
+  if (!dial) return null;
+  if (dial.subject !== 'task') return claim();
+  try {
+    return await withTaskLock(dials, dial.task_id, Math.floor(now() / 1000), claim);
+  } catch (err) {
+    if (err instanceof WorkflowError) return null; // a Drop, a log or another dial holds the task
+    throw err;
+  }
+}
+
 // Calls the contact of an interview, from its prep page.
 export async function startMeetingDial(
   deps: DialDeps,
